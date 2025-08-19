@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Computer Vision Object Detector</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f0f0f0;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .header {
+            text-align: center;
+            color: #333;
+            margin-bottom: 30px;
+        }
+        .controls {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 15px;
+            margin-bottom: 20px;
+            padding: 15px;
+            background-color: #f8f9fa;
+            border-radius: 8px;
+        }
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background-color 0.3s;
+        }
+        .btn-start {
+            background-color: #28a745;
+            color: white;
+        }
+        .btn-start:hover {
+            background-color: #218838;
+        }
+        .btn-stop {
+            background-color: #dc3545;
+            color: white;
+        }
+        .btn-stop:hover {
+            background-color: #c82333;
+        }
+        .model-select {
+            padding: 8px 12px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+        .video-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 480px;
+            background-color: #000;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        .video-stream {
+            max-width: 100%;
+            max-height: 100%;
+            border-radius: 8px;
+        }
+        .status {
+            text-align: center;
+            margin-top: 15px;
+            padding: 10px;
+            border-radius: 5px;
+            font-weight: bold;
+        }
+        .status.success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .status.error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .status.info {
+            background-color: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        .loading {
+            color: #666;
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎯 Computer Vision Object Detector</h1>
+            <p>Real-time remote and cell phone detection</p>
+        </div>
+        
+        <div class="controls">
+            <button id="startBtn" class="btn btn-start">Start Detection</button>
+            <button id="stopBtn" class="btn btn-stop">Stop Detection</button>
+            
+            <label for="modelSelect">Detection:</label>
+            <select id="modelSelect" class="model-select">
+                <option value="YOLO">Remote + Cell Phone</option>
+                <option value="Advanced">Advanced (Future)</option>
+            </select>
+        </div>
+        
+        <div class="video-container">
+            <img id="videoStream" class="video-stream" src="" alt="Video stream will appear here" style="display: none;">
+            <div id="loadingText" class="loading">Click "Start Detection" to begin</div>
+        </div>
+        
+        <div id="status" class="status info">Ready to start detection</div>
+    </div>
+
+    <script>
+        const startBtn = document.getElementById('startBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const modelSelect = document.getElementById('modelSelect');
+        const videoStream = document.getElementById('videoStream');
+        const loadingText = document.getElementById('loadingText');
+        const status = document.getElementById('status');
+
+        function updateStatus(message, type = 'info') {
+            status.textContent = message;
+            status.className = `status ${type}`;
+        }
+
+        function showVideo() {
+            videoStream.src = '/video_feed?' + new Date().getTime();
+            videoStream.style.display = 'block';
+            loadingText.style.display = 'none';
+        }
+
+        function hideVideo() {
+            videoStream.style.display = 'none';
+            loadingText.style.display = 'block';
+            loadingText.textContent = 'Detection stopped';
+        }
+
+        startBtn.addEventListener('click', async () => {
+            try {
+                const response = await fetch('/start_detection', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                });
+                
+                const result = await response.json();
+                
+                if (result.status === 'success') {
+                    updateStatus(result.message, 'success');
+                    showVideo();
+                } else {
+                    updateStatus(result.message, 'error');
+                }
+            } catch (error) {
+                updateStatus('Failed to start detection', 'error');
+                console.error('Error:', error);
+            }
+        });
+
+        stopBtn.addEventListener('click', async () => {
+            try {
+                const response = await fetch('/stop_detection', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                });
+                
+                const result = await response.json();
+                updateStatus(result.message, 'success');
+                hideVideo();
+            } catch (error) {
+                updateStatus('Failed to stop detection', 'error');
+                console.error('Error:', error);
+            }
+        });
+
+        modelSelect.addEventListener('change', async () => {
+            try {
+                const response = await fetch('/switch_model', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ model: modelSelect.value })
+                });
+                
+                const result = await response.json();
+                updateStatus(result.message, 'success');
+            } catch (error) {
+                updateStatus('Failed to switch model', 'error');
+                console.error('Error:', error);
+            }
+        });
+
+        // Check status periodically
+        setInterval(async () => {
+            try {
+                const response = await fetch('/status');
+                const status = await response.json();
+                
+                if (status.is_running && !videoStream.style.display === 'block') {
+                    showVideo();
+                }
+            } catch (error) {
+                console.error('Status check failed:', error);
+            }
+        }, 2000);
+    </script>
+</body>
+</html>
