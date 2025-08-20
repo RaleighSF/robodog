@@ -2,10 +2,11 @@ numpy<2.0.0
 opencv-python>=4.8.0,<5.0.0
 Pillow>=9.0.0
 Flask>=2.3.0
+requests>=2.28.0
+janus>=1.0.0
 
-# Optional dependencies for future WebRTC support
-# aiortc>=1.5.0
-# websockets>=11.0
+# Unitree Go2 WebRTC connection
+go2-webrtc-connect[video,audio]>=0.2.0
 
 # For ResNet50 and advanced ML models
 # torch>=2.0.0

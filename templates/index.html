@@ -3,137 +3,408 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Computer Vision Object Detector</title>
+    <title>Project Watch Dog - Factory Patrol Monitoring | NTT DATA</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        body {
-            font-family: Arial, sans-serif;
+        :root {
+            --ntt-primary-blue: #0066cc;
+            --ntt-dark-blue: #004499;
+            --ntt-light-blue: #e6f3ff;
+            --ntt-gray: #f5f5f5;
+            --ntt-dark-gray: #333333;
+            --ntt-medium-gray: #666666;
+            --ntt-light-gray: #e8e8e8;
+            --ntt-white: #ffffff;
+            --ntt-success: #00aa44;
+            --ntt-warning: #ff8800;
+            --ntt-error: #dd3333;
+        }
+
+        * {
             margin: 0;
-            padding: 20px;
-            background-color: #f0f0f0;
+            padding: 0;
+            box-sizing: border-box;
         }
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-            background-color: white;
-            border-radius: 10px;
-            padding: 20px;
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, var(--ntt-gray) 0%, var(--ntt-light-blue) 100%);
+            min-height: 100vh;
+            color: var(--ntt-dark-gray);
+        }
+
+        .header-nav {
+            background: var(--ntt-white);
             box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            padding: 0;
         }
+
+        .nav-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 15px 30px;
+        }
+
+        .logo-section {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .ntt-logo {
+            font-size: 28px;
+            font-weight: 700;
+            color: var(--ntt-primary-blue);
+            text-decoration: none;
+        }
+
+        .project-title {
+            font-size: 18px;
+            font-weight: 500;
+            color: var(--ntt-medium-gray);
+            border-left: 2px solid var(--ntt-light-gray);
+            padding-left: 20px;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 30px;
+            align-items: center;
+        }
+
+        .nav-link {
+            color: var(--ntt-medium-gray);
+            text-decoration: none;
+            font-weight: 500;
+            transition: color 0.3s;
+        }
+
+        .nav-link:hover {
+            color: var(--ntt-primary-blue);
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 30px auto;
+            background: var(--ntt-white);
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+        }
+
         .header {
+            background: linear-gradient(135deg, var(--ntt-primary-blue) 0%, var(--ntt-dark-blue) 100%);
+            color: var(--ntt-white);
+            padding: 40px 30px;
             text-align: center;
-            color: #333;
-            margin-bottom: 30px;
         }
+
+        .header h1 {
+            font-size: 32px;
+            font-weight: 700;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 18px;
+            font-weight: 300;
+            opacity: 0.9;
+        }
+
         .controls {
             display: flex;
             justify-content: center;
             align-items: center;
-            gap: 15px;
-            margin-bottom: 20px;
-            padding: 15px;
-            background-color: #f8f9fa;
-            border-radius: 8px;
+            gap: 20px;
+            padding: 30px;
+            background: var(--ntt-gray);
+            border-bottom: 1px solid var(--ntt-light-gray);
         }
+
         .btn {
-            padding: 10px 20px;
+            padding: 12px 24px;
             border: none;
-            border-radius: 5px;
+            border-radius: 6px;
             cursor: pointer;
             font-size: 14px;
-            transition: background-color 0.3s;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            transition: all 0.3s;
+            font-family: inherit;
         }
+
         .btn-start {
-            background-color: #28a745;
-            color: white;
+            background: var(--ntt-success);
+            color: var(--ntt-white);
         }
+
         .btn-start:hover {
-            background-color: #218838;
+            background: #008833;
+            transform: translateY(-1px);
         }
+
         .btn-stop {
-            background-color: #dc3545;
-            color: white;
+            background: var(--ntt-error);
+            color: var(--ntt-white);
         }
+
         .btn-stop:hover {
-            background-color: #c82333;
+            background: #bb2222;
+            transform: translateY(-1px);
         }
-        .model-select {
+
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .control-section {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            align-items: center;
+        }
+
+        .control-row {
+            display: flex;
+            gap: 20px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .control-label {
+            font-weight: 600;
+            color: var(--ntt-dark-gray);
+        }
+
+        .robot-controls {
+            display: none;
+            gap: 10px;
+            padding: 15px;
+            background: rgba(0, 102, 204, 0.1);
+            border-radius: 6px;
+            border: 1px solid var(--ntt-primary-blue);
+        }
+
+        .robot-controls.visible {
+            display: flex;
+        }
+
+        .input-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .text-input {
             padding: 8px 12px;
-            border: 1px solid #ccc;
-            border-radius: 5px;
+            border: 1px solid var(--ntt-light-gray);
+            border-radius: 4px;
             font-size: 14px;
+            font-family: inherit;
         }
+
+        .btn-small {
+            padding: 6px 12px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .model-select {
+            padding: 10px 16px;
+            border: 2px solid var(--ntt-light-gray);
+            border-radius: 6px;
+            font-size: 14px;
+            font-family: inherit;
+            background: var(--ntt-white);
+            color: var(--ntt-dark-gray);
+            cursor: pointer;
+            transition: border-color 0.3s;
+        }
+
+        .model-select:focus {
+            outline: none;
+            border-color: var(--ntt-primary-blue);
+        }
+
         .video-container {
+            position: relative;
             display: flex;
             justify-content: center;
             align-items: center;
-            min-height: 480px;
-            background-color: #000;
+            min-height: 600px;
+            background: linear-gradient(45deg, #000000 0%, #1a1a1a 100%);
+            border: 3px solid var(--ntt-primary-blue);
+            margin: 30px;
             border-radius: 8px;
             overflow: hidden;
         }
+
         .video-stream {
             max-width: 100%;
             max-height: 100%;
-            border-radius: 8px;
+            border-radius: 4px;
         }
+
+        .patrol-overlay {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0, 102, 204, 0.9);
+            color: var(--ntt-white);
+            padding: 10px 15px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+        }
+
         .status {
+            margin: 0 30px 30px;
+            padding: 15px 20px;
+            border-radius: 8px;
+            font-weight: 600;
             text-align: center;
-            margin-top: 15px;
-            padding: 10px;
-            border-radius: 5px;
-            font-weight: bold;
         }
+
         .status.success {
-            background-color: #d4edda;
-            color: #155724;
-            border: 1px solid #c3e6cb;
+            background: rgba(0, 170, 68, 0.1);
+            color: var(--ntt-success);
+            border: 1px solid var(--ntt-success);
         }
+
         .status.error {
-            background-color: #f8d7da;
-            color: #721c24;
-            border: 1px solid #f5c6cb;
+            background: rgba(221, 51, 51, 0.1);
+            color: var(--ntt-error);
+            border: 1px solid var(--ntt-error);
         }
+
         .status.info {
-            background-color: #d1ecf1;
-            color: #0c5460;
-            border: 1px solid #bee5eb;
+            background: rgba(0, 102, 204, 0.1);
+            color: var(--ntt-primary-blue);
+            border: 1px solid var(--ntt-primary-blue);
         }
+
         .loading {
-            color: #666;
+            color: var(--ntt-medium-gray);
             font-style: italic;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            font-size: 18px;
+        }
+
+        .loading::before {
+            content: "🤖";
+            font-size: 24px;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .footer {
+            background: var(--ntt-dark-gray);
+            color: var(--ntt-white);
+            text-align: center;
+            padding: 20px;
+            margin-top: 40px;
+        }
+
+        .footer p {
+            opacity: 0.8;
+            font-size: 14px;
         }
     </style>
 </head>
 <body>
+    <nav class="header-nav">
+        <div class="nav-container">
+            <div class="logo-section">
+                <a href="#" class="ntt-logo">NTT DATA</a>
+                <div class="project-title">Project Watch Dog</div>
+            </div>
+            <div class="nav-links">
+                <a href="#" class="nav-link">Dashboard</a>
+                <a href="#" class="nav-link">Reports</a>
+                <a href="#" class="nav-link">Settings</a>
+            </div>
+        </div>
+    </nav>
+
     <div class="container">
         <div class="header">
-            <h1>🎯 Computer Vision Object Detector</h1>
-            <p>Real-time remote and cell phone detection</p>
+            <h1>Factory Patrol Monitoring System</h1>
+            <p>Robotic patrol unit surveillance with AI-powered object detection</p>
         </div>
         
         <div class="controls">
-            <button id="startBtn" class="btn btn-start">Start Detection</button>
-            <button id="stopBtn" class="btn btn-stop">Stop Detection</button>
-            
-            <label for="modelSelect">Detection:</label>
-            <select id="modelSelect" class="model-select">
-                <option value="YOLO">Remote + Cell Phone</option>
-                <option value="Advanced">Advanced (Future)</option>
-            </select>
+            <div class="control-section">
+                <div class="control-row">
+                    <button id="startBtn" class="btn btn-start">Start Patrol</button>
+                    <button id="stopBtn" class="btn btn-stop">Stop Patrol</button>
+                    
+                    <div class="control-group">
+                        <label for="modelSelect" class="control-label">Detection Mode:</label>
+                        <select id="modelSelect" class="model-select">
+                            <option value="YOLO">Security Objects Detection</option>
+                            <option value="Advanced">Advanced Mode (Future)</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="control-row">
+                    <div class="control-group">
+                        <label for="cameraSelect" class="control-label">Camera Source:</label>
+                        <select id="cameraSelect" class="model-select">
+                            <option value="mac">Mac Camera</option>
+                            <option value="unitree">Unitree Go2 Robot</option>
+                        </select>
+                    </div>
+                    
+                    <div id="robotControls" class="robot-controls">
+                        <div class="input-group">
+                            <label class="control-label">Robot IP:</label>
+                            <input type="text" id="robotIpInput" class="text-input" value="192.168.12.1" placeholder="192.168.12.1">
+                        </div>
+                        <button id="connectRobotBtn" class="btn btn-start btn-small">Connect</button>
+                        <button id="testRobotBtn" class="btn btn-stop btn-small">Test</button>
+                    </div>
+                </div>
+            </div>
         </div>
         
         <div class="video-container">
-            <img id="videoStream" class="video-stream" src="" alt="Video stream will appear here" style="display: none;">
-            <div id="loadingText" class="loading">Click "Start Detection" to begin</div>
+            <div class="patrol-overlay">🤖 Robot Dog Patrol Unit - Live Feed</div>
+            <img id="videoStream" class="video-stream" src="" alt="Robot patrol video feed will appear here" style="display: none;">
+            <div id="loadingText" class="loading">Waiting for robot patrol unit connection...</div>
         </div>
         
-        <div id="status" class="status info">Ready to start detection</div>
+        <div id="status" class="status info">Patrol system ready - Click "Start Patrol" to begin monitoring</div>
+    </div>
+
+    <div class="footer">
+        <p>&copy; 2024 NTT DATA Corporation. Project Watch Dog - Advanced Factory Surveillance Solution.</p>
     </div>
 
     <script>
         const startBtn = document.getElementById('startBtn');
         const stopBtn = document.getElementById('stopBtn');
         const modelSelect = document.getElementById('modelSelect');
+        const cameraSelect = document.getElementById('cameraSelect');
+        const robotControls = document.getElementById('robotControls');
+        const robotIpInput = document.getElementById('robotIpInput');
+        const connectRobotBtn = document.getElementById('connectRobotBtn');
+        const testRobotBtn = document.getElementById('testRobotBtn');
         const videoStream = document.getElementById('videoStream');
         const loadingText = document.getElementById('loadingText');
         const status = document.getElementById('status');
@@ -152,7 +423,7 @@
         function hideVideo() {
             videoStream.style.display = 'none';
             loadingText.style.display = 'block';
-            loadingText.textContent = 'Detection stopped';
+            loadingText.textContent = 'Robot patrol unit offline';
         }
 
         startBtn.addEventListener('click', async () => {
@@ -173,7 +444,7 @@
                     updateStatus(result.message, 'error');
                 }
             } catch (error) {
-                updateStatus('Failed to start detection', 'error');
+                updateStatus('Failed to start patrol monitoring', 'error');
                 console.error('Error:', error);
             }
         });
@@ -191,7 +462,7 @@
                 updateStatus(result.message, 'success');
                 hideVideo();
             } catch (error) {
-                updateStatus('Failed to stop detection', 'error');
+                updateStatus('Failed to stop patrol monitoring', 'error');
                 console.error('Error:', error);
             }
         });
@@ -209,7 +480,83 @@
                 const result = await response.json();
                 updateStatus(result.message, 'success');
             } catch (error) {
-                updateStatus('Failed to switch model', 'error');
+                updateStatus('Failed to switch detection mode', 'error');
+                console.error('Error:', error);
+            }
+        });
+
+        // Camera source selection
+        cameraSelect.addEventListener('change', async () => {
+            const source = cameraSelect.value;
+            
+            // Show/hide robot controls
+            if (source === 'unitree') {
+                robotControls.classList.add('visible');
+            } else {
+                robotControls.classList.remove('visible');
+            }
+            
+            try {
+                const response = await fetch('/switch_camera', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ 
+                        source: source,
+                        robot_ip: robotIpInput.value
+                    })
+                });
+                
+                const result = await response.json();
+                updateStatus(result.message, result.status === 'success' ? 'success' : 'error');
+            } catch (error) {
+                updateStatus('Failed to switch camera source', 'error');
+                console.error('Error:', error);
+            }
+        });
+
+        // Robot connection
+        connectRobotBtn.addEventListener('click', async () => {
+            try {
+                const response = await fetch('/switch_camera', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ 
+                        source: 'unitree',
+                        robot_ip: robotIpInput.value
+                    })
+                });
+                
+                const result = await response.json();
+                updateStatus(result.message, result.status === 'success' ? 'success' : 'error');
+            } catch (error) {
+                updateStatus('Failed to connect to robot', 'error');
+                console.error('Error:', error);
+            }
+        });
+
+        // Robot test command
+        testRobotBtn.addEventListener('click', async () => {
+            try {
+                const response = await fetch('/robot_command', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ 
+                        command: 'status',
+                        params: {}
+                    })
+                });
+                
+                const result = await response.json();
+                updateStatus(`Robot test: ${result.message || result.status}`, 
+                           result.status === 'success' ? 'success' : 'error');
+            } catch (error) {
+                updateStatus('Robot test failed', 'error');
                 console.error('Error:', error);
             }
         });

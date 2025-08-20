@@ -76,13 +76,52 @@ def switch_model():
     detector.switch_model(model_name)
     return jsonify({'status': 'success', 'message': f'Switched to {model_name}'})
 
+@app.route('/switch_camera', methods=['POST'])
+def switch_camera():
+    """Switch camera source"""
+    data = request.json
+    camera_source = data.get('source', 'mac')
+    robot_ip = data.get('robot_ip', '192.168.12.1')
+    
+    print(f"Switch camera request: source={camera_source}, ip={robot_ip}")
+    
+    try:
+        camera_manager.set_camera_source(camera_source, robot_ip)
+        print(f"Camera source switched. Unitree client: {camera_manager.unitree_client is not None}")
+        return jsonify({'status': 'success', 'message': f'Switched to {camera_source} camera'})
+    except Exception as e:
+        print(f"Error switching camera: {e}")
+        return jsonify({'status': 'error', 'message': str(e)})
+
+@app.route('/robot_command', methods=['POST'])
+def robot_command():
+    """Send command to robot"""
+    data = request.json
+    command = data.get('command', '')
+    params = data.get('params', {})
+    
+    print(f"Robot command received: {command}")
+    print(f"Camera source: {camera_manager.camera_source}")
+    print(f"Unitree client exists: {camera_manager.unitree_client is not None}")
+    
+    if camera_manager.unitree_client:
+        print(f"Unitree client connected: {camera_manager.unitree_client.is_connected}")
+        result = camera_manager.unitree_client.send_command(command, params)
+        print(f"Command result: {result}")
+        return jsonify(result)
+    else:
+        print("No unitree client available")
+        return jsonify({'status': 'error', 'message': 'Robot not connected - no client initialized'})
+
 @app.route('/status')
 def get_status():
     """Get current status"""
+    camera_status = camera_manager.get_camera_status()
     return jsonify({
         'is_running': web_app.is_running,
         'camera_available': camera_manager.is_camera_available(),
-        'current_model': detector.current_model
+        'current_model': detector.current_model,
+        'camera_status': camera_status
     })
 
 if __name__ == '__main__':
