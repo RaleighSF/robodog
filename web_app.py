@@ -5,13 +5,16 @@ import base64
 import json
 import threading
 import time
-from flask import Flask, render_template, Response, jsonify, request
+import os
+from flask import Flask, render_template, Response, jsonify, request, send_file
 from hybrid_detector import HybridDetector
 from camera import CameraManager
+from detection_logger import DetectionLogger
 
 app = Flask(__name__)
 camera_manager = CameraManager()
 detector = HybridDetector()
+detection_logger = DetectionLogger()
 
 class WebApp:
     def __init__(self):
@@ -26,6 +29,15 @@ class WebApp:
                 if frame is not None:
                     # Perform detection
                     detections = detector.detect(frame)
+                    
+                    # Log detections (with cooldown logic)
+                    logged = detection_logger.log_detections(frame, detections)
+                    
+                    # Update camera source in the last log entry if a new log was created
+                    if logged and detection_logger.detection_logs:
+                        detection_logger.detection_logs[-1]['camera_source'] = camera_manager.camera_source
+                    
+                    # Draw detections on frame
                     annotated_frame = detector.draw_detections(frame, detections)
                     
                     # Encode frame as JPEG
@@ -123,6 +135,52 @@ def get_status():
         'current_model': detector.current_model,
         'camera_status': camera_status
     })
+
+@app.route('/detection_logs')
+def get_detection_logs():
+    """Get detection logs and statistics"""
+    try:
+        logs = detection_logger.get_recent_logs(limit=50)  # Get last 50 logs
+        stats = detection_logger.get_stats()
+        return jsonify({
+            'status': 'success',
+            'logs': logs,
+            'stats': stats
+        })
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': str(e),
+            'logs': [],
+            'stats': {}
+        })
+
+@app.route('/clear_detection_logs', methods=['POST'])
+def clear_detection_logs():
+    """Clear all detection logs"""
+    try:
+        detection_logger.clear_logs()
+        return jsonify({
+            'status': 'success',
+            'message': 'Detection logs cleared successfully'
+        })
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        })
+
+@app.route('/thumbnail/<filename>')
+def serve_thumbnail(filename):
+    """Serve thumbnail images"""
+    try:
+        thumbnail_path = os.path.join(detection_logger.log_dir, "thumbnails", filename)
+        if os.path.exists(thumbnail_path):
+            return send_file(thumbnail_path, mimetype='image/jpeg')
+        else:
+            return jsonify({'error': 'Thumbnail not found'}), 404
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     print("Starting Computer Vision Object Detector Web App")

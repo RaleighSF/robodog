@@ -1,0 +1,42 @@
+[
+  {
+    "id": 1,
+    "timestamp": "2025-08-20T20:29:32.806855",
+    "formatted_time": "2025-08-20 20:29:32",
+    "message": "Alert: Person Detected",
+    "person_count": 1,
+    "max_confidence": 0.62,
+    "thumbnail": "detection_20250820_202932_806.jpg",
+    "camera_source": "mac"
+  },
+  {
+    "id": 2,
+    "timestamp": "2025-08-20T20:29:37.918476",
+    "formatted_time": "2025-08-20 20:29:37",
+    "message": "Alert: Person Detected",
+    "person_count": 1,
+    "max_confidence": 0.62,
+    "thumbnail": "detection_20250820_202937_918.jpg",
+    "camera_source": "mac"
+  },
+  {
+    "id": 3,
+    "timestamp": "2025-08-20T20:29:42.974636",
+    "formatted_time": "2025-08-20 20:29:42",
+    "message": "Alert: Person Detected",
+    "person_count": 1,
+    "max_confidence": 0.66,
+    "thumbnail": "detection_20250820_202942_974.jpg",
+    "camera_source": "mac"
+  },
+  {
+    "id": 4,
+    "timestamp": "2025-08-20T20:29:48.149680",
+    "formatted_time": "2025-08-20 20:29:48",
+    "message": "Alert: Person Detected",
+    "person_count": 1,
+    "max_confidence": 0.59,
+    "thumbnail": "detection_20250820_202948_149.jpg",
+    "camera_source": "unknown"
+  }
+]

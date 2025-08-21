@@ -166,13 +166,19 @@
         .control-section {
             display: flex;
             flex-direction: column;
-            gap: 20px;
+            gap: 25px;
             align-items: center;
         }
 
-        .control-row {
+        .primary-controls {
             display: flex;
-            gap: 20px;
+            gap: 30px;
+            align-items: center;
+        }
+
+        .camera-controls {
+            display: flex;
+            gap: 25px;
             align-items: center;
             flex-wrap: wrap;
         }
@@ -182,39 +188,58 @@
             color: var(--ntt-dark-gray);
         }
 
-        .robot-controls {
-            display: none;
-            gap: 10px;
-            padding: 15px;
-            background: rgba(0, 102, 204, 0.1);
+        .btn-primary {
+            padding: 16px 32px;
+            font-size: 16px;
+            font-weight: 700;
+            min-width: 160px;
+        }
+
+        .camera-select {
+            padding: 10px 16px;
+            border: 2px solid var(--ntt-light-gray);
             border-radius: 6px;
-            border: 1px solid var(--ntt-primary-blue);
+            font-size: 14px;
+            font-family: inherit;
+            background: var(--ntt-white);
+            color: var(--ntt-dark-gray);
+            cursor: pointer;
+            transition: border-color 0.3s;
+            min-width: 180px;
         }
 
-        .robot-controls.visible {
-            display: flex;
+        .camera-select:focus {
+            outline: none;
+            border-color: var(--ntt-primary-blue);
         }
 
-        .input-group {
+        .ip-group {
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 10px;
+            padding: 12px 16px;
+            background: rgba(0, 102, 204, 0.05);
+            border-radius: 6px;
+            border: 1px solid var(--ntt-primary-blue);
+            transition: opacity 0.3s, transform 0.3s;
         }
 
-        .text-input {
+        .ip-group.hidden {
+            display: none;
+        }
+
+        .ip-input {
             padding: 8px 12px;
             border: 1px solid var(--ntt-light-gray);
             border-radius: 4px;
             font-size: 14px;
             font-family: inherit;
+            width: 140px;
         }
 
-        .btn-small {
-            padding: 6px 12px;
-            font-size: 12px;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
+        .ip-input:focus {
+            outline: none;
+            border-color: var(--ntt-primary-blue);
         }
 
         .model-select {
@@ -324,6 +349,159 @@
             opacity: 0.8;
             font-size: 14px;
         }
+
+        /* Detection Log Styles */
+        .log-section {
+            margin: 30px;
+            background: var(--ntt-white);
+            border-radius: 8px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+
+        .log-header {
+            background: linear-gradient(135deg, var(--ntt-primary-blue) 0%, var(--ntt-dark-blue) 100%);
+            color: var(--ntt-white);
+            padding: 20px 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .log-header h2 {
+            margin: 0;
+            font-size: 20px;
+            font-weight: 600;
+        }
+
+        .log-controls {
+            display: flex;
+            gap: 10px;
+        }
+
+        .log-stats {
+            background: var(--ntt-gray);
+            padding: 15px 30px;
+            display: flex;
+            gap: 40px;
+            border-bottom: 1px solid var(--ntt-light-gray);
+        }
+
+        .stat-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .stat-label {
+            font-size: 12px;
+            color: var(--ntt-medium-gray);
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .stat-value {
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--ntt-primary-blue);
+        }
+
+        .log-container {
+            max-height: 400px;
+            overflow-y: auto;
+            border-bottom: 1px solid var(--ntt-light-gray);
+        }
+
+        .detection-log {
+            padding: 20px;
+        }
+
+        .log-empty {
+            text-align: center;
+            color: var(--ntt-medium-gray);
+            font-style: italic;
+            padding: 40px;
+        }
+
+        .log-entry {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            padding: 15px;
+            margin-bottom: 10px;
+            background: var(--ntt-gray);
+            border-radius: 8px;
+            border-left: 4px solid var(--ntt-error);
+            transition: all 0.3s ease;
+        }
+
+        .log-entry:hover {
+            background: var(--ntt-light-blue);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+
+        .log-thumbnail {
+            width: 60px;
+            height: 45px;
+            object-fit: cover;
+            border-radius: 4px;
+            border: 2px solid var(--ntt-white);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        .log-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .log-message {
+            font-weight: 600;
+            color: var(--ntt-error);
+            font-size: 14px;
+        }
+
+        .log-time {
+            font-size: 12px;
+            color: var(--ntt-medium-gray);
+        }
+
+        .log-details {
+            font-size: 11px;
+            color: var(--ntt-medium-gray);
+        }
+
+        .log-id {
+            background: var(--ntt-primary-blue);
+            color: var(--ntt-white);
+            font-size: 10px;
+            font-weight: 600;
+            padding: 4px 8px;
+            border-radius: 12px;
+            min-width: 20px;
+            text-align: center;
+        }
+
+        @media (max-width: 768px) {
+            .log-stats {
+                flex-direction: column;
+                gap: 20px;
+            }
+            
+            .log-entry {
+                flex-direction: column;
+                text-align: center;
+            }
+            
+            .log-thumbnail {
+                width: 80px;
+                height: 60px;
+            }
+        }
     </style>
 </head>
 <body>
@@ -349,35 +527,23 @@
         
         <div class="controls">
             <div class="control-section">
-                <div class="control-row">
-                    <button id="startBtn" class="btn btn-start">Start Patrol</button>
-                    <button id="stopBtn" class="btn btn-stop">Stop Patrol</button>
-                    
-                    <div class="control-group">
-                        <label for="modelSelect" class="control-label">Detection Mode:</label>
-                        <select id="modelSelect" class="model-select">
-                            <option value="YOLO">Security Objects Detection</option>
-                            <option value="Advanced">Advanced Mode (Future)</option>
-                        </select>
-                    </div>
+                <div class="primary-controls">
+                    <button id="startBtn" class="btn btn-start btn-primary">Start Patrol</button>
+                    <button id="stopBtn" class="btn btn-stop btn-primary">Stop Patrol</button>
                 </div>
                 
-                <div class="control-row">
+                <div class="camera-controls">
                     <div class="control-group">
                         <label for="cameraSelect" class="control-label">Camera Source:</label>
-                        <select id="cameraSelect" class="model-select">
+                        <select id="cameraSelect" class="camera-select">
                             <option value="mac">Mac Camera</option>
-                            <option value="unitree">Unitree Go2 Robot</option>
+                            <option value="watchdog">Watch Dog Robot</option>
                         </select>
                     </div>
                     
-                    <div id="robotControls" class="robot-controls">
-                        <div class="input-group">
-                            <label class="control-label">Robot IP:</label>
-                            <input type="text" id="robotIpInput" class="text-input" value="192.168.12.1" placeholder="192.168.12.1">
-                        </div>
-                        <button id="connectRobotBtn" class="btn btn-start btn-small">Connect</button>
-                        <button id="testRobotBtn" class="btn btn-stop btn-small">Test</button>
+                    <div id="robotIpGroup" class="ip-group hidden">
+                        <label for="robotIpInput" class="control-label">Robot IP:</label>
+                        <input type="text" id="robotIpInput" class="ip-input" value="192.168.12.1" placeholder="192.168.12.1">
                     </div>
                 </div>
             </div>
@@ -390,6 +556,38 @@
         </div>
         
         <div id="status" class="status info">Patrol system ready - Click "Start Patrol" to begin monitoring</div>
+        
+        <!-- Detection Log Viewer -->
+        <div class="log-section">
+            <div class="log-header">
+                <h2>Detection Log</h2>
+                <div class="log-controls">
+                    <button id="refreshLogBtn" class="btn btn-primary" style="padding: 8px 16px; font-size: 12px;">Refresh</button>
+                    <button id="clearLogBtn" class="btn btn-stop" style="padding: 8px 16px; font-size: 12px;">Clear Log</button>
+                </div>
+            </div>
+            
+            <div class="log-stats">
+                <div class="stat-item">
+                    <span class="stat-label">Total Detections:</span>
+                    <span id="totalDetections" class="stat-value">0</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Last Detection:</span>
+                    <span id="lastDetection" class="stat-value">None</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Avg. Confidence:</span>
+                    <span id="avgConfidence" class="stat-value">0%</span>
+                </div>
+            </div>
+            
+            <div class="log-container">
+                <div id="detectionLog" class="detection-log">
+                    <div class="log-empty">No detections logged yet</div>
+                </div>
+            </div>
+        </div>
     </div>
 
     <div class="footer">
@@ -397,17 +595,20 @@
     </div>
 
     <script>
+        console.log('JavaScript is loading...');
+        
         const startBtn = document.getElementById('startBtn');
         const stopBtn = document.getElementById('stopBtn');
-        const modelSelect = document.getElementById('modelSelect');
         const cameraSelect = document.getElementById('cameraSelect');
-        const robotControls = document.getElementById('robotControls');
+        const robotIpGroup = document.getElementById('robotIpGroup');
         const robotIpInput = document.getElementById('robotIpInput');
-        const connectRobotBtn = document.getElementById('connectRobotBtn');
-        const testRobotBtn = document.getElementById('testRobotBtn');
         const videoStream = document.getElementById('videoStream');
         const loadingText = document.getElementById('loadingText');
         const status = document.getElementById('status');
+        
+        console.log('Elements retrieved successfully');
+        console.log('startBtn element:', startBtn);
+        console.log('startBtn is null?', startBtn === null);
 
         function updateStatus(message, type = 'info') {
             status.textContent = message;
@@ -426,28 +627,6 @@
             loadingText.textContent = 'Robot patrol unit offline';
         }
 
-        startBtn.addEventListener('click', async () => {
-            try {
-                const response = await fetch('/start_detection', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    }
-                });
-                
-                const result = await response.json();
-                
-                if (result.status === 'success') {
-                    updateStatus(result.message, 'success');
-                    showVideo();
-                } else {
-                    updateStatus(result.message, 'error');
-                }
-            } catch (error) {
-                updateStatus('Failed to start patrol monitoring', 'error');
-                console.error('Error:', error);
-            }
-        });
 
         stopBtn.addEventListener('click', async () => {
             try {
@@ -467,96 +646,73 @@
             }
         });
 
-        modelSelect.addEventListener('change', async () => {
-            try {
-                const response = await fetch('/switch_model', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({ model: modelSelect.value })
-                });
-                
-                const result = await response.json();
-                updateStatus(result.message, 'success');
-            } catch (error) {
-                updateStatus('Failed to switch detection mode', 'error');
-                console.error('Error:', error);
-            }
-        });
 
-        // Camera source selection
-        cameraSelect.addEventListener('change', async () => {
+        // Camera source selection - only show/hide IP field, don't switch cameras yet
+        cameraSelect.addEventListener('change', () => {
             const source = cameraSelect.value;
             
-            // Show/hide robot controls
-            if (source === 'unitree') {
-                robotControls.classList.add('visible');
+            // Show/hide IP input for Watch Dog robot
+            if (source === 'watchdog') {
+                robotIpGroup.classList.remove('hidden');
             } else {
-                robotControls.classList.remove('visible');
+                robotIpGroup.classList.add('hidden');
             }
             
+            // Update status to indicate selection
+            const cameraName = source === 'watchdog' ? 'Watch Dog Robot' : 'Mac Camera';
+            updateStatus(`${cameraName} selected - Click "Start Patrol" to begin`, 'info');
+        });
+
+        // Enhanced Start Patrol - handles camera switching and initialization
+        console.log('Debugging elements...');
+        console.log('startBtn exists:', startBtn !== null);
+        console.log('cameraSelect exists:', cameraSelect !== null);
+        console.log('robotIpInput exists:', robotIpInput !== null);
+        
+        console.log('Adding Start Patrol event listener...');
+        startBtn.addEventListener('click', async () => {
+            console.log('Start Patrol button clicked!');
+            const source = cameraSelect.value;
+            const backendSource = source === 'watchdog' ? 'unitree' : source;
+            
+            console.log(`Starting patrol with source: ${source} (backend: ${backendSource})`);
+            updateStatus('Starting patrol...', 'info');
+            
             try {
-                const response = await fetch('/switch_camera', {
+                // Switch camera source first
+                console.log(`Switching to camera source: ${backendSource}, IP: ${robotIpInput.value}`);
+                const switchResponse = await fetch('/switch_camera', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                     },
                     body: JSON.stringify({ 
-                        source: source,
+                        source: backendSource,
                         robot_ip: robotIpInput.value
                     })
                 });
                 
-                const result = await response.json();
-                updateStatus(result.message, result.status === 'success' ? 'success' : 'error');
-            } catch (error) {
-                updateStatus('Failed to switch camera source', 'error');
-                console.error('Error:', error);
-            }
-        });
-
-        // Robot connection
-        connectRobotBtn.addEventListener('click', async () => {
-            try {
-                const response = await fetch('/switch_camera', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({ 
-                        source: 'unitree',
-                        robot_ip: robotIpInput.value
-                    })
+                const switchResult = await switchResponse.json();
+                if (switchResult.status !== 'success') {
+                    updateStatus(`Camera setup failed: ${switchResult.message}`, 'error');
+                    return;
+                }
+                
+                // Now start detection
+                const startResponse = await fetch('/start_detection', {
+                    method: 'POST'
                 });
                 
-                const result = await response.json();
-                updateStatus(result.message, result.status === 'success' ? 'success' : 'error');
-            } catch (error) {
-                updateStatus('Failed to connect to robot', 'error');
-                console.error('Error:', error);
-            }
-        });
-
-        // Robot test command
-        testRobotBtn.addEventListener('click', async () => {
-            try {
-                const response = await fetch('/robot_command', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({ 
-                        command: 'status',
-                        params: {}
-                    })
-                });
+                const startResult = await startResponse.json();
+                if (startResult.status === 'success') {
+                    updateStatus(`Patrol started with ${source === 'watchdog' ? 'Watch Dog Robot' : 'Mac Camera'}`, 'success');
+                    showVideo();
+                } else {
+                    updateStatus(`Failed to start patrol: ${startResult.message}`, 'error');
+                }
                 
-                const result = await response.json();
-                updateStatus(`Robot test: ${result.message || result.status}`, 
-                           result.status === 'success' ? 'success' : 'error');
             } catch (error) {
-                updateStatus('Robot test failed', 'error');
+                updateStatus('Failed to start patrol', 'error');
                 console.error('Error:', error);
             }
         });
@@ -574,6 +730,93 @@
                 console.error('Status check failed:', error);
             }
         }, 2000);
+
+        // Detection Log Functions
+        const refreshLogBtn = document.getElementById('refreshLogBtn');
+        const clearLogBtn = document.getElementById('clearLogBtn');
+        const detectionLog = document.getElementById('detectionLog');
+        const totalDetections = document.getElementById('totalDetections');
+        const lastDetection = document.getElementById('lastDetection');
+        const avgConfidence = document.getElementById('avgConfidence');
+
+        async function refreshLog() {
+            try {
+                const response = await fetch('/detection_logs');
+                const data = await response.json();
+                
+                updateLogDisplay(data.logs);
+                updateLogStats(data.stats);
+            } catch (error) {
+                console.error('Error refreshing log:', error);
+            }
+        }
+
+        function updateLogDisplay(logs) {
+            if (!logs || logs.length === 0) {
+                detectionLog.innerHTML = '<div class="log-empty">No detections logged yet</div>';
+                return;
+            }
+
+            const logHtml = logs.reverse().map(log => `
+                <div class="log-entry">
+                    <div class="log-id">#${log.id}</div>
+                    ${log.thumbnail ? `<img class="log-thumbnail" src="/thumbnail/${log.thumbnail}" alt="Detection thumbnail" />` : ''}
+                    <div class="log-content">
+                        <div class="log-message">${log.message}</div>
+                        <div class="log-time">${log.formatted_time}</div>
+                        <div class="log-details">
+                            ${log.person_count} person${log.person_count !== 1 ? 's' : ''} detected | 
+                            Confidence: ${Math.round(log.max_confidence * 100)}%
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+
+            detectionLog.innerHTML = logHtml;
+        }
+
+        function updateLogStats(stats) {
+            totalDetections.textContent = stats.total_detections;
+            lastDetection.textContent = stats.last_detection || 'None';
+            avgConfidence.textContent = Math.round(stats.avg_confidence * 100) + '%';
+        }
+
+        async function clearLog() {
+            if (!confirm('Are you sure you want to clear all detection logs? This cannot be undone.')) {
+                return;
+            }
+
+            try {
+                const response = await fetch('/clear_detection_logs', {
+                    method: 'POST'
+                });
+                
+                const result = await response.json();
+                if (result.status === 'success') {
+                    updateStatus('Detection logs cleared', 'success');
+                    refreshLog();
+                } else {
+                    updateStatus('Failed to clear logs', 'error');
+                }
+            } catch (error) {
+                updateStatus('Error clearing logs', 'error');
+                console.error('Error:', error);
+            }
+        }
+
+        // Event listeners for log controls
+        refreshLogBtn.addEventListener('click', refreshLog);
+        clearLogBtn.addEventListener('click', clearLog);
+
+        // Auto-refresh log every 3 seconds when patrol is running
+        setInterval(() => {
+            if (document.getElementById('videoStream').style.display === 'block') {
+                refreshLog();
+            }
+        }, 3000);
+
+        // Initial log load
+        refreshLog();
     </script>
 </body>
 </html>

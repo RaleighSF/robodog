@@ -23,17 +23,15 @@ class HybridDetector:
         self.yolo_net = None
         self.yolo_classes = []
         
-        # Target classes: remote (65) and cell phone (67) in COCO dataset
+        # Target classes: person (0) in COCO dataset for factory patrol monitoring
         self.target_classes = {
-            65: "remote",
-            67: "cell phone"
+            0: "person"
         }
         
         # Colors for different detection types
         self.colors = {
             'face': (0, 255, 0),        # Green
-            'remote': (0, 165, 255),    # Orange
-            'cell phone': (255, 0, 255) # Magenta
+            'person': (0, 0, 255)       # Red - for security alert visibility
         }
         
         self.confidence_threshold = 0.5
@@ -93,7 +91,7 @@ class HybridDetector:
         """Perform YOLO detection on frame"""
         detections = []
         
-        # YOLO detection for remote and cell phone only
+        # YOLO detection for person detection only
         if self.yolo_net is not None:
             detections.extend(self._detect_yolo_filtered(frame))
         
@@ -120,7 +118,7 @@ class HybridDetector:
         return detections
         
     def _detect_yolo_filtered(self, frame: np.ndarray) -> List[Detection]:
-        """YOLO detection filtered for remote and cell phone only"""
+        """YOLO detection filtered for person detection only"""
         try:
             height, width = frame.shape[:2]
             
@@ -152,7 +150,7 @@ class HybridDetector:
                     class_id = np.argmax(scores)
                     confidence = scores[class_id]
                     
-                    # Only process target classes (remote and cell phone)
+                    # Only process target classes (person)
                     if confidence > self.confidence_threshold and class_id in self.target_classes:
                         # Convert to pixel coordinates
                         center_x = int(detection[0] * width)
