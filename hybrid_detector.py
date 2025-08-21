@@ -34,8 +34,8 @@ class HybridDetector:
             'person': (0, 0, 255)       # Red - for security alert visibility
         }
         
-        self.confidence_threshold = 0.5
-        self.nms_threshold = 0.4
+        self.confidence_threshold = 0.7  # Higher confidence to reduce false positives
+        self.nms_threshold = 0.6         # Higher NMS to better suppress overlapping boxes
         
         self._setup_yolo()
         
@@ -175,12 +175,62 @@ class HybridDetector:
                     x, y, w, h = boxes[i]
                     class_name = self.target_classes[class_ids[i]]
                     detections.append(Detection((x, y, w, h), class_ids[i], confidences[i], class_name))
+            
+            # Additional post-processing to remove remaining overlaps
+            detections = self._remove_overlapping_detections(detections)
                     
             return detections
             
         except Exception as e:
             print(f"YOLO detection error: {e}")
             return []
+    
+    def _remove_overlapping_detections(self, detections: List[Detection]) -> List[Detection]:
+        """Remove overlapping detections, keeping only the highest confidence ones"""
+        if len(detections) <= 1:
+            return detections
+        
+        # Sort detections by confidence (highest first)
+        detections.sort(key=lambda d: d.confidence, reverse=True)
+        
+        filtered_detections = []
+        for detection in detections:
+            # Check if this detection overlaps significantly with any already accepted detection
+            overlaps_significantly = False
+            for accepted_detection in filtered_detections:
+                if self._calculate_overlap(detection, accepted_detection) > 0.3:  # 30% overlap threshold
+                    overlaps_significantly = True
+                    break
+            
+            # Only keep this detection if it doesn't overlap significantly with accepted ones
+            if not overlaps_significantly:
+                filtered_detections.append(detection)
+        
+        return filtered_detections
+    
+    def _calculate_overlap(self, det1: Detection, det2: Detection) -> float:
+        """Calculate intersection over union (IoU) between two detections"""
+        x1, y1, w1, h1 = det1.bbox
+        x2, y2, w2, h2 = det2.bbox
+        
+        # Calculate intersection
+        xi1 = max(x1, x2)
+        yi1 = max(y1, y2)
+        xi2 = min(x1 + w1, x2 + w2)
+        yi2 = min(y1 + h1, y2 + h2)
+        
+        if xi2 <= xi1 or yi2 <= yi1:
+            return 0.0
+        
+        intersection = (xi2 - xi1) * (yi2 - yi1)
+        
+        # Calculate union
+        area1 = w1 * h1
+        area2 = w2 * h2
+        union = area1 + area2 - intersection
+        
+        # Return IoU
+        return intersection / union if union > 0 else 0.0
             
     def draw_detections(self, frame: np.ndarray, detections: List[Detection]) -> np.ndarray:
         """Draw bounding boxes and labels on frame"""
