@@ -18,6 +18,7 @@ class DetectionLogger:
         # Create directories
         os.makedirs(self.log_dir, exist_ok=True)
         os.makedirs(os.path.join(self.log_dir, "thumbnails"), exist_ok=True)
+        os.makedirs(os.path.join(self.log_dir, "images"), exist_ok=True)
         
         # Load existing logs
         self._load_logs()
@@ -47,31 +48,39 @@ class DetectionLogger:
             print(f"Error saving logs: {e}")
     
     def _save_thumbnail(self, frame: np.ndarray, timestamp_str: str) -> str:
-        """Save thumbnail image and return filename"""
+        """Save both thumbnail and larger image, return filename"""
         try:
-            # Create thumbnail (resize to 320x240 while maintaining aspect ratio)
             height, width = frame.shape[:2]
-            aspect_ratio = width / height
-            
-            if aspect_ratio > 320/240:
-                # Width is the limiting factor
-                new_width = 320
-                new_height = int(320 / aspect_ratio)
-            else:
-                # Height is the limiting factor
-                new_height = 240
-                new_width = int(240 * aspect_ratio)
-            
-            thumbnail = cv2.resize(frame, (new_width, new_height))
-            
-            # Save thumbnail
             filename = f"detection_{timestamp_str}.jpg"
-            filepath = os.path.join(self.log_dir, "thumbnails", filename)
-            cv2.imwrite(filepath, thumbnail)
+            
+            # Save small thumbnail (320x240 max, maintaining aspect ratio)
+            aspect_ratio = width / height
+            if aspect_ratio > 320/240:
+                thumb_width = 320
+                thumb_height = int(320 / aspect_ratio)
+            else:
+                thumb_height = 240
+                thumb_width = int(240 * aspect_ratio)
+            
+            thumbnail = cv2.resize(frame, (thumb_width, thumb_height))
+            thumb_filepath = os.path.join(self.log_dir, "thumbnails", filename)
+            cv2.imwrite(thumb_filepath, thumbnail)
+            
+            # Save larger image for modal (max 800x600, maintaining aspect ratio)
+            if aspect_ratio > 800/600:
+                large_width = 800
+                large_height = int(800 / aspect_ratio)
+            else:
+                large_height = 600
+                large_width = int(600 * aspect_ratio)
+            
+            large_image = cv2.resize(frame, (large_width, large_height))
+            large_filepath = os.path.join(self.log_dir, "images", filename)
+            cv2.imwrite(large_filepath, large_image)
             
             return filename
         except Exception as e:
-            print(f"Error saving thumbnail: {e}")
+            print(f"Error saving images: {e}")
             return ""
     
     def log_detections(self, frame: np.ndarray, detections: List[Detection]) -> bool:
@@ -139,7 +148,7 @@ class DetectionLogger:
         return self.detection_logs[-limit:] if self.detection_logs else []
     
     def clear_logs(self):
-        """Clear all logs and thumbnails"""
+        """Clear all logs, thumbnails, and images"""
         try:
             # Clear log file
             self.detection_logs = []
@@ -151,6 +160,13 @@ class DetectionLogger:
                 for filename in os.listdir(thumbnail_dir):
                     if filename.endswith('.jpg'):
                         os.remove(os.path.join(thumbnail_dir, filename))
+            
+            # Remove larger image files
+            images_dir = os.path.join(self.log_dir, "images")
+            if os.path.exists(images_dir):
+                for filename in os.listdir(images_dir):
+                    if filename.endswith('.jpg'):
+                        os.remove(os.path.join(images_dir, filename))
             
             print("Detection logs cleared")
         except Exception as e:
@@ -164,17 +180,11 @@ class DetectionLogger:
             return {
                 "total_detections": 0,
                 "last_detection": None,
-                "avg_confidence": 0,
                 "cooldown_seconds": self.cooldown_seconds
             }
-        
-        # Calculate average confidence
-        confidences = [log.get("max_confidence", 0) for log in self.detection_logs]
-        avg_confidence = sum(confidences) / len(confidences) if confidences else 0
         
         return {
             "total_detections": total_logs,
             "last_detection": self.detection_logs[-1]["formatted_time"] if self.detection_logs else None,
-            "avg_confidence": round(avg_confidence, 2),
             "cooldown_seconds": self.cooldown_seconds
         }

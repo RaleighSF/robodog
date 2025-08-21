@@ -182,6 +182,24 @@ def serve_thumbnail(filename):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@app.route('/image/<filename>')
+def serve_large_image(filename):
+    """Serve larger images for modal display, fallback to thumbnail if needed"""
+    try:
+        # Try to serve the large image first
+        image_path = os.path.join(detection_logger.log_dir, "images", filename)
+        if os.path.exists(image_path):
+            return send_file(image_path, mimetype='image/jpeg')
+        
+        # Fallback to thumbnail for older entries (will be upscaled by CSS)
+        thumbnail_path = os.path.join(detection_logger.log_dir, "thumbnails", filename)
+        if os.path.exists(thumbnail_path):
+            return send_file(thumbnail_path, mimetype='image/jpeg')
+        
+        return jsonify({'error': 'Image not found'}), 404
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 if __name__ == '__main__':
     print("Starting Computer Vision Object Detector Web App")
     print("Open your browser and go to: http://127.0.0.1:5000")

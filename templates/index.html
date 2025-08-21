@@ -69,206 +69,133 @@
             padding-left: 20px;
         }
 
-        .nav-links {
+        .nav-controls {
             display: flex;
-            gap: 30px;
             align-items: center;
         }
 
-        .nav-link {
-            color: var(--ntt-medium-gray);
-            text-decoration: none;
-            font-weight: 500;
-            transition: color 0.3s;
+        .header-controls {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            background: rgba(255, 255, 255, 0.1);
+            padding: 8px 12px;
+            border-radius: 8px;
+            backdrop-filter: blur(10px);
         }
 
-        .nav-link:hover {
-            color: var(--ntt-primary-blue);
+        .camera-control {
+            display: flex;
+            align-items: center;
+        }
+
+        .header-select {
+            padding: 6px 10px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 4px;
+            background: rgba(255, 255, 255, 0.9);
+            color: var(--ntt-dark-gray);
+            font-size: 13px;
+            font-weight: 500;
+            min-width: 120px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .header-select:focus {
+            outline: none;
+            border-color: rgba(255, 255, 255, 0.8);
+            background: var(--ntt-white);
+        }
+
+        .ip-control {
+            display: flex;
+            align-items: center;
+            transition: all 0.3s ease;
+        }
+
+        .ip-control.hidden {
+            display: none;
+        }
+
+        .header-input {
+            padding: 6px 10px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 4px;
+            background: rgba(255, 255, 255, 0.9);
+            color: var(--ntt-dark-gray);
+            font-size: 13px;
+            width: 120px;
+            transition: all 0.2s;
+        }
+
+        .header-input:focus {
+            outline: none;
+            border-color: rgba(255, 255, 255, 0.8);
+            background: var(--ntt-white);
+        }
+
+        .patrol-buttons {
+            display: flex;
+            gap: 8px;
+            margin-left: 10px;
+            padding-left: 10px;
+            border-left: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .btn-header {
+            padding: 6px 12px;
+            border: none;
+            border-radius: 4px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            min-width: 60px;
+        }
+
+        .btn-header.btn-start {
+            background: var(--ntt-success);
+            color: var(--ntt-white);
+        }
+
+        .btn-header.btn-start:hover {
+            background: #008833;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 8px rgba(0, 170, 68, 0.3);
+        }
+
+        .btn-header.btn-stop {
+            background: var(--ntt-error);
+            color: var(--ntt-white);
+        }
+
+        .btn-header.btn-stop:hover {
+            background: #bb2222;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 8px rgba(221, 51, 51, 0.3);
         }
 
         .container {
             max-width: 1400px;
-            margin: 30px auto;
+            margin: 20px auto;
             background: var(--ntt-white);
             border-radius: 12px;
             overflow: hidden;
             box-shadow: 0 8px 32px rgba(0,0,0,0.1);
         }
 
-        .header {
-            background: linear-gradient(135deg, var(--ntt-primary-blue) 0%, var(--ntt-dark-blue) 100%);
-            color: var(--ntt-white);
-            padding: 40px 30px;
-            text-align: center;
-        }
-
-        .header h1 {
-            font-size: 32px;
-            font-weight: 700;
-            margin-bottom: 10px;
-        }
-
-        .header p {
-            font-size: 18px;
-            font-weight: 300;
-            opacity: 0.9;
-        }
-
-        .controls {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            gap: 20px;
-            padding: 30px;
-            background: var(--ntt-gray);
-            border-bottom: 1px solid var(--ntt-light-gray);
-        }
-
-        .btn {
-            padding: 12px 24px;
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 14px;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            transition: all 0.3s;
-            font-family: inherit;
-        }
-
-        .btn-start {
-            background: var(--ntt-success);
-            color: var(--ntt-white);
-        }
-
-        .btn-start:hover {
-            background: #008833;
-            transform: translateY(-1px);
-        }
-
-        .btn-stop {
-            background: var(--ntt-error);
-            color: var(--ntt-white);
-        }
-
-        .btn-stop:hover {
-            background: #bb2222;
-            transform: translateY(-1px);
-        }
-
-        .control-group {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-
-        .control-section {
-            display: flex;
-            flex-direction: column;
-            gap: 25px;
-            align-items: center;
-        }
-
-        .primary-controls {
-            display: flex;
-            gap: 30px;
-            align-items: center;
-        }
-
-        .camera-controls {
-            display: flex;
-            gap: 25px;
-            align-items: center;
-            flex-wrap: wrap;
-        }
-
-        .control-label {
-            font-weight: 600;
-            color: var(--ntt-dark-gray);
-        }
-
-        .btn-primary {
-            padding: 16px 32px;
-            font-size: 16px;
-            font-weight: 700;
-            min-width: 160px;
-        }
-
-        .camera-select {
-            padding: 10px 16px;
-            border: 2px solid var(--ntt-light-gray);
-            border-radius: 6px;
-            font-size: 14px;
-            font-family: inherit;
-            background: var(--ntt-white);
-            color: var(--ntt-dark-gray);
-            cursor: pointer;
-            transition: border-color 0.3s;
-            min-width: 180px;
-        }
-
-        .camera-select:focus {
-            outline: none;
-            border-color: var(--ntt-primary-blue);
-        }
-
-        .ip-group {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            padding: 12px 16px;
-            background: rgba(0, 102, 204, 0.05);
-            border-radius: 6px;
-            border: 1px solid var(--ntt-primary-blue);
-            transition: opacity 0.3s, transform 0.3s;
-        }
-
-        .ip-group.hidden {
-            display: none;
-        }
-
-        .ip-input {
-            padding: 8px 12px;
-            border: 1px solid var(--ntt-light-gray);
-            border-radius: 4px;
-            font-size: 14px;
-            font-family: inherit;
-            width: 140px;
-        }
-
-        .ip-input:focus {
-            outline: none;
-            border-color: var(--ntt-primary-blue);
-        }
-
-        .model-select {
-            padding: 10px 16px;
-            border: 2px solid var(--ntt-light-gray);
-            border-radius: 6px;
-            font-size: 14px;
-            font-family: inherit;
-            background: var(--ntt-white);
-            color: var(--ntt-dark-gray);
-            cursor: pointer;
-            transition: border-color 0.3s;
-        }
-
-        .model-select:focus {
-            outline: none;
-            border-color: var(--ntt-primary-blue);
-        }
 
         .video-container {
             position: relative;
             display: flex;
             justify-content: center;
             align-items: center;
-            min-height: 600px;
+            min-height: 500px;
             background: linear-gradient(45deg, #000000 0%, #1a1a1a 100%);
-            border: 3px solid var(--ntt-primary-blue);
-            margin: 30px;
-            border-radius: 8px;
+            border: 2px solid var(--ntt-primary-blue);
+            margin: 0;
+            border-radius: 8px 8px 0 0;
             overflow: hidden;
         }
 
@@ -291,11 +218,12 @@
         }
 
         .status {
-            margin: 0 30px 30px;
-            padding: 15px 20px;
-            border-radius: 8px;
-            font-weight: 600;
+            margin: 0;
+            padding: 12px 20px;
+            border-radius: 0;
+            font-weight: 500;
             text-align: center;
+            border-top: 1px solid var(--ntt-light-gray);
         }
 
         .status.success {
@@ -352,17 +280,18 @@
 
         /* Detection Log Styles */
         .log-section {
-            margin: 30px;
+            margin: 0;
             background: var(--ntt-white);
-            border-radius: 8px;
-            box-shadow: 0 4px 16px rgba(0,0,0,0.1);
+            border-radius: 0;
+            box-shadow: none;
+            border-top: 1px solid var(--ntt-light-gray);
             overflow: hidden;
         }
 
         .log-header {
             background: linear-gradient(135deg, var(--ntt-primary-blue) 0%, var(--ntt-dark-blue) 100%);
             color: var(--ntt-white);
-            padding: 20px 30px;
+            padding: 15px 20px;
             display: flex;
             justify-content: space-between;
             align-items: center;
@@ -370,7 +299,7 @@
 
         .log-header h2 {
             margin: 0;
-            font-size: 20px;
+            font-size: 18px;
             font-weight: 600;
         }
 
@@ -502,6 +431,155 @@
                 height: 60px;
             }
         }
+
+        /* Image Modal/Lightbox Styles */
+        .image-modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.9);
+            backdrop-filter: blur(5px);
+            cursor: pointer;
+        }
+
+        .image-modal.show {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+
+        .modal-content {
+            position: relative;
+            max-width: 90%;
+            max-height: 90%;
+            cursor: default;
+        }
+
+        .modal-image {
+            max-width: 100%;
+            max-height: 100%;
+            min-width: 400px;
+            min-height: 300px;
+            border-radius: 8px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+            object-fit: contain;
+        }
+
+        .modal-close {
+            position: absolute;
+            top: -40px;
+            right: 0;
+            background: var(--ntt-white);
+            color: var(--ntt-dark-gray);
+            border: none;
+            border-radius: 50%;
+            width: 32px;
+            height: 32px;
+            font-size: 18px;
+            font-weight: bold;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+            transition: all 0.2s;
+        }
+
+        .modal-close:hover {
+            background: var(--ntt-error);
+            color: var(--ntt-white);
+            transform: scale(1.1);
+        }
+
+        .modal-info {
+            position: absolute;
+            bottom: -60px;
+            left: 0;
+            right: 0;
+            background: rgba(0, 0, 0, 0.7);
+            color: var(--ntt-white);
+            padding: 10px 15px;
+            border-radius: 4px;
+            text-align: center;
+            font-size: 14px;
+        }
+
+        .log-thumbnail {
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .log-thumbnail:hover {
+            transform: scale(1.1);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            border-color: var(--ntt-primary-blue);
+        }
+
+        @media (max-width: 768px) {
+            .nav-container {
+                flex-direction: column;
+                gap: 15px;
+                padding: 15px 20px;
+            }
+            
+            .header-controls {
+                flex-wrap: wrap;
+                gap: 10px;
+                padding: 6px 10px;
+            }
+            
+            .patrol-buttons {
+                margin-left: 0;
+                padding-left: 0;
+                border-left: none;
+                border-top: 1px solid rgba(255, 255, 255, 0.2);
+                padding-top: 8px;
+            }
+            
+            .modal-content {
+                max-width: 95%;
+                max-height: 80%;
+            }
+            
+            .modal-image {
+                min-width: 280px;
+                min-height: 210px;
+            }
+            
+            .modal-close {
+                top: -35px;
+                width: 28px;
+                height: 28px;
+                font-size: 16px;
+            }
+            
+            .modal-info {
+                bottom: -50px;
+                font-size: 12px;
+                padding: 8px 12px;
+            }
+            
+            .log-stats {
+                flex-direction: column;
+                gap: 15px;
+            }
+            
+            .log-entry {
+                flex-direction: column;
+                text-align: center;
+                gap: 10px;
+            }
+        }
     </style>
 </head>
 <body>
@@ -511,44 +589,29 @@
                 <a href="#" class="ntt-logo">NTT DATA</a>
                 <div class="project-title">Project Watch Dog</div>
             </div>
-            <div class="nav-links">
-                <a href="#" class="nav-link">Dashboard</a>
-                <a href="#" class="nav-link">Reports</a>
-                <a href="#" class="nav-link">Settings</a>
-            </div>
-        </div>
-    </nav>
-
-    <div class="container">
-        <div class="header">
-            <h1>Factory Patrol Monitoring System</h1>
-            <p>Robotic patrol unit surveillance with AI-powered object detection</p>
-        </div>
-        
-        <div class="controls">
-            <div class="control-section">
-                <div class="primary-controls">
-                    <button id="startBtn" class="btn btn-start btn-primary">Start Patrol</button>
-                    <button id="stopBtn" class="btn btn-stop btn-primary">Stop Patrol</button>
-                </div>
-                
-                <div class="camera-controls">
-                    <div class="control-group">
-                        <label for="cameraSelect" class="control-label">Camera Source:</label>
-                        <select id="cameraSelect" class="camera-select">
+            <div class="nav-controls">
+                <div class="header-controls">
+                    <div class="camera-control">
+                        <select id="cameraSelect" class="header-select">
                             <option value="mac">Mac Camera</option>
                             <option value="watchdog">Watch Dog Robot</option>
                         </select>
                     </div>
                     
-                    <div id="robotIpGroup" class="ip-group hidden">
-                        <label for="robotIpInput" class="control-label">Robot IP:</label>
-                        <input type="text" id="robotIpInput" class="ip-input" value="192.168.12.1" placeholder="192.168.12.1">
+                    <div id="robotIpGroup" class="ip-control hidden">
+                        <input type="text" id="robotIpInput" class="header-input" value="192.168.12.1" placeholder="Robot IP">
+                    </div>
+                    
+                    <div class="patrol-buttons">
+                        <button id="startBtn" class="btn-header btn-start">Start</button>
+                        <button id="stopBtn" class="btn-header btn-stop">Stop</button>
                     </div>
                 </div>
             </div>
         </div>
-        
+    </nav>
+
+    <div class="container">
         <div class="video-container">
             <div class="patrol-overlay">🤖 Robot Dog Patrol Unit - Live Feed</div>
             <img id="videoStream" class="video-stream" src="" alt="Robot patrol video feed will appear here" style="display: none;">
@@ -576,10 +639,6 @@
                     <span class="stat-label">Last Detection:</span>
                     <span id="lastDetection" class="stat-value">None</span>
                 </div>
-                <div class="stat-item">
-                    <span class="stat-label">Avg. Confidence:</span>
-                    <span id="avgConfidence" class="stat-value">0%</span>
-                </div>
             </div>
             
             <div class="log-container">
@@ -592,6 +651,15 @@
 
     <div class="footer">
         <p>&copy; 2024 NTT DATA Corporation. Project Watch Dog - Advanced Factory Surveillance Solution.</p>
+    </div>
+
+    <!-- Image Modal -->
+    <div id="imageModal" class="image-modal">
+        <div class="modal-content">
+            <button class="modal-close" onclick="closeImageModal()">&times;</button>
+            <img id="modalImage" class="modal-image" src="" alt="Detection Image">
+            <div id="modalInfo" class="modal-info"></div>
+        </div>
     </div>
 
     <script>
@@ -737,7 +805,6 @@
         const detectionLog = document.getElementById('detectionLog');
         const totalDetections = document.getElementById('totalDetections');
         const lastDetection = document.getElementById('lastDetection');
-        const avgConfidence = document.getElementById('avgConfidence');
 
         async function refreshLog() {
             try {
@@ -760,7 +827,7 @@
             const logHtml = logs.reverse().map(log => `
                 <div class="log-entry">
                     <div class="log-id">#${log.id}</div>
-                    ${log.thumbnail ? `<img class="log-thumbnail" src="/thumbnail/${log.thumbnail}" alt="Detection thumbnail" />` : ''}
+                    ${log.thumbnail ? `<img class="log-thumbnail" src="/thumbnail/${log.thumbnail}" alt="Detection thumbnail" onclick="openImageModal('/image/${log.thumbnail}', '${log.message}', '${log.formatted_time}')" />` : ''}
                     <div class="log-content">
                         <div class="log-message">${log.message}</div>
                         <div class="log-time">${log.formatted_time}</div>
@@ -778,7 +845,6 @@
         function updateLogStats(stats) {
             totalDetections.textContent = stats.total_detections;
             lastDetection.textContent = stats.last_detection || 'None';
-            avgConfidence.textContent = Math.round(stats.avg_confidence * 100) + '%';
         }
 
         async function clearLog() {
@@ -817,6 +883,43 @@
 
         // Initial log load
         refreshLog();
+
+        // Image Modal Functions
+        function openImageModal(imageSrc, message, timestamp) {
+            const modal = document.getElementById('imageModal');
+            const modalImage = document.getElementById('modalImage');
+            const modalInfo = document.getElementById('modalInfo');
+            
+            modalImage.src = imageSrc;
+            modalInfo.textContent = `${message} - ${timestamp}`;
+            
+            modal.classList.add('show');
+            
+            // Prevent body scrolling when modal is open
+            document.body.style.overflow = 'hidden';
+        }
+
+        function closeImageModal() {
+            const modal = document.getElementById('imageModal');
+            modal.classList.remove('show');
+            
+            // Restore body scrolling
+            document.body.style.overflow = '';
+        }
+
+        // Close modal when clicking outside the image
+        document.getElementById('imageModal').addEventListener('click', function(event) {
+            if (event.target === this) {
+                closeImageModal();
+            }
+        });
+
+        // Close modal with Escape key
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'Escape') {
+                closeImageModal();
+            }
+        });
     </script>
 </body>
 </html>

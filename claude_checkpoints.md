@@ -94,3 +94,148 @@ Flask>=2.3.0            # Web framework
 - Web interface replaced tkinter for better compatibility
 
 This checkpoint represents a solid foundation for computer vision object detection with room for future enhancements.
+
+---
+
+## Checkpoint 2: Robot Dog Integration & Person Detection 
+**Date**: 2025-08-20  
+**Commit**: Working camera milestone (8f22c41)
+
+### Summary
+Extended the application to support Unitree Go2 robot dog camera feeds and switched detection focus from remote/phone to person detection for factory patrol monitoring.
+
+### Key Changes Made
+1. **Multi-Camera Support** - Added camera source switching between Mac webcam and robot dog
+2. **Person Detection** - Changed target detection from remote/phone to person (COCO class 0)
+3. **Robot Dog Integration** - Added Unitree Go2 WebRTC client support
+4. **Enhanced UI** - Updated interface with camera selection and robot controls
+
+### Technical Additions
+- **UnitreeGo2Client** - WebRTC connection handling for robot video feed
+- **Camera Source Switching** - Runtime switching between Mac/Unitree cameras
+- **Async Video Streaming** - Robot dog video handled with asyncio event loops
+- **IP Configuration** - Configurable robot IP address in UI
+
+---
+
+## Checkpoint 3: Detection Logging System
+**Date**: 2025-08-21  
+**Commit**: Working detection log (2e414cd)
+
+### Summary
+Implemented comprehensive detection logging system with 5-second cooldown, thumbnail capture, and real-time web interface display.
+
+### Architecture Updates
+```
+watch_dog/
+├── detection_logger.py     # NEW: Detection logging with cooldown system
+├── detection_logs/         # NEW: Log storage directory
+│   ├── detection_log.json  # Persistent log storage
+│   └── thumbnails/         # Auto-captured detection thumbnails
+├── web_app.py             # Updated: Integrated logging pipeline
+├── hybrid_detector.py     # Updated: Fixed outdated comments
+├── templates/index.html   # Updated: Detection log viewer UI
+└── ...
+```
+
+### New Features Implemented
+
+#### 1. **DetectionLogger Class** (`detection_logger.py`)
+- **5-Second Cooldown**: Prevents spam by only logging every 5 seconds
+- **Thumbnail Capture**: Auto-saves 320x240 thumbnails of detection frames
+- **JSON Persistence**: Stores logs in `detection_logs/detection_log.json`
+- **Statistics Tracking**: Counts, confidence averages, last detection time
+- **Log Management**: Clear logs, maintain max 100 entries
+
+#### 2. **Enhanced Web Interface** (`templates/index.html`)
+- **Detection Log Viewer**: Real-time display of person detection alerts
+- **Statistics Dashboard**: Total detections, last detection, avg confidence
+- **Thumbnail Gallery**: Shows captured images with each detection
+- **Auto-refresh**: Updates every 3 seconds during active patrol
+- **Log Controls**: Refresh and clear buttons for log management
+
+#### 3. **New API Endpoints** (`web_app.py`)
+- **`/detection_logs`**: Retrieve recent logs and statistics
+- **`/clear_detection_logs`**: Clear all detection history
+- **`/thumbnail/<filename>`**: Serve thumbnail images
+
+#### 4. **Integration Pipeline**
+- **Real-time Logging**: Detections automatically logged during video processing
+- **Camera Source Tracking**: Logs record whether detection came from Mac or robot
+- **Cooldown Management**: Intelligent spam prevention while maintaining accuracy
+
+### Detection Log Entry Format
+```json
+{
+  "id": 1,
+  "timestamp": "2025-08-21T01:23:45.678Z",
+  "formatted_time": "2025-08-21 01:23:45",
+  "message": "Alert: Person Detected",
+  "person_count": 1,
+  "max_confidence": 0.85,
+  "thumbnail": "detection_20250821_012345_678.jpg",
+  "camera_source": "mac"
+}
+```
+
+### UI Enhancement Details
+- **Professional Styling**: NTT DATA branded interface with gradients
+- **Responsive Design**: Works on mobile and desktop
+- **Real-time Updates**: JavaScript polling for live log updates
+- **Visual Feedback**: Color-coded alerts and hover effects
+- **User Experience**: Confirmation dialogs and status messages
+
+### Technical Implementation Highlights
+
+#### Cooldown Logic
+```python
+def log_detections(self, frame, detections):
+    current_time = time.time()
+    person_detected = any(detection.class_name == "person" for detection in detections)
+    
+    if not person_detected or (current_time - self.last_detection_time < self.cooldown_seconds):
+        return False
+    
+    # Log detection and save thumbnail
+    self.last_detection_time = current_time
+    return True
+```
+
+#### Thumbnail Generation
+- **Smart Resizing**: Maintains aspect ratio while fitting 320x240
+- **Quality Optimization**: JPEG compression for storage efficiency
+- **Organized Storage**: Timestamped filenames in dedicated directory
+
+#### Front-end Integration
+- **Fetch API**: Modern JavaScript for API communication
+- **Template Rendering**: Dynamic HTML generation for log entries
+- **Error Handling**: Graceful fallbacks and user feedback
+
+### Performance Characteristics
+- **Log Storage**: ~1KB per detection entry (JSON + ~15KB thumbnail)
+- **UI Responsiveness**: 3-second refresh cycle during active monitoring
+- **Memory Efficiency**: Automatic pruning to 100 most recent logs
+- **Disk Usage**: Thumbnails auto-cleanup when logs cleared
+
+### Usage Workflow
+1. **Start Patrol**: Detection and logging begin automatically
+2. **Person Detected**: System waits for cooldown before next log
+3. **Alert Generated**: "Alert: Person Detected" with timestamp and thumbnail
+4. **UI Updates**: Log viewer refreshes with new entry
+5. **Management**: Users can refresh manually or clear entire log
+
+### Future Enhancement Opportunities
+1. **Export Functionality**: CSV/PDF export of detection logs
+2. **Alert Notifications**: Email/SMS alerts for critical detections  
+3. **Advanced Filtering**: Search logs by date/time/confidence
+4. **Video Clips**: Save short video segments instead of just thumbnails
+5. **Detection Zones**: Configure specific areas for monitoring
+6. **Analytics Dashboard**: Charts and graphs of detection patterns
+
+### Code Quality Improvements
+- **Fixed Comments**: Updated hybrid_detector.py comments to reflect person detection
+- **Error Handling**: Robust exception handling in logging pipeline
+- **Type Hints**: Proper typing throughout detection_logger.py
+- **Documentation**: Comprehensive docstrings and inline comments
+
+This checkpoint delivers a production-ready detection logging system suitable for security and monitoring applications.
