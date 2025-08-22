@@ -684,9 +684,12 @@
         }
 
         function showVideo() {
+            console.log('showVideo() called');
             videoStream.src = '/video_feed?' + new Date().getTime();
             videoStream.style.display = 'block';
             loadingText.style.display = 'none';
+            console.log('Video stream src set to:', videoStream.src);
+            console.log('Video stream display:', videoStream.style.display);
         }
 
         function hideVideo() {
@@ -789,10 +792,20 @@
         setInterval(async () => {
             try {
                 const response = await fetch('/status');
-                const status = await response.json();
+                const statusData = await response.json();
                 
-                if (status.is_running && !videoStream.style.display === 'block') {
-                    showVideo();
+                console.log('Status check:', statusData);
+                
+                if (statusData.is_running && statusData.camera_available) {
+                    if (videoStream.style.display !== 'block') {
+                        console.log('Status shows running but video not visible, showing video...');
+                        showVideo();
+                    }
+                } else if (!statusData.is_running) {
+                    if (videoStream.style.display === 'block') {
+                        console.log('Status shows not running but video visible, hiding video...');
+                        hideVideo();
+                    }
                 }
             } catch (error) {
                 console.error('Status check failed:', error);

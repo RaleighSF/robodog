@@ -14,11 +14,6 @@ class Detection:
 
 class HybridDetector:
     def __init__(self):
-        self.current_model = "Hybrid"
-        
-        # Face detection
-        self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-        
         # YOLO detection
         self.yolo_net = None
         self.yolo_classes = []
@@ -30,7 +25,6 @@ class HybridDetector:
         
         # Colors for different detection types
         self.colors = {
-            'face': (0, 255, 0),        # Green
             'person': (0, 0, 255)       # Red - for security alert visibility
         }
         
@@ -82,11 +76,6 @@ class HybridDetector:
                 except Exception as e:
                     print(f"Failed to download {filename}: {e}")
                     
-    def switch_model(self, model_name: str):
-        """Switch between detection models"""
-        self.current_model = model_name
-        print(f"Switched to {model_name} detection")
-        
     def detect(self, frame: np.ndarray) -> List[Detection]:
         """Perform YOLO detection on frame"""
         detections = []
@@ -95,26 +84,6 @@ class HybridDetector:
         if self.yolo_net is not None:
             detections.extend(self._detect_yolo_filtered(frame))
         
-        return detections
-        
-    def _detect_faces(self, frame: np.ndarray) -> List[Detection]:
-        """Detect faces using Haar cascades"""
-        detections = []
-        
-        try:
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            faces = self.face_cascade.detectMultiScale(
-                gray, scaleFactor=1.1, minNeighbors=5, minSize=(30, 30)
-            )
-            
-            for (x, y, w, h) in faces:
-                confidence = 0.8
-                detection = Detection((x, y, w, h), 0, confidence, "face")
-                detections.append(detection)
-                
-        except Exception as e:
-            print(f"Face detection error: {e}")
-            
         return detections
         
     def _detect_yolo_filtered(self, frame: np.ndarray) -> List[Detection]:

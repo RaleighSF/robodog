@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
 import cv2
-import numpy as np
-import base64
-import json
-import threading
 import time
 import os
 from flask import Flask, render_template, Response, jsonify, request, send_file
@@ -81,13 +77,6 @@ def stop_detection():
     camera_manager.stop()
     return jsonify({'status': 'success', 'message': 'Detection stopped'})
 
-@app.route('/switch_model', methods=['POST'])
-def switch_model():
-    """Switch detection model"""
-    model_name = request.json.get('model', 'YOLO')
-    detector.switch_model(model_name)
-    return jsonify({'status': 'success', 'message': f'Switched to {model_name}'})
-
 @app.route('/switch_camera', methods=['POST'])
 def switch_camera():
     """Switch camera source"""
@@ -132,7 +121,6 @@ def get_status():
     return jsonify({
         'is_running': web_app.is_running,
         'camera_available': camera_manager.is_camera_available(),
-        'current_model': detector.current_model,
         'camera_status': camera_status
     })
 

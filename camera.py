@@ -96,8 +96,14 @@ class CameraManager:
     def _start_unitree_camera(self) -> bool:
         """Start Unitree Go2 camera capture"""
         try:
-            print(f"Connecting to Unitree Go2 at {self.robot_ip}...")
-            self.unitree_client = UnitreeGo2Client(self.robot_ip, serial_number="B42D2000P7H8JNC7")
+            print(f"Starting Unitree Go2 camera at {self.robot_ip}...")
+            
+            # Use existing client if available, otherwise create new one
+            if not self.unitree_client:
+                print("Creating new Unitree client...")
+                self.unitree_client = UnitreeGo2Client(self.robot_ip, serial_number="B42D2000P7H8JNC7")
+            else:
+                print("Using existing Unitree client")
             
             # Discover robot first
             discovery = self.unitree_client.discover_robot()
@@ -192,7 +198,8 @@ class CameraManager:
         if self.camera_source == "mac":
             return self.cap is not None and self.cap.isOpened()
         elif self.camera_source == "unitree":
-            return self.unitree_client is not None and self.unitree_client.is_connected
+            # Return True if unitree client exists and is streaming (includes test pattern fallback)
+            return self.unitree_client is not None and self.unitree_client.is_streaming
         return False
         
     def get_camera_status(self) -> dict:
@@ -218,20 +225,3 @@ class CameraManager:
                 status.update(self.unitree_client.get_robot_status())
                 
         return status
-
-class WebRTCManager:
-    """Placeholder for future WebRTC integration"""
-    def __init__(self):
-        self.is_connected = False
-        
-    def connect(self, stream_url: str):
-        """Connect to WebRTC stream - to be implemented"""
-        pass
-        
-    def disconnect(self):
-        """Disconnect from WebRTC stream - to be implemented"""
-        pass
-        
-    def get_frame(self) -> Optional[np.ndarray]:
-        """Get frame from WebRTC stream - to be implemented"""
-        return None
