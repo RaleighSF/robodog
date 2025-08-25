@@ -85,7 +85,7 @@ class DetectionLogger:
     
     def log_detections(self, frame: np.ndarray, detections: List[Detection]) -> bool:
         """
-        Log person detections with cooldown logic
+        Log object detections with cooldown logic
         
         Args:
             frame: The current video frame
@@ -96,10 +96,10 @@ class DetectionLogger:
         """
         current_time = time.time()
         
-        # Check if any person was detected
-        person_detected = any(detection.class_name == "person" for detection in detections)
+        # Check if any target object was detected
+        objects_detected = any(detection.class_name in ["person", "orange"] for detection in detections)
         
-        if not person_detected:
+        if not objects_detected:
             return False
         
         # Check cooldown period
@@ -113,19 +113,30 @@ class DetectionLogger:
         # Save thumbnail
         thumbnail_filename = self._save_thumbnail(frame, timestamp_str)
         
-        # Count persons detected
+        # Count objects detected by type
         person_count = sum(1 for detection in detections if detection.class_name == "person")
+        orange_count = sum(1 for detection in detections if detection.class_name == "orange")
         
-        # Get highest confidence person detection for additional info
-        person_detections = [d for d in detections if d.class_name == "person"]
-        max_confidence = max(d.confidence for d in person_detections) if person_detections else 0
+        # Get highest confidence detection for additional info
+        all_target_detections = [d for d in detections if d.class_name in ["person", "orange"]]
+        max_confidence = max(d.confidence for d in all_target_detections) if all_target_detections else 0
+        
+        # Create appropriate alert message
+        alerts = []
+        if person_count > 0:
+            alerts.append(f"{person_count} Person{'s' if person_count > 1 else ''}")
+        if orange_count > 0:
+            alerts.append(f"{orange_count} Orange Object{'s' if orange_count > 1 else ''}")
+        
+        alert_message = f"Alert: {' & '.join(alerts)} Detected"
         
         log_entry = {
             "id": len(self.detection_logs) + 1,
             "timestamp": timestamp.isoformat(),
             "formatted_time": timestamp.strftime("%Y-%m-%d %H:%M:%S"),
-            "message": "Alert: Person Detected",
+            "message": alert_message,
             "person_count": person_count,
+            "orange_count": orange_count,
             "max_confidence": round(max_confidence, 2),
             "thumbnail": thumbnail_filename,
             "camera_source": "unknown"  # Will be set by the caller

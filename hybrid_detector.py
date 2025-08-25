@@ -18,14 +18,21 @@ class HybridDetector:
         self.yolo_net = None
         self.yolo_classes = []
         
-        # Target classes: person (0) in COCO dataset for factory patrol monitoring
+        # Target classes for factory patrol monitoring
+        # Note: COCO dataset doesn't include "traffic cone" specifically
+        # Using related classes that might capture cone-like objects
         self.target_classes = {
-            0: "person"
+            0: "person",           # Person detection for security
+            49: "orange",          # Orange objects (may include orange cones)
+            # Additional classes that might capture cone-like shapes:
+            # 39: "bottle",        # Cone-shaped objects
+            # 58: "potted plant"   # Sometimes cone-shaped objects detected as plants
         }
         
         # Colors for different detection types
         self.colors = {
-            'person': (0, 0, 255)       # Red - for security alert visibility
+            'person': (0, 0, 255),      # Red - for security alert visibility
+            'orange': (0, 165, 255),    # Orange - for cone detection
         }
         
         self.confidence_threshold = 0.7  # Higher confidence to reduce false positives
