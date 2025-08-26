@@ -97,7 +97,7 @@ class DetectionLogger:
         current_time = time.time()
         
         # Check if any target object was detected
-        objects_detected = any(detection.class_name in ["person", "orange"] for detection in detections)
+        objects_detected = any(detection.class_name in ["person", "Orange Cone"] for detection in detections)
         
         if not objects_detected:
             return False
@@ -115,10 +115,10 @@ class DetectionLogger:
         
         # Count objects detected by type
         person_count = sum(1 for detection in detections if detection.class_name == "person")
-        orange_count = sum(1 for detection in detections if detection.class_name == "orange")
+        orange_count = sum(1 for detection in detections if detection.class_name == "Orange Cone")
         
         # Get highest confidence detection for additional info
-        all_target_detections = [d for d in detections if d.class_name in ["person", "orange"]]
+        all_target_detections = [d for d in detections if d.class_name in ["person", "Orange Cone"]]
         max_confidence = max(d.confidence for d in all_target_detections) if all_target_detections else 0
         
         # Create appropriate alert message
@@ -126,7 +126,7 @@ class DetectionLogger:
         if person_count > 0:
             alerts.append(f"{person_count} Person{'s' if person_count > 1 else ''}")
         if orange_count > 0:
-            alerts.append(f"{orange_count} Orange Object{'s' if orange_count > 1 else ''}")
+            alerts.append(f"{orange_count} Orange Cone{'s' if orange_count > 1 else ''}")
         
         alert_message = f"Alert: {' & '.join(alerts)} Detected"
         

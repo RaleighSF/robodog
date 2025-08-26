@@ -121,8 +121,39 @@ def get_status():
     return jsonify({
         'is_running': web_app.is_running,
         'camera_available': camera_manager.is_camera_available(),
-        'camera_status': camera_status
+        'camera_status': camera_status,
+        'current_model': detector.get_current_model()
     })
+
+@app.route('/switch_model', methods=['POST'])
+def switch_detection_model():
+    """Switch between different YOLO models"""
+    data = request.json
+    model_type = data.get('model_type', 'yolov4')
+    
+    print(f"Switch model request: {model_type}")
+    
+    try:
+        success = detector.switch_model(model_type)
+        if success:
+            return jsonify({
+                'status': 'success', 
+                'message': f'Switched to {model_type} model',
+                'current_model': detector.get_current_model()
+            })
+        else:
+            return jsonify({
+                'status': 'error', 
+                'message': f'Failed to switch to {model_type} model',
+                'current_model': detector.get_current_model()
+            })
+    except Exception as e:
+        print(f"Error switching model: {e}")
+        return jsonify({
+            'status': 'error', 
+            'message': str(e),
+            'current_model': detector.get_current_model()
+        })
 
 @app.route('/detection_logs')
 def get_detection_logs():

@@ -18,21 +18,22 @@ class HybridDetector:
         self.yolo_net = None
         self.yolo_classes = []
         
+        # Model selection - can switch between YOLOv4 and YOLOv8
+        self.current_model = "yolov4"  # Options: "yolov4", "yolov8"
+        
         # Target classes for factory patrol monitoring
-        # Note: COCO dataset doesn't include "traffic cone" specifically
-        # Using related classes that might capture cone-like objects
         self.target_classes = {
             0: "person",           # Person detection for security
-            49: "orange",          # Orange objects (may include orange cones)
+            49: "Orange Cone",     # Orange cone detection for factory safety
             # Additional classes that might capture cone-like shapes:
-            # 39: "bottle",        # Cone-shaped objects
+            # 39: "bottle",        # Cone-shaped objects (YOLOv4 fallback)
             # 58: "potted plant"   # Sometimes cone-shaped objects detected as plants
         }
         
         # Colors for different detection types
         self.colors = {
-            'person': (0, 0, 255),      # Red - for security alert visibility
-            'orange': (0, 165, 255),    # Orange - for cone detection
+            'person': (0, 0, 255),        # Red - for security alert visibility
+            'Orange Cone': (0, 165, 255), # Orange - for cone detection
         }
         
         self.confidence_threshold = 0.7  # Higher confidence to reduce false positives
@@ -84,12 +85,32 @@ class HybridDetector:
                     print(f"Failed to download {filename}: {e}")
                     
     def detect(self, frame: np.ndarray) -> List[Detection]:
-        """Perform YOLO detection on frame"""
+        """Perform YOLO detection on frame using the selected model"""
         detections = []
         
-        # YOLO detection for person detection only
-        if self.yolo_net is not None:
-            detections.extend(self._detect_yolo_filtered(frame))
+        # Route to the appropriate detection method based on current model
+        if self.current_model == "yolov4":
+            # Use YOLOv4 (existing method)
+            if self.yolo_net is not None:
+                detections.extend(self._detect_yolo_filtered(frame))
+        
+        elif self.current_model == "yolov8":
+            # Use YOLOv8
+            if hasattr(self, 'yolov8_model'):
+                detections.extend(self._detect_yolov8(frame))
+            else:
+                print("YOLOv8 model not loaded. Falling back to YOLOv4.")
+                if self.yolo_net is not None:
+                    detections.extend(self._detect_yolo_filtered(frame))
+        
+        elif self.current_model == "yolo-world":
+            # Use YOLO-World
+            if hasattr(self, 'yolo_world_model'):
+                detections.extend(self._detect_yolo_world(frame))
+            else:
+                print("YOLO-World model not loaded. Falling back to YOLOv4.")
+                if self.yolo_net is not None:
+                    detections.extend(self._detect_yolo_filtered(frame))
         
         return detections
         
@@ -234,3 +255,133 @@ class HybridDetector:
                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
                        
         return result_frame
+    
+    def switch_model(self, model_type: str) -> bool:
+        """
+        Switch between different YOLO models
+        
+        Args:
+            model_type: "yolov4", "yolov8", or "yolo-world"
+            
+        Returns:
+            bool: True if model was switched successfully
+        """
+        if model_type == "yolov4":
+            # Current YOLOv4 model (already initialized)
+            self.current_model = "yolov4"
+            print(f"Switched to YOLOv4 model")
+            return True
+        
+        elif model_type == "yolov8":
+            try:
+                # Try to import and initialize YOLOv8
+                from ultralytics import YOLO
+                self.yolov8_model = YOLO('yolov8s.pt')  # Auto-downloads on first use
+                self.current_model = "yolov8"
+                print(f"Switched to YOLOv8 model")
+                return True
+            except ImportError:
+                print("ultralytics not available. Please install: pip install ultralytics")
+                return False
+            except Exception as e:
+                print(f"Error loading YOLOv8: {e}")
+                return False
+                
+        elif model_type == "yolo-world":
+            try:
+                # Try to import and initialize YOLO-World for open-vocabulary detection
+                from ultralytics import YOLOWorld
+                self.yolo_world_model = YOLOWorld('yolov8s-world.pt')
+                # Set custom classes for orange cone detection
+                self.yolo_world_model.set_classes(['person', 'orange cone', 'traffic cone', 'construction cone'])
+                self.current_model = "yolo-world"
+                print(f"Switched to YOLO-World model with custom cone detection")
+                return True
+            except ImportError:
+                print("ultralytics not available or YOLO-World not supported")
+                return False
+            except Exception as e:
+                print(f"Error loading YOLO-World: {e}")
+                return False
+        
+        else:
+            print(f"Unknown model type: {model_type}")
+            return False
+    
+    def get_current_model(self) -> str:
+        """Get the currently active model"""
+        return self.current_model
+    
+    def _detect_yolov8(self, frame: np.ndarray) -> List[Detection]:
+        """YOLOv8 detection method"""
+        try:
+            results = self.yolov8_model(frame, classes=list(self.target_classes.keys()), verbose=False)
+            detections = []
+            
+            for result in results:
+                boxes = result.boxes
+                if boxes is not None:
+                    for box in boxes:
+                        confidence = float(box.conf[0])
+                        class_id = int(box.cls[0])
+                        
+                        if confidence > self.confidence_threshold and class_id in self.target_classes:
+                            x1, y1, x2, y2 = map(int, box.xyxy[0])
+                            # Convert to our Detection format (x, y, w, h)
+                            w, h = x2 - x1, y2 - y1
+                            
+                            detection = Detection(
+                                bbox=(x1, y1, w, h),
+                                class_id=class_id,
+                                confidence=confidence,
+                                class_name=self.target_classes[class_id]
+                            )
+                            detections.append(detection)
+            
+            # Apply the same overlap filtering as YOLOv4
+            return self._remove_overlapping_detections(detections)
+            
+        except Exception as e:
+            print(f"YOLOv8 detection error: {e}")
+            return []
+    
+    def _detect_yolo_world(self, frame: np.ndarray) -> List[Detection]:
+        """YOLO-World detection method for open-vocabulary detection"""
+        try:
+            results = self.yolo_world_model(frame, verbose=False)
+            detections = []
+            
+            for result in results:
+                boxes = result.boxes
+                if boxes is not None:
+                    for box in boxes:
+                        confidence = float(box.conf[0])
+                        class_id = int(box.cls[0])
+                        class_name = self.yolo_world_model.names[class_id]
+                        
+                        # Map detected classes to our target classes
+                        mapped_class = None
+                        if 'person' in class_name.lower():
+                            mapped_class = 'person'
+                        elif any(cone_word in class_name.lower() for cone_word in ['cone', 'orange']):
+                            mapped_class = 'Orange Cone'
+                        
+                        if mapped_class and confidence > self.confidence_threshold:
+                            x1, y1, x2, y2 = map(int, box.xyxy[0])
+                            # Convert to our Detection format (x, y, w, h)
+                            w, h = x2 - x1, y2 - y1
+                            
+                            detection = Detection(
+                                bbox=(x1, y1, w, h),
+                                class_id=0 if mapped_class == 'person' else 49,
+                                confidence=confidence,
+                                class_name=mapped_class
+                            )
+                            detections.append(detection)
+            
+            # Apply the same overlap filtering
+            return self._remove_overlapping_detections(detections)
+            
+        except Exception as e:
+            print(f"YOLO-World detection error: {e}")
+            return []

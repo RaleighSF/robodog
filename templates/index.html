@@ -602,6 +602,14 @@
                         <input type="text" id="robotIpInput" class="header-input" value="192.168.12.1" placeholder="Robot IP">
                     </div>
                     
+                    <div class="model-control">
+                        <select id="modelSelect" class="header-select">
+                            <option value="yolov4">YOLOv4 (Current)</option>
+                            <option value="yolov8">YOLOv8 (Faster)</option>
+                            <option value="yolo-world">YOLO-World (Cone AI)</option>
+                        </select>
+                    </div>
+                    
                     <div class="patrol-buttons">
                         <button id="startBtn" class="btn-header btn-start">Start</button>
                         <button id="stopBtn" class="btn-header btn-stop">Stop</button>
@@ -668,6 +676,7 @@
         const startBtn = document.getElementById('startBtn');
         const stopBtn = document.getElementById('stopBtn');
         const cameraSelect = document.getElementById('cameraSelect');
+        const modelSelect = document.getElementById('modelSelect');
         const robotIpGroup = document.getElementById('robotIpGroup');
         const robotIpInput = document.getElementById('robotIpInput');
         const videoStream = document.getElementById('videoStream');
@@ -732,6 +741,45 @@
             // Update status to indicate selection
             const cameraName = source === 'watchdog' ? 'Watch Dog Robot' : 'Mac Camera';
             updateStatus(`${cameraName} selected - Click "Start Patrol" to begin`, 'info');
+        });
+
+        // Model selection handler
+        modelSelect.addEventListener('change', async () => {
+            const modelType = modelSelect.value;
+            const modelNames = {
+                'yolov4': 'YOLOv4',
+                'yolov8': 'YOLOv8',
+                'yolo-world': 'YOLO-World'
+            };
+            
+            updateStatus(`Switching to ${modelNames[modelType]} model...`, 'info');
+            
+            try {
+                const response = await fetch('/switch_model', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ 
+                        model_type: modelType
+                    })
+                });
+                
+                const result = await response.json();
+                if (result.status === 'success') {
+                    updateStatus(result.message, 'success');
+                    console.log('Model switched to:', result.current_model);
+                } else {
+                    updateStatus(`Model switch failed: ${result.message}`, 'error');
+                    console.error('Model switch failed:', result.message);
+                    // Revert selection to current model
+                    modelSelect.value = result.current_model;
+                }
+                
+            } catch (error) {
+                updateStatus('Failed to switch detection model', 'error');
+                console.error('Error switching model:', error);
+            }
         });
 
         // Enhanced Start Patrol - handles camera switching and initialization
@@ -845,7 +893,7 @@
                         <div class="log-message">${log.message}</div>
                         <div class="log-time">${log.formatted_time}</div>
                         <div class="log-details">
-                            ${log.person_count} person${log.person_count !== 1 ? 's' : ''}${log.orange_count ? `, ${log.orange_count} orange object${log.orange_count !== 1 ? 's' : ''}` : ''} detected | 
+                            ${log.person_count} person${log.person_count !== 1 ? 's' : ''}${log.orange_count ? `, ${log.orange_count} orange cone${log.orange_count !== 1 ? 's' : ''}` : ''} detected | 
                             Confidence: ${Math.round(log.max_confidence * 100)}%
                         </div>
                     </div>
