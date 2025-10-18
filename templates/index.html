@@ -590,16 +590,22 @@
                 <div class="project-title">Project Watch Dog</div>
             </div>
             <div class="nav-controls">
+                <div class="nav-links" style="margin-right: 20px;">
+                    <a href="/webrtc" style="color: var(--ntt-medium-gray); text-decoration: none; font-weight: 500; padding: 8px 16px; border-radius: 4px; transition: all 0.2s;">WebRTC Test</a>
+                </div>
                 <div class="header-controls">
                     <div class="camera-control">
                         <select id="cameraSelect" class="header-select">
-                            <option value="mac">Mac Camera</option>
-                            <option value="watchdog">Watch Dog Robot</option>
+                            <option value="rtsp_color" selected>Color Channel</option>
+                            <option value="rtsp_ir">IR Channel</option>
+                            <option value="rtsp_depth">Depth Channel</option>
+                            <option value="mac">Mac Camera (Backup)</option>
+                            <option value="unitree">Watch Dog Robot (Direct)</option>
                         </select>
                     </div>
                     
                     <div id="robotIpGroup" class="ip-control hidden">
-                        <input type="text" id="robotIpInput" class="header-input" value="192.168.12.1" placeholder="Robot IP">
+                        <input type="text" id="robotIpInput" class="header-input" value="192.168.87.25" placeholder="Robot IP">
                     </div>
                     
                     <div class="model-control">
@@ -626,7 +632,7 @@
             <div id="loadingText" class="loading">Waiting for robot patrol unit connection...</div>
         </div>
         
-        <div id="status" class="status info">Patrol system ready - Click "Start Patrol" to begin monitoring</div>
+        <div id="status" class="status info">Color Channel ready - Auto-starting patrol...</div>
         
         <!-- Detection Log Viewer -->
         <div class="log-section">
@@ -727,20 +733,65 @@
         });
 
 
-        // Camera source selection - only show/hide IP field, don't switch cameras yet
-        cameraSelect.addEventListener('change', () => {
+        // Camera source selection - auto-switch if detection is running
+        cameraSelect.addEventListener('change', async () => {
             const source = cameraSelect.value;
             
-            // Show/hide IP input for Watch Dog robot
-            if (source === 'watchdog') {
+            // Show/hide IP input for Unitree robot (direct connection only)
+            if (source === 'unitree') {
                 robotIpGroup.classList.remove('hidden');
             } else {
                 robotIpGroup.classList.add('hidden');
             }
             
-            // Update status to indicate selection
-            const cameraName = source === 'watchdog' ? 'Watch Dog Robot' : 'Mac Camera';
-            updateStatus(`${cameraName} selected - Click "Start Patrol" to begin`, 'info');
+            const cameraNames = {
+                'rtsp_color': 'Color Channel',
+                'rtsp_ir': 'IR Channel', 
+                'rtsp_depth': 'Depth Channel',
+                'mac': 'Mac Camera',
+                'unitree': 'Watch Dog Robot (Direct)'
+            };
+            const cameraName = cameraNames[source] || 'Unknown Camera';
+            
+            // Check if detection is currently running
+            try {
+                const statusResponse = await fetch('/status');
+                const statusData = await statusResponse.json();
+                
+                if (statusData.is_running) {
+                    // Auto-switch camera feed
+                    console.log(`Auto-switching to ${source} while detection is running`);
+                    updateStatus(`Switching to ${cameraName}...`, 'info');
+                    
+                    // Switch camera source
+                    const switchData = { source: source };
+                    if (source === 'unitree') {
+                        switchData.robot_ip = robotIpInput.value;
+                    }
+                    
+                    const switchResponse = await fetch('/switch_camera', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify(switchData)
+                    });
+                    
+                    const switchResult = await switchResponse.json();
+                    if (switchResult.status === 'success') {
+                        updateStatus(`Switched to ${cameraName}`, 'success');
+                        // Video will automatically update via status polling
+                    } else {
+                        updateStatus(`Failed to switch to ${cameraName}: ${switchResult.message}`, 'error');
+                    }
+                } else {
+                    // Just update status if not running
+                    updateStatus(`${cameraName} selected - Click "Start Patrol" to begin`, 'info');
+                }
+            } catch (error) {
+                console.error('Error during auto-switch:', error);
+                updateStatus(`${cameraName} selected - Click "Start Patrol" to begin`, 'info');
+            }
         });
 
         // Model selection handler
@@ -792,23 +843,24 @@
         startBtn.addEventListener('click', async () => {
             console.log('Start Patrol button clicked!');
             const source = cameraSelect.value;
-            const backendSource = source === 'watchdog' ? 'unitree' : source;
             
-            console.log(`Starting patrol with source: ${source} (backend: ${backendSource})`);
+            console.log(`Starting patrol with source: ${source}`);
             updateStatus('Starting patrol...', 'info');
             
             try {
                 // Switch camera source first
-                console.log(`Switching to camera source: ${backendSource}, IP: ${robotIpInput.value}`);
+                const switchData = { source: source };
+                if (source === 'unitree') {
+                    switchData.robot_ip = robotIpInput.value;
+                }
+                
+                console.log(`Switching to camera source: ${source}`, switchData);
                 const switchResponse = await fetch('/switch_camera', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify({ 
-                        source: backendSource,
-                        robot_ip: robotIpInput.value
-                    })
+                    body: JSON.stringify(switchData)
                 });
                 
                 const switchResult = await switchResponse.json();
@@ -824,7 +876,15 @@
                 
                 const startResult = await startResponse.json();
                 if (startResult.status === 'success') {
-                    updateStatus(`Patrol started with ${source === 'watchdog' ? 'Watch Dog Robot' : 'Mac Camera'}`, 'success');
+                    const cameraNames = {
+                        'rtsp_color': 'Color Channel',
+                        'rtsp_ir': 'IR Channel',
+                        'rtsp_depth': 'Depth Channel', 
+                        'mac': 'Mac Camera',
+                        'unitree': 'Watch Dog Robot (Direct)'
+                    };
+                    const cameraName = cameraNames[source] || source;
+                    updateStatus(`Patrol started with ${cameraName}`, 'success');
                     showVideo();
                 } else {
                     updateStatus(`Failed to start patrol: ${startResult.message}`, 'error');
@@ -944,6 +1004,122 @@
 
         // Initial log load
         refreshLog();
+        
+        // Initialize camera source on page load with fallback logic
+        async function initializeCameraSource() {
+            const initialSource = cameraSelect.value;
+            const cameraNames = {
+                'rtsp_color': 'Color Channel',
+                'rtsp_ir': 'IR Channel', 
+                'rtsp_depth': 'Depth Channel',
+                'mac': 'Mac Camera',
+                'unitree': 'Watch Dog Robot (Direct)'
+            };
+            
+            console.log(`Initializing with default source: ${initialSource}`);
+            updateStatus(`Testing ${cameraNames[initialSource]}...`, 'info');
+            
+            try {
+                // Test the default camera source
+                const switchResponse = await fetch('/switch_camera', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ source: initialSource })
+                });
+                
+                const switchResult = await switchResponse.json();
+                if (switchResult.status === 'success') {
+                    // Try to start detection briefly to test camera availability
+                    const startResponse = await fetch('/start_detection', {
+                        method: 'POST'
+                    });
+                    const startResult = await startResponse.json();
+                    
+                    if (startResult.status === 'success') {
+                        // Camera works, stop detection and show ready status
+                        await fetch('/stop_detection', { method: 'POST' });
+                        updateStatus(`${cameraNames[initialSource]} ready - Click "Start Patrol" to begin`, 'success');
+                        console.log(`${initialSource} camera is working`);
+                    } else {
+                        throw new Error(`Camera test failed: ${startResult.message}`);
+                    }
+                } else {
+                    throw new Error(`Camera switch failed: ${switchResult.message}`);
+                }
+            } catch (error) {
+                console.log(`Default camera ${initialSource} failed, trying fallback to Mac camera...`);
+                // Fall back to Mac camera
+                try {
+                    cameraSelect.value = 'mac';  // Update dropdown
+                    const macSwitchResponse = await fetch('/switch_camera', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ source: 'mac' })
+                    });
+                    
+                    const macResult = await macSwitchResponse.json();
+                    if (macResult.status === 'success') {
+                        updateStatus(`${cameraNames[initialSource]} unavailable - Using Mac Camera as backup`, 'info');
+                    } else {
+                        updateStatus(`No cameras available - Please check connections`, 'error');
+                    }
+                } catch (fallbackError) {
+                    updateStatus(`Camera initialization failed - Please check connections`, 'error');
+                    console.error('Camera fallback failed:', fallbackError);
+                }
+            }
+        }
+        
+        // Auto-start Color Channel patrol on page load
+        async function autoStartColorChannel() {
+            console.log('Auto-starting Color Channel patrol...');
+            updateStatus('Auto-starting Color Channel patrol...', 'info');
+            
+            try {
+                // Ensure Color Channel is selected
+                cameraSelect.value = 'rtsp_color';
+                
+                // Switch to Color Channel first
+                const switchResponse = await fetch('/switch_camera', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ source: 'rtsp_color' })
+                });
+                
+                const switchResult = await switchResponse.json();
+                if (switchResult.status !== 'success') {
+                    updateStatus(`Camera setup failed: ${switchResult.message}`, 'error');
+                    return;
+                }
+                
+                // Start detection
+                const startResponse = await fetch('/start_detection', {
+                    method: 'POST'
+                });
+                
+                const startResult = await startResponse.json();
+                if (startResult.status === 'success') {
+                    updateStatus('Color Channel patrol started automatically', 'success');
+                    showVideo();
+                    console.log('Auto-start successful - Color Channel patrol is running');
+                } else {
+                    updateStatus(`Failed to start patrol: ${startResult.message}`, 'error');
+                }
+                
+            } catch (error) {
+                updateStatus('Auto-start failed - Click "Start Patrol" to begin manually', 'error');
+                console.error('Auto-start error:', error);
+            }
+        }
+        
+        // Start Color Channel patrol automatically after page loads
+        setTimeout(autoStartColorChannel, 1000);
 
         // Image Modal Functions
         function openImageModal(imageSrc, message, timestamp) {
