@@ -300,39 +300,106 @@ def video_feed():
 
 @app.route('/start_detection', methods=['POST'])
 def start_detection():
-    """Start object detection"""
+    """Start object detection with proper state synchronization"""
     try:
+        print(f"🚀 Starting detection - Current camera: {camera_manager.camera_source}")
+        
+        # Ensure clean state before starting
+        if web_app.is_running:
+            print("⚠️ Detection already running, stopping first")
+            web_app.is_running = False
+            camera_manager.stop()
+        
+        # Start camera
         if camera_manager.start():
             web_app.is_running = True
+            print(f"✅ Detection started successfully with {camera_manager.camera_source}")
             return jsonify({'status': 'success', 'message': 'Detection started'})
         else:
-            return jsonify({'status': 'error', 'message': 'Failed to start camera'})
+            web_app.is_running = False
+            print(f"❌ Failed to start camera: {camera_manager.camera_source}")
+            return jsonify({'status': 'error', 'message': f'Failed to start {camera_manager.camera_source} camera'})
     except Exception as e:
+        web_app.is_running = False
+        print(f"❌ Detection start error: {e}")
         return jsonify({'status': 'error', 'message': str(e)})
 
 @app.route('/stop_detection', methods=['POST'])
 def stop_detection():
-    """Stop object detection"""
-    web_app.is_running = False
-    camera_manager.stop()
-    return jsonify({'status': 'success', 'message': 'Detection stopped'})
+    """Stop object detection with complete cleanup"""
+    try:
+        print(f"🛑 Stopping detection - Current camera: {camera_manager.camera_source}")
+        
+        # Set state first to stop loops
+        web_app.is_running = False
+        
+        # Stop camera with proper cleanup
+        camera_manager.stop()
+        
+        # Extra cleanup time for threads to exit
+        import time
+        time.sleep(0.1)
+        
+        print("✅ Detection stopped successfully")
+        return jsonify({'status': 'success', 'message': 'Detection stopped'})
+        
+    except Exception as e:
+        print(f"❌ Stop detection error: {e}")
+        web_app.is_running = False  # Ensure state is clean even on error
+        return jsonify({'status': 'error', 'message': str(e)})
 
 @app.route('/switch_camera', methods=['POST'])
 def switch_camera():
-    """Switch camera source"""
+    """Switch camera source with safe state management"""
     data = request.json
     camera_source = data.get('source', 'mac')
     robot_ip = data.get('robot_ip', '192.168.87.25')
     rtsp_url = data.get('rtsp_url', None)
     
-    print(f"Switch camera request: source={camera_source}, ip={robot_ip}, rtsp_url={rtsp_url}")
+    print(f"🔄 Switch camera request: source={camera_source}, ip={robot_ip}, rtsp_url={rtsp_url}")
     
     try:
+        # Remember if detection was running
+        was_running = web_app.is_running
+        
+        # Always stop detection first for clean switching
+        if was_running:
+            print("🛑 Stopping detection for camera switch")
+            web_app.is_running = False
+            camera_manager.stop()
+            
+            # Give time for cleanup
+            import time
+            time.sleep(0.2)
+        
+        # Switch camera source
+        print(f"🔄 Switching from {camera_manager.camera_source} to {camera_source}")
         camera_manager.set_camera_source(camera_source, robot_ip, rtsp_url)
-        print(f"Camera source switched to {camera_source}")
-        return jsonify({'status': 'success', 'message': f'Switched to {camera_source} camera'})
+        
+        # If detection was running, restart it with new source
+        if was_running:
+            print(f"🚀 Restarting detection with new camera: {camera_source}")
+            if camera_manager.start():
+                web_app.is_running = True
+                print(f"✅ Camera switched and detection restarted: {camera_source}")
+                return jsonify({
+                    'status': 'success', 
+                    'message': f'Switched to {camera_source} camera and restarted detection'
+                })
+            else:
+                print(f"⚠️ Camera switched but failed to restart detection: {camera_source}")
+                return jsonify({
+                    'status': 'warning', 
+                    'message': f'Switched to {camera_source} but detection failed to start'
+                })
+        else:
+            print(f"✅ Camera source switched to {camera_source}")
+            return jsonify({'status': 'success', 'message': f'Switched to {camera_source} camera'})
+            
     except Exception as e:
-        print(f"Error switching camera: {e}")
+        print(f"❌ Error switching camera: {e}")
+        # Ensure clean state on error
+        web_app.is_running = False
         return jsonify({'status': 'error', 'message': str(e)})
 
 @app.route('/robot_command', methods=['POST'])
@@ -360,7 +427,7 @@ def get_status():
     """Get current status"""
     camera_status = camera_manager.get_camera_status()
     return jsonify({
-        'is_running': web_app.is_running,
+        'is_running': web_app.is_running and camera_manager.is_running,
         'camera_available': camera_manager.is_camera_available(),
         'camera_status': camera_status,
         'current_model': detector.get_current_model()
@@ -505,6 +572,6 @@ def get_webrtc_status():
 
 if __name__ == '__main__':
     print("Starting Computer Vision Object Detector Web App")
-    print("Open your browser and go to: http://127.0.0.1:5003")
-    # Use port 5003 to avoid stuck processes on other ports
-    app.run(debug=True, host='127.0.0.1', port=5003, threaded=True, use_reloader=False)
+    print("Open your browser and go to: http://127.0.0.1:5004")
+    # Use port 5004 to avoid stuck processes on other ports
+    app.run(debug=True, host='127.0.0.1', port=5004, threaded=True, use_reloader=False)

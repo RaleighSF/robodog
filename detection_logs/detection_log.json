@@ -1,1 +1,167 @@
-[]
+[
+  {
+    "id": 1,
+    "timestamp": "2025-10-17T21:04:20.192067",
+    "formatted_time": "2025-10-17 21:04:20",
+    "message": "Alert: 1 Person Detected",
+    "person_count": 1,
+    "orange_count": 0,
+    "max_confidence": 0.71,
+    "thumbnail": "detection_20251017_210420_192.jpg",
+    "camera_source": "mac"
+  },
+  {
+    "id": 2,
+    "timestamp": "2025-10-17T21:04:26.236354",
+    "formatted_time": "2025-10-17 21:04:26",
+    "message": "Alert: 1 Person Detected",
+    "person_count": 1,
+    "orange_count": 0,
+    "max_confidence": 0.71,
+    "thumbnail": "detection_20251017_210426_236.jpg",
+    "camera_source": "mac"
+  },
+  {
+    "id": 3,
+    "timestamp": "2025-10-17T21:05:33.993006",
+    "formatted_time": "2025-10-17 21:05:33",
+    "message": "Alert: 2 Persons & 1 Orange Cone Detected",
+    "person_count": 2,
+    "orange_count": 1,
+    "max_confidence": 44.29,
+    "thumbnail": "detection_20251017_210533_993.jpg",
+    "camera_source": "mac"
+  },
+  {
+    "id": 4,
+    "timestamp": "2025-10-17T21:05:40.128486",
+    "formatted_time": "2025-10-17 21:05:40",
+    "message": "Alert: 1 Person Detected",
+    "person_count": 1,
+    "orange_count": 0,
+    "max_confidence": 0.7,
+    "thumbnail": "detection_20251017_210540_128.jpg",
+    "camera_source": "mac"
+  },
+  {
+    "id": 5,
+    "timestamp": "2025-10-17T21:05:48.262175",
+    "formatted_time": "2025-10-17 21:05:48",
+    "message": "Alert: 1 Person Detected",
+    "person_count": 1,
+    "orange_count": 0,
+    "max_confidence": 0.72,
+    "thumbnail": "detection_20251017_210548_262.jpg",
+    "camera_source": "mac"
+  },
+  {
+    "id": 6,
+    "timestamp": "2025-10-17T21:05:54.214892",
+    "formatted_time": "2025-10-17 21:05:54",
+    "message": "Alert: 1 Person Detected",
+    "person_count": 1,
+    "orange_count": 0,
+    "max_confidence": 0.72,
+    "thumbnail": "detection_20251017_210554_214.jpg",
+    "camera_source": "mac"
+  },
+  {
+    "id": 7,
+    "timestamp": "2025-10-17T21:06:07.913111",
+    "formatted_time": "2025-10-17 21:06:07",
+    "message": "Alert: 1 Person Detected",
+    "person_count": 1,
+    "orange_count": 0,
+    "max_confidence": 0.7,
+    "thumbnail": "detection_20251017_210607_913.jpg",
+    "camera_source": "mac"
+  },
+  {
+    "id": 8,
+    "timestamp": "2025-10-17T21:06:21.973739",
+    "formatted_time": "2025-10-17 21:06:21",
+    "message": "Alert: 1 Person Detected",
+    "person_count": 1,
+    "orange_count": 0,
+    "max_confidence": 0.7,
+    "thumbnail": "detection_20251017_210621_973.jpg",
+    "camera_source": "mac"
+  },
+  {
+    "id": 9,
+    "timestamp": "2025-10-17T21:06:33.535215",
+    "formatted_time": "2025-10-17 21:06:33",
+    "message": "Alert: 1 Person Detected",
+    "person_count": 1,
+    "orange_count": 0,
+    "max_confidence": 0.71,
+    "thumbnail": "detection_20251017_210633_535.jpg",
+    "camera_source": "mac"
+  },
+  {
+    "id": 10,
+    "timestamp": "2025-10-17T21:06:48.117401",
+    "formatted_time": "2025-10-17 21:06:48",
+    "message": "Alert: 41 Persons & 32 Orange Cones Detected",
+    "person_count": 41,
+    "orange_count": 32,
+    "max_confidence": 81.88,
+    "thumbnail": "detection_20251017_210648_117.jpg",
+    "camera_source": "unknown"
+  },
+  {
+    "id": 11,
+    "timestamp": "2025-10-17T21:06:48.118672",
+    "formatted_time": "2025-10-17 21:06:48",
+    "message": "Alert: 15 Persons & 11 Orange Cones Detected",
+    "person_count": 15,
+    "orange_count": 11,
+    "max_confidence": 12.7,
+    "thumbnail": "detection_20251017_210648_118.jpg",
+    "camera_source": "rtsp_color"
+  },
+  {
+    "id": 12,
+    "timestamp": "2025-10-17T21:06:58.454848",
+    "formatted_time": "2025-10-17 21:06:58",
+    "message": "Alert: 4 Persons & 2 Orange Cones Detected",
+    "person_count": 4,
+    "orange_count": 2,
+    "max_confidence": 0.8,
+    "thumbnail": "detection_20251017_210658_454.jpg",
+    "camera_source": "rtsp_ir"
+  },
+  {
+    "id": 13,
+    "timestamp": "2025-10-17T21:07:06.305777",
+    "formatted_time": "2025-10-17 21:07:06",
+    "message": "Alert: 71 Persons & 47 Orange Cones Detected",
+    "person_count": 71,
+    "orange_count": 47,
+    "max_confidence": 165.91,
+    "thumbnail": "detection_20251017_210706_305.jpg",
+    "camera_source": "rtsp_depth"
+  },
+  {
+    "id": 14,
+    "timestamp": "2025-10-17T21:07:06.311387",
+    "formatted_time": "2025-10-17 21:07:06",
+    "message": "Alert: 71 Persons & 47 Orange Cones Detected",
+    "person_count": 71,
+    "orange_count": 47,
+    "max_confidence": 165.91,
+    "thumbnail": "detection_20251017_210706_311.jpg",
+    "camera_source": "rtsp_depth"
+  },
+  {
+    "id": 15,
+    "timestamp": "2025-10-17T21:07:38.435477",
+    "formatted_time": "2025-10-17 21:07:38",
+    "message": "Alert: 1 Person Detected",
+    "person_count": 1,
+    "orange_count": 0,
+    "max_confidence": 0.81,
+    "thumbnail": "detection_20251017_210738_435.jpg",
+    "camera_source": "unknown"
+  }
+]

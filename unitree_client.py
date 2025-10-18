@@ -13,7 +13,7 @@ try:
     GO2_AVAILABLE = True
 except ImportError:
     GO2_AVAILABLE = False
-    print("go2-webrtc-connect not available. Install with: pip install go2-webrtc-connect[video,audio]")
+    # WebRTC functionality disabled - using RTSP and direct camera feeds instead
 
 class UnitreeGo2Client:
     def __init__(self, robot_ip: str = "192.168.87.25", serial_number: str = "B42D4000P6PC04GE"):

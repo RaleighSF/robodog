@@ -32,14 +32,27 @@ class CameraManager:
         self.rtsp_url = self.rtsp_channels["rtsp_color"]  # Default to color
         
     def set_camera_source(self, source: str, robot_ip: str = None, rtsp_url: str = None):
-        """Set camera source: 'mac', 'unitree', or 'rtsp_*'"""
+        """Set camera source: 'mac', 'unitree', or 'rtsp_*' with robust cleanup"""
         valid_sources = ["mac", "unitree"] + list(self.rtsp_channels.keys())
         if source in valid_sources:
-            was_running = self.is_running
-            if was_running:
+            print(f"🔄 Camera source change: {self.camera_source} -> {source}")
+            
+            # Always stop completely first - don't auto-restart
+            if self.is_running:
+                print("⏹️ Stopping current camera for source switch")
                 self.stop()
                 
+                # Extra time for complete cleanup
+                import time
+                time.sleep(0.1)
+                
+            # Clean up any existing resources before switching
+            self._cleanup_current_source()
+                
+            # Update source configuration
+            old_source = self.camera_source
             self.camera_source = source
+            
             if robot_ip:
                 self.robot_ip = robot_ip
             
@@ -47,25 +60,53 @@ class CameraManager:
             if source.startswith("rtsp_"):
                 if source in self.rtsp_channels:
                     self.rtsp_url = self.rtsp_channels[source]
-                    print(f"RTSP channel selected: {source} -> {self.rtsp_url}")
+                    print(f"📡 RTSP channel selected: {source} -> {self.rtsp_url}")
                 elif rtsp_url:
                     self.rtsp_url = rtsp_url
+                    print(f"📡 Custom RTSP URL: {rtsp_url}")
             elif rtsp_url:
                 self.rtsp_url = rtsp_url
                 
-            # Create Unitree client immediately when switching to Unitree
+            # Set up new source-specific resources
             if source == "unitree":
-                print(f"Creating Unitree client for {self.robot_ip}")
-                self.unitree_client = UnitreeGo2Client(self.robot_ip, serial_number="B42D4000P6PC04GE")
-                print(f"Unitree client created: {self.unitree_client is not None}")
-            else:
-                # Clean up Unitree client when switching away
-                if self.unitree_client:
-                    self.unitree_client.disconnect()
-                    self.unitree_client = None
-                    
-            if was_running:
-                self.start()
+                try:
+                    print(f"🤖 Creating Unitree client for {self.robot_ip}")
+                    self.unitree_client = UnitreeGo2Client(self.robot_ip, serial_number="B42D4000P6PC04GE")
+                    print(f"✅ Unitree client created successfully")
+                except Exception as e:
+                    print(f"❌ Failed to create Unitree client: {e}")
+                    # Don't fail the whole switch, just log the error
+            
+            print(f"✅ Camera source switched: {old_source} -> {source}")
+            
+        else:
+            raise ValueError(f"Invalid camera source: {source}. Valid sources: {valid_sources}")
+            
+    def _cleanup_current_source(self):
+        """Clean up resources for the current camera source"""
+        try:
+            # Clean up Unitree client if exists
+            if self.unitree_client:
+                print("🧹 Cleaning up Unitree client")
+                self.unitree_client.disconnect()
+                self.unitree_client = None
+                
+            # Clean up OpenCV capture if exists  
+            if self.cap:
+                print("🧹 Cleaning up OpenCV capture")
+                self.cap.release()
+                self.cap = None
+                
+            # Clear current frame
+            with self.frame_lock:
+                self.current_frame = None
+                
+            # Force garbage collection
+            import gc
+            gc.collect()
+            
+        except Exception as e:
+            print(f"⚠️ Error during source cleanup: {e}")
                 
     def start(self) -> bool:
         """Start the camera capture"""
