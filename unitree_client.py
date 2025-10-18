@@ -16,7 +16,7 @@ except ImportError:
     print("go2-webrtc-connect not available. Install with: pip install go2-webrtc-connect[video,audio]")
 
 class UnitreeGo2Client:
-    def __init__(self, robot_ip: str = "192.168.12.1", serial_number: str = "B42D2000P7H8JNC7"):
+    def __init__(self, robot_ip: str = "192.168.87.25", serial_number: str = "B42D4000P6PC04GE"):
         self.robot_ip = robot_ip
         self.serial_number = serial_number  # Default to your robot's serial
         self.connection = None
@@ -72,11 +72,12 @@ class UnitreeGo2Client:
         robot_serial = serial_number or self.serial_number
         self.logger.info(f"Connecting to robot with serial: {robot_serial}")
             
-        # Try multiple connection methods in order of preference
+        # Try multiple connection methods in order of preference  
+        # For WiFi mode (STA), prioritize IP-based connection
         connection_methods = [
-            ("LocalSTA_Serial", lambda: Go2WebRTCConnection(WebRTCConnectionMethod.LocalSTA, serialNumber=robot_serial)),
-            ("LocalAP", lambda: Go2WebRTCConnection(WebRTCConnectionMethod.LocalAP)),
             ("LocalSTA_IP", lambda: Go2WebRTCConnection(WebRTCConnectionMethod.LocalSTA, ip=self.robot_ip)),
+            ("LocalSTA_Serial", lambda: Go2WebRTCConnection(WebRTCConnectionMethod.LocalSTA, serialNumber=robot_serial)),
+            ("LocalAP", lambda: Go2WebRTCConnection(WebRTCConnectionMethod.LocalAP)),  # Fallback to AP mode
         ]
         
         # Add remote connection as fallback (requires credentials)

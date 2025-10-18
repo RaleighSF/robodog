@@ -1,0 +1,709 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebRTC Test - Project Watch Dog | NTT DATA</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --ntt-primary-blue: #0066cc;
+            --ntt-dark-blue: #004499;
+            --ntt-light-blue: #e6f3ff;
+            --ntt-gray: #f5f5f5;
+            --ntt-dark-gray: #333333;
+            --ntt-medium-gray: #666666;
+            --ntt-light-gray: #e8e8e8;
+            --ntt-white: #ffffff;
+            --ntt-success: #00aa44;
+            --ntt-warning: #ff8800;
+            --ntt-error: #dd3333;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, var(--ntt-gray) 0%, var(--ntt-light-blue) 100%);
+            min-height: 100vh;
+            color: var(--ntt-dark-gray);
+        }
+
+        .header-nav {
+            background: var(--ntt-white);
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            padding: 0;
+        }
+
+        .nav-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 15px 30px;
+        }
+
+        .logo-section {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .ntt-logo {
+            font-size: 28px;
+            font-weight: 700;
+            color: var(--ntt-primary-blue);
+            text-decoration: none;
+        }
+
+        .project-title {
+            font-size: 18px;
+            font-weight: 500;
+            color: var(--ntt-medium-gray);
+            border-left: 2px solid var(--ntt-light-gray);
+            padding-left: 20px;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 20px;
+        }
+
+        .nav-link {
+            color: var(--ntt-medium-gray);
+            text-decoration: none;
+            font-weight: 500;
+            padding: 8px 16px;
+            border-radius: 4px;
+            transition: all 0.2s;
+        }
+
+        .nav-link:hover {
+            background: var(--ntt-light-blue);
+            color: var(--ntt-primary-blue);
+        }
+
+        .nav-link.active {
+            background: var(--ntt-primary-blue);
+            color: var(--ntt-white);
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 20px auto;
+            background: var(--ntt-white);
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+        }
+
+        .webrtc-header {
+            background: linear-gradient(135deg, var(--ntt-primary-blue) 0%, var(--ntt-dark-blue) 100%);
+            color: var(--ntt-white);
+            padding: 20px 30px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .webrtc-header h1 {
+            font-size: 24px;
+            font-weight: 600;
+            margin: 0;
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(255, 255, 255, 0.1);
+            padding: 8px 12px;
+            border-radius: 20px;
+            font-size: 14px;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--ntt-error);
+            animation: pulse 2s infinite;
+        }
+
+        .status-dot.connected {
+            background: var(--ntt-success);
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .webrtc-content {
+            padding: 30px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+        }
+
+        .section {
+            background: var(--ntt-gray);
+            border-radius: 8px;
+            padding: 20px;
+            border: 1px solid var(--ntt-light-gray);
+        }
+
+        .section h2 {
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--ntt-dark-gray);
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        .form-label {
+            display: block;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--ntt-medium-gray);
+            margin-bottom: 6px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .form-input {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid var(--ntt-light-gray);
+            border-radius: 4px;
+            font-size: 14px;
+            background: var(--ntt-white);
+            transition: all 0.2s;
+        }
+
+        .form-input:focus {
+            outline: none;
+            border-color: var(--ntt-primary-blue);
+            box-shadow: 0 0 0 3px rgba(0, 102, 204, 0.1);
+        }
+
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+        }
+
+        .btn-primary {
+            background: var(--ntt-primary-blue);
+            color: var(--ntt-white);
+        }
+
+        .btn-primary:hover {
+            background: var(--ntt-dark-blue);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 8px rgba(0, 102, 204, 0.3);
+        }
+
+        .btn-success {
+            background: var(--ntt-success);
+            color: var(--ntt-white);
+        }
+
+        .btn-success:hover {
+            background: #008833;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 8px rgba(0, 170, 68, 0.3);
+        }
+
+        .btn-danger {
+            background: var(--ntt-error);
+            color: var(--ntt-white);
+        }
+
+        .btn-danger:hover {
+            background: #bb2222;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 8px rgba(221, 51, 51, 0.3);
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .command-buttons {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        .status-message {
+            padding: 12px 16px;
+            border-radius: 4px;
+            font-size: 14px;
+            font-weight: 500;
+            margin: 15px 0;
+        }
+
+        .status-message.success {
+            background: rgba(0, 170, 68, 0.1);
+            color: var(--ntt-success);
+            border: 1px solid var(--ntt-success);
+        }
+
+        .status-message.error {
+            background: rgba(221, 51, 51, 0.1);
+            color: var(--ntt-error);
+            border: 1px solid var(--ntt-error);
+        }
+
+        .status-message.info {
+            background: rgba(0, 102, 204, 0.1);
+            color: var(--ntt-primary-blue);
+            border: 1px solid var(--ntt-primary-blue);
+        }
+
+        .command-history {
+            max-height: 200px;
+            overflow-y: auto;
+            background: var(--ntt-white);
+            border: 1px solid var(--ntt-light-gray);
+            border-radius: 4px;
+            padding: 10px;
+        }
+
+        .command-entry {
+            font-size: 12px;
+            padding: 4px 0;
+            border-bottom: 1px solid var(--ntt-light-gray);
+            color: var(--ntt-medium-gray);
+        }
+
+        .command-entry:last-child {
+            border-bottom: none;
+        }
+
+        .command-entry strong {
+            color: var(--ntt-dark-gray);
+        }
+
+        .webrtc-info {
+            grid-column: 1 / -1;
+            background: linear-gradient(135deg, var(--ntt-light-blue) 0%, var(--ntt-gray) 100%);
+            border: 1px solid var(--ntt-primary-blue);
+        }
+
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+
+        .info-item {
+            text-align: center;
+        }
+
+        .info-value {
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--ntt-primary-blue);
+            margin-bottom: 4px;
+        }
+
+        .info-label {
+            font-size: 12px;
+            color: var(--ntt-medium-gray);
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        @media (max-width: 768px) {
+            .webrtc-content {
+                grid-template-columns: 1fr;
+                padding: 20px;
+            }
+            
+            .nav-container {
+                flex-direction: column;
+                gap: 15px;
+                padding: 15px 20px;
+            }
+            
+            .command-buttons {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <nav class="header-nav">
+        <div class="nav-container">
+            <div class="logo-section">
+                <a href="/" class="ntt-logo">NTT DATA</a>
+                <div class="project-title">Project Watch Dog - WebRTC Test</div>
+            </div>
+            <div class="nav-links">
+                <a href="/" class="nav-link">Main Dashboard</a>
+                <a href="/webrtc" class="nav-link active">WebRTC Test</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container">
+        <div class="webrtc-header">
+            <h1>🔗 WebRTC Connection Test</h1>
+            <div class="status-indicator">
+                <div id="statusDot" class="status-dot"></div>
+                <span id="statusText">Disconnected</span>
+            </div>
+        </div>
+
+        <div class="webrtc-content">
+            <!-- Connection Setup -->
+            <div class="section">
+                <h2>🤖 Connection Setup</h2>
+                <div class="form-group">
+                    <label for="accessToken" class="form-label">Access Token</label>
+                    <input type="password" id="accessToken" class="form-input" placeholder="Enter your WebRTC access token" value="eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyIiwidWlkIjo0MDg2OSwiY3QiOjE3NjA0OTQyMjAsImlzcyI6InVuaXRyZWVfcm9ib3QiLCJ0eXBlIjoiYWNjZXNzX3Rva2VuIiwiZXhwIjoxNzYzMDg2MjIwfQ.Pn65ntyllh0AbhzEpcRSlujp7aOZhYyNCQVL5lQZt1c">
+                </div>
+                <div class="form-group">
+                    <label for="robotIP" class="form-label">Robot IP Address</label>
+                    <input type="text" id="robotIP" class="form-input" value="192.168.86.22" placeholder="192.168.86.22">
+                </div>
+                <div class="form-group">
+                    <button id="connectBtn" class="btn btn-success">Connect</button>
+                    <button id="disconnectBtn" class="btn btn-danger" disabled>Disconnect</button>
+                </div>
+                <div id="connectionStatus"></div>
+            </div>
+
+            <!-- Video Stream -->
+            <div class="section">
+                <h2>📹 Video Stream</h2>
+                <p style="font-size: 14px; color: var(--ntt-medium-gray); margin-bottom: 15px;">
+                    Live video feed from robot's camera via WebRTC
+                </p>
+                <div style="text-align: center; background: var(--ntt-dark-gray); border-radius: 8px; padding: 20px; margin: 15px 0;">
+                    <video id="robotVideo" 
+                           style="width: 100%; max-width: 640px; height: auto; border-radius: 4px; background: #000;" 
+                           controls autoplay muted>
+                        Your browser does not support the video element.
+                    </video>
+                    <div id="videoStatus" style="color: var(--ntt-light-gray); font-size: 14px; margin-top: 10px;">
+                        No video stream - Connect to robot first
+                    </div>
+                </div>
+            </div>
+
+            <!-- Robot Commands -->
+            <div class="section">
+                <h2>🎮 Robot Commands</h2>
+                <p style="font-size: 14px; color: var(--ntt-medium-gray); margin-bottom: 15px;">
+                    Send commands to the robot via WebRTC connection
+                </p>
+                <div class="command-buttons">
+                    <button class="btn btn-primary command-btn" data-command="StandUp">Stand Up</button>
+                    <button class="btn btn-primary command-btn" data-command="Sit">Sit Down</button>
+                    <button class="btn btn-primary command-btn" data-command="Stretch">Stretch</button>
+                    <button class="btn btn-primary command-btn" data-command="Dance1">Dance 1</button>
+                    <button class="btn btn-primary command-btn" data-command="Move" data-params='{"x": 0.5, "y": 0, "z": 0}'>Move Forward</button>
+                    <button class="btn btn-primary command-btn" data-command="Move" data-params='{"x": -0.5, "y": 0, "z": 0}'>Move Backward</button>
+                    <button class="btn btn-primary command-btn" data-command="Move" data-params='{"x": 0, "y": 0, "z": 0.5}'>Turn Left</button>
+                    <button class="btn btn-primary command-btn" data-command="Move" data-params='{"x": 0, "y": 0, "z": -0.5}'>Turn Right</button>
+                </div>
+                <div id="commandStatus"></div>
+            </div>
+
+            <!-- WebRTC Info -->
+            <div class="section webrtc-info">
+                <h2>📊 Connection Info</h2>
+                <div class="info-grid">
+                    <div class="info-item">
+                        <div id="infoConnected" class="info-value">No</div>
+                        <div class="info-label">Connected</div>
+                    </div>
+                    <div class="info-item">
+                        <div id="infoRobotIP" class="info-value">N/A</div>
+                        <div class="info-label">Robot IP</div>
+                    </div>
+                    <div class="info-item">
+                        <div id="infoHasToken" class="info-value">No</div>
+                        <div class="info-label">Has Token</div>
+                    </div>
+                    <div class="info-item">
+                        <div id="infoCommands" class="info-value">0</div>
+                        <div class="info-label">Commands Sent</div>
+                    </div>
+                </div>
+                <div style="margin-top: 20px;">
+                    <h3 style="font-size: 16px; margin-bottom: 10px;">Recent Commands</h3>
+                    <div id="commandHistory" class="command-history">
+                        <div style="text-align: center; color: var(--ntt-medium-gray); font-style: italic;">
+                            No commands sent yet
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let isConnected = false;
+        let commandCount = 0;
+
+        function updateStatus(message, type = 'info') {
+            const connectionStatus = document.getElementById('connectionStatus');
+            connectionStatus.innerHTML = `<div class="status-message ${type}">${message}</div>`;
+        }
+
+        function updateCommandStatus(message, type = 'info') {
+            const commandStatus = document.getElementById('commandStatus');
+            commandStatus.innerHTML = `<div class="status-message ${type}">${message}</div>`;
+            setTimeout(() => {
+                commandStatus.innerHTML = '';
+            }, 3000);
+        }
+
+        function updateConnectionIndicator(connected) {
+            const statusDot = document.getElementById('statusDot');
+            const statusText = document.getElementById('statusText');
+            
+            if (connected) {
+                statusDot.classList.add('connected');
+                statusText.textContent = 'Connected';
+            } else {
+                statusDot.classList.remove('connected');
+                statusText.textContent = 'Disconnected';
+            }
+        }
+
+        function updateConnectionInfo(status) {
+            document.getElementById('infoConnected').textContent = status.connected ? 'Yes' : 'No';
+            document.getElementById('infoRobotIP').textContent = status.robot_ip || 'N/A';
+            document.getElementById('infoHasToken').textContent = status.has_token ? 'Yes' : 'No';
+            document.getElementById('infoCommands').textContent = commandCount;
+
+            // Update command history
+            const historyDiv = document.getElementById('commandHistory');
+            if (status.command_history && status.command_history.length > 0) {
+                historyDiv.innerHTML = status.command_history.map(cmd => 
+                    `<div class="command-entry">
+                        <strong>${cmd.command}</strong> - ${new Date(cmd.timestamp).toLocaleTimeString()}
+                    </div>`
+                ).join('');
+            } else {
+                historyDiv.innerHTML = '<div style="text-align: center; color: var(--ntt-medium-gray); font-style: italic;">No commands sent yet</div>';
+            }
+        }
+
+        function toggleButtons(connected) {
+            document.getElementById('connectBtn').disabled = connected;
+            document.getElementById('disconnectBtn').disabled = !connected;
+            
+            const commandBtns = document.querySelectorAll('.command-btn');
+            commandBtns.forEach(btn => {
+                btn.disabled = !connected;
+            });
+        }
+
+        function updateVideoStatus(message, hasStream = false) {
+            const videoStatus = document.getElementById('videoStatus');
+            videoStatus.textContent = message;
+            
+            if (hasStream) {
+                videoStatus.style.color = 'var(--ntt-success)';
+            } else {
+                videoStatus.style.color = 'var(--ntt-light-gray)';
+            }
+        }
+
+        function setupVideoStream(stream) {
+            const video = document.getElementById('robotVideo');
+            video.srcObject = stream;
+            video.play().catch(console.error);
+            updateVideoStatus('✅ Video stream active', true);
+        }
+
+        function clearVideoStream() {
+            const video = document.getElementById('robotVideo');
+            if (video.srcObject) {
+                const tracks = video.srcObject.getTracks();
+                tracks.forEach(track => track.stop());
+                video.srcObject = null;
+            }
+            updateVideoStatus('No video stream - Connect to robot first', false);
+        }
+
+        async function fetchWebRTCStatus() {
+            try {
+                const response = await fetch('/webrtc/status');
+                const status = await response.json();
+                isConnected = status.connected;
+                updateConnectionIndicator(isConnected);
+                updateConnectionInfo(status);
+                toggleButtons(isConnected);
+            } catch (error) {
+                console.error('Failed to fetch WebRTC status:', error);
+            }
+        }
+
+        // Set Token
+        document.getElementById('accessToken').addEventListener('blur', async function() {
+            const token = this.value.trim();
+            if (!token) return;
+
+            try {
+                const response = await fetch('/webrtc/set_token', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token: token })
+                });
+                
+                const result = await response.json();
+                if (result.status === 'success') {
+                    updateStatus('Access token set successfully', 'success');
+                } else {
+                    updateStatus(result.message, 'error');
+                }
+                fetchWebRTCStatus();
+            } catch (error) {
+                updateStatus('Failed to set access token', 'error');
+            }
+        });
+
+        // Connect
+        document.getElementById('connectBtn').addEventListener('click', async function() {
+            const robotIP = document.getElementById('robotIP').value.trim();
+            const token = document.getElementById('accessToken').value.trim();
+            
+            if (!token) {
+                updateStatus('Please enter an access token first', 'error');
+                return;
+            }
+            
+            updateStatus('Connecting to robot via WebRTC...', 'info');
+            
+            try {
+                const response = await fetch('/webrtc/connect', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ robot_ip: robotIP })
+                });
+                
+                const result = await response.json();
+                updateStatus(result.message, result.status === 'success' ? 'success' : 'error');
+                
+                // Give the connection a moment to establish and keep polling
+                setTimeout(fetchWebRTCStatus, 1000);
+                setTimeout(fetchWebRTCStatus, 3000);
+                setTimeout(fetchWebRTCStatus, 5000);
+                setTimeout(fetchWebRTCStatus, 10000);
+            } catch (error) {
+                updateStatus('Failed to connect via WebRTC', 'error');
+            }
+        });
+
+        // Disconnect
+        document.getElementById('disconnectBtn').addEventListener('click', async function() {
+            try {
+                const response = await fetch('/webrtc/disconnect', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                
+                const result = await response.json();
+                updateStatus(result.message, 'success');
+                clearVideoStream();
+                fetchWebRTCStatus();
+            } catch (error) {
+                updateStatus('Failed to disconnect WebRTC', 'error');
+            }
+        });
+
+        // Command buttons
+        document.querySelectorAll('.command-btn').forEach(btn => {
+            btn.addEventListener('click', async function() {
+                const command = this.getAttribute('data-command');
+                const paramsStr = this.getAttribute('data-params');
+                const params = paramsStr ? JSON.parse(paramsStr) : {};
+                
+                if (!isConnected) {
+                    updateCommandStatus('Not connected to robot', 'error');
+                    return;
+                }
+                
+                updateCommandStatus(`Sending command: ${command}...`, 'info');
+                
+                try {
+                    const response = await fetch('/webrtc/command', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ 
+                            command: command,
+                            params: params
+                        })
+                    });
+                    
+                    const result = await response.json();
+                    updateCommandStatus(result.message, result.status === 'success' ? 'success' : 'error');
+                    
+                    if (result.status === 'success') {
+                        commandCount++;
+                        fetchWebRTCStatus();
+                    }
+                } catch (error) {
+                    updateCommandStatus('Failed to send command', 'error');
+                }
+            });
+        });
+
+        // Periodic status updates
+        setInterval(fetchWebRTCStatus, 3000);
+        
+        // Initial status fetch
+        fetchWebRTCStatus();
+        
+        // Auto-set token on page load
+        const tokenInput = document.getElementById('accessToken');
+        if (tokenInput.value.trim()) {
+            // Automatically set the token if it's pre-filled
+            fetch('/webrtc/set_token', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ token: tokenInput.value.trim() })
+            }).then(response => response.json())
+            .then(result => {
+                if (result.status === 'success') {
+                    updateStatus('Access token auto-loaded successfully', 'success');
+                    fetchWebRTCStatus();
+                }
+            }).catch(error => {
+                console.log('Auto-token setup failed:', error);
+            });
+        }
+    </script>
+</body>
+</html>

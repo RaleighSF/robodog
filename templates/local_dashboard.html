@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🐕 iDog Local Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            color: #333;
+            min-height: 100vh;
+        }
+        
+        .header {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            padding: 20px;
+            text-align: center;
+            border-bottom: 3px solid #2a5298;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+        }
+        
+        .header h1 {
+            color: #1e3c72;
+            margin-bottom: 10px;
+            font-size: 2.8em;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        
+        .header p {
+            color: #666;
+            font-size: 1.1em;
+        }
+        
+        .status-bar {
+            background: rgba(255, 255, 255, 0.9);
+            padding: 20px;
+            margin: 20px;
+            border-radius: 15px;
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1);
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+        }
+        
+        .status-item {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            padding: 15px 20px;
+            background: linear-gradient(135deg, #f8f9fa, #e9ecef);
+            border-radius: 12px;
+            border: 2px solid #dee2e6;
+            transition: transform 0.3s ease;
+        }
+        
+        .status-item:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+        }
+        
+        .status-indicator {
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: #28a745;
+            box-shadow: 0 0 15px rgba(40, 167, 69, 0.6);
+            animation: pulse 2s ease-in-out infinite alternate;
+        }
+        
+        @keyframes pulse {
+            from { opacity: 1; }
+            to { opacity: 0.5; }
+        }
+        
+        .status-text {
+            font-weight: 600;
+            color: #495057;
+        }
+        
+        .status-value {
+            color: #2a5298;
+            font-weight: bold;
+        }
+        
+        .camera-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(450px, 1fr));
+            gap: 25px;
+            padding: 25px;
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+        
+        .camera-card {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(15px);
+            border-radius: 20px;
+            overflow: hidden;
+            box-shadow: 0 10px 35px rgba(0, 0, 0, 0.15);
+            transition: all 0.4s ease;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+        }
+        
+        .camera-card:hover {
+            transform: translateY(-8px);
+            box-shadow: 0 15px 45px rgba(0, 0, 0, 0.25);
+        }
+        
+        .camera-header {
+            background: linear-gradient(135deg, #1e3c72, #2a5298);
+            color: white;
+            padding: 25px;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .camera-header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+            transition: left 0.5s;
+        }
+        
+        .camera-card:hover .camera-header::before {
+            left: 100%;
+        }
+        
+        .camera-name {
+            font-size: 1.6em;
+            font-weight: bold;
+            margin-bottom: 8px;
+            text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.3);
+        }
+        
+        .camera-description {
+            opacity: 0.9;
+            font-size: 1em;
+        }
+        
+        .camera-viewport {
+            position: relative;
+            height: 300px;
+            background: #000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+        
+        .camera-stream {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        
+        .camera-placeholder {
+            color: #6c757d;
+            font-size: 1.3em;
+            text-align: center;
+            padding: 30px;
+        }
+        
+        .camera-controls {
+            padding: 25px;
+            background: linear-gradient(135deg, #f8f9fa, #e9ecef);
+        }
+        
+        .control-row {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 20px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        
+        .btn {
+            padding: 14px 28px;
+            border: none;
+            border-radius: 25px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.4s ease;
+            font-size: 0.95em;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .btn::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 0;
+            height: 0;
+            background: rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            transition: width 0.4s, height 0.4s;
+        }
+        
+        .btn:hover::before {
+            width: 300px;
+            height: 300px;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #28a745, #20c997);
+            color: white;
+            box-shadow: 0 4px 15px rgba(40, 167, 69, 0.3);
+        }
+        
+        .btn-primary:hover {
+            background: linear-gradient(135deg, #20c997, #17a2b8);
+            transform: translateY(-3px);
+            box-shadow: 0 8px 25px rgba(40, 167, 69, 0.4);
+        }
+        
+        .btn-danger {
+            background: linear-gradient(135deg, #dc3545, #fd7e14);
+            color: white;
+            box-shadow: 0 4px 15px rgba(220, 53, 69, 0.3);
+        }
+        
+        .btn-danger:hover {
+            background: linear-gradient(135deg, #fd7e14, #ffc107);
+            transform: translateY(-3px);
+            box-shadow: 0 8px 25px rgba(220, 53, 69, 0.4);
+        }
+        
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none !important;
+        }
+        
+        .rtsp-url {
+            font-family: 'Courier New', monospace;
+            background: linear-gradient(135deg, #e9ecef, #f8f9fa);
+            padding: 12px 15px;
+            border-radius: 8px;
+            font-size: 0.85em;
+            color: #495057;
+            word-break: break-all;
+            border: 2px solid #ced4da;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .rtsp-url:hover {
+            background: linear-gradient(135deg, #ced4da, #e9ecef);
+            border-color: #2a5298;
+            transform: scale(1.02);
+        }
+        
+        .status-badge {
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 0.85em;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border: 2px solid;
+        }
+        
+        .status-connected {
+            background: linear-gradient(135deg, #d4edda, #c3e6cb);
+            color: #155724;
+            border-color: #28a745;
+        }
+        
+        .status-connecting {
+            background: linear-gradient(135deg, #fff3cd, #ffeaa7);
+            color: #856404;
+            border-color: #ffc107;
+        }
+        
+        .status-failed {
+            background: linear-gradient(135deg, #f8d7da, #f5c6cb);
+            color: #721c24;
+            border-color: #dc3545;
+        }
+        
+        .status-stopped {
+            background: linear-gradient(135deg, #e2e3e5, #d6d8db);
+            color: #383d41;
+            border-color: #6c757d;
+        }
+        
+        .loading {
+            display: inline-block;
+            width: 22px;
+            height: 22px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #2a5298;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .global-controls {
+            text-align: center;
+            padding: 30px;
+        }
+        
+        .global-controls .btn {
+            margin: 0 15px;
+            padding: 18px 35px;
+            font-size: 1.2em;
+        }
+        
+        .footer {
+            text-align: center;
+            padding: 40px;
+            color: rgba(255, 255, 255, 0.9);
+            font-size: 1em;
+        }
+        
+        .connection-indicator {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 10px 20px;
+            background: rgba(255, 255, 255, 0.9);
+            border-radius: 25px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+            font-weight: bold;
+            z-index: 1000;
+        }
+        
+        .connection-online {
+            color: #28a745;
+        }
+        
+        .connection-offline {
+            color: #dc3545;
+        }
+        
+        @media (max-width: 768px) {
+            .camera-grid {
+                grid-template-columns: 1fr;
+                padding: 15px;
+            }
+            
+            .status-bar {
+                grid-template-columns: 1fr;
+                margin: 15px;
+            }
+            
+            .control-row {
+                flex-direction: column;
+            }
+            
+            .btn {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="connection-indicator" id="connection-status">
+        <span class="connection-online">🟢 Connected to Dog</span>
+    </div>
+    
+    <div class="header">
+        <h1>🐕 iDog Local Dashboard</h1>
+        <p>Remote Camera Monitoring - Running on Your Laptop</p>
+    </div>
+    
+    <div class="status-bar">
+        <div class="status-item">
+            <div class="status-indicator"></div>
+            <div>
+                <div class="status-text">Dog IP Address</div>
+                <div class="status-value">{{ jetson_ip }}</div>
+            </div>
+        </div>
+        <div class="status-item">
+            <div class="status-indicator"></div>
+            <div>
+                <div class="status-text">RTSP Port</div>
+                <div class="status-value">{{ rtsp_port }}</div>
+            </div>
+        </div>
+        <div class="status-item">
+            <div class="status-indicator"></div>
+            <div>
+                <div class="status-text">Active Streams</div>
+                <div class="status-value" id="active-count">0</div>
+            </div>
+        </div>
+        <div class="status-item">
+            <div class="status-indicator"></div>
+            <div>
+                <div class="status-text">Available Cameras</div>
+                <div class="status-value" id="available-count">{{ cameras|length }}</div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="global-controls">
+        <button class="btn btn-primary" onclick="startAllStreams()">🚀 Connect All Cameras</button>
+        <button class="btn btn-danger" onclick="stopAllStreams()">🛑 Disconnect All</button>
+        <button class="btn btn-primary" onclick="refreshStatus()" style="background: linear-gradient(135deg, #17a2b8, #6610f2);">🔄 Refresh Status</button>
+    </div>
+    
+    <div class="camera-grid" id="camera-grid">
+        <!-- Cameras will be populated by JavaScript -->
+    </div>
+    
+    <div class="footer">
+        <p>🐕 iDog Local Dashboard | Streaming from Jetson ORIN | Real-time Remote Camera Monitoring</p>
+        <p style="margin-top: 10px; opacity: 0.8;">Dashboard running locally on your laptop - Camera streams from the dog</p>
+    </div>
+
+    <script>
+        let cameras = {};
+        let statusInterval;
+        
+        // Initialize the system
+        document.addEventListener('DOMContentLoaded', function() {
+            loadCameras();
+            startStatusUpdates();
+        });
+        
+        async function loadCameras() {
+            try {
+                const response = await fetch('/api/cameras');
+                cameras = await response.json();
+                renderCameras();
+                updateStatusCounts();
+                updateConnectionStatus(true);
+            } catch (error) {
+                console.error('Failed to load cameras:', error);
+                updateConnectionStatus(false);
+            }
+        }
+        
+        function renderCameras() {
+            const grid = document.getElementById('camera-grid');
+            grid.innerHTML = '';
+            
+            Object.entries(cameras).forEach(([cameraId, camera]) => {
+                const card = createCameraCard(cameraId, camera);
+                grid.appendChild(card);
+            });
+        }
+        
+        function createCameraCard(cameraId, camera) {
+            const card = document.createElement('div');
+            card.className = 'camera-card';
+            card.id = `camera-${cameraId}`;
+            
+            const statusClass = getStatusClass(camera.status);
+            const statusText = getStatusText(camera.status);
+            
+            card.innerHTML = `
+                <div class="camera-header">
+                    <div class="camera-name">${camera.name}</div>
+                    <div class="camera-description">${camera.description}</div>
+                </div>
+                
+                <div class="camera-viewport">
+                    ${camera.status === 'connected' && camera.has_video
+                        ? `<img class="camera-stream" src="/video_feed/${cameraId}" alt="${camera.name}" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">`
+                        : ''
+                    }
+                    <div class="camera-placeholder" ${camera.status === 'connected' && camera.has_video ? 'style="display:none;"' : ''}>
+                        ${getPlaceholderContent(camera.status)}
+                    </div>
+                </div>
+                
+                <div class="camera-controls">
+                    <div class="control-row">
+                        <span class="status-badge ${statusClass}">${statusText}</span>
+                        <div style="flex: 1;"></div>
+                        <div id="loading-${cameraId}" class="loading" style="display: none;"></div>
+                    </div>
+                    
+                    <div class="control-row">
+                        <button class="btn btn-primary" onclick="startStream('${cameraId}')" 
+                                ${camera.status === 'connected' || camera.status === 'connecting' ? 'disabled' : ''}>
+                            📡 Connect Stream
+                        </button>
+                        <button class="btn btn-danger" onclick="stopStream('${cameraId}')"
+                                ${camera.status === 'stopped' ? 'disabled' : ''}>
+                            ⏹️ Disconnect
+                        </button>
+                    </div>
+                    
+                    <div class="control-row">
+                        <div style="flex: 1;">
+                            <strong>RTSP URL:</strong><br>
+                            <div class="rtsp-url" title="Click to copy">${camera.rtsp_url}</div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            return card;
+        }
+        
+        function getStatusClass(status) {
+            switch(status) {
+                case 'connected': return 'status-connected';
+                case 'connecting': return 'status-connecting';
+                case 'failed': case 'disconnected': return 'status-failed';
+                default: return 'status-stopped';
+            }
+        }
+        
+        function getStatusText(status) {
+            switch(status) {
+                case 'connected': return '🟢 Connected';
+                case 'connecting': return '🟡 Connecting';
+                case 'failed': return '🔴 Failed';
+                case 'disconnected': return '⚠️ Disconnected';
+                default: return '⚫ Stopped';
+            }
+        }
+        
+        function getPlaceholderContent(status) {
+            switch(status) {
+                case 'connecting':
+                    return '🔗 Connecting to RTSP stream...<br><small>Please wait</small>';
+                case 'failed':
+                    return '❌ Connection Failed<br><small>Check if RTSP server is running on dog</small>';
+                case 'disconnected':
+                    return '⚠️ Stream Disconnected<br><small>Lost connection to camera</small>';
+                default:
+                    return '📹 Camera Ready<br><small>Click Connect Stream to start</small>';
+            }
+        }
+        
+        async function startStream(cameraId) {
+            showLoading(cameraId, true);
+            
+            try {
+                const response = await fetch(`/api/start_stream/${cameraId}`, {
+                    method: 'POST'
+                });
+                const result = await response.json();
+                
+                if (result.success) {
+                    setTimeout(() => {
+                        loadCameras(); // Refresh camera status
+                    }, 1000); // Give stream time to connect
+                } else {
+                    alert(`Failed to start stream for ${cameraId}`);
+                }
+            } catch (error) {
+                console.error('Failed to start stream:', error);
+                alert('Failed to start stream - check dog connection');
+            }
+            
+            showLoading(cameraId, false);
+        }
+        
+        async function stopStream(cameraId) {
+            showLoading(cameraId, true);
+            
+            try {
+                const response = await fetch(`/api/stop_stream/${cameraId}`, {
+                    method: 'POST'
+                });
+                const result = await response.json();
+                
+                if (result.success) {
+                    loadCameras(); // Refresh camera status
+                }
+            } catch (error) {
+                console.error('Failed to stop stream:', error);
+            }
+            
+            showLoading(cameraId, false);
+        }
+        
+        async function startAllStreams() {
+            for (const cameraId of Object.keys(cameras)) {
+                if (cameras[cameraId].status === 'stopped') {
+                    await startStream(cameraId);
+                    await new Promise(resolve => setTimeout(resolve, 2000)); // Stagger connections
+                }
+            }
+        }
+        
+        async function stopAllStreams() {
+            for (const cameraId of Object.keys(cameras)) {
+                if (cameras[cameraId].status !== 'stopped') {
+                    await stopStream(cameraId);
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                }
+            }
+        }
+        
+        async function refreshStatus() {
+            await loadCameras();
+        }
+        
+        function showLoading(cameraId, show) {
+            const loader = document.getElementById(`loading-${cameraId}`);
+            if (loader) {
+                loader.style.display = show ? 'inline-block' : 'none';
+            }
+        }
+        
+        function updateStatusCounts() {
+            const activeCount = Object.values(cameras).filter(c => c.status === 'connected').length;
+            document.getElementById('active-count').textContent = activeCount;
+        }
+        
+        function updateConnectionStatus(online) {
+            const indicator = document.getElementById('connection-status');
+            if (online) {
+                indicator.innerHTML = '<span class="connection-online">🟢 Connected to Dog</span>';
+            } else {
+                indicator.innerHTML = '<span class="connection-offline">🔴 Dog Connection Lost</span>';
+            }
+        }
+        
+        function startStatusUpdates() {
+            statusInterval = setInterval(() => {
+                loadCameras();
+            }, 3000); // Update every 3 seconds
+        }
+        
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', function() {
+            if (statusInterval) {
+                clearInterval(statusInterval);
+            }
+        });
+        
+        // Copy RTSP URL to clipboard
+        document.addEventListener('click', function(e) {
+            if (e.target.classList.contains('rtsp-url')) {
+                navigator.clipboard.writeText(e.target.textContent).then(() => {
+                    const original = e.target.textContent;
+                    e.target.textContent = '📋 Copied to clipboard!';
+                    e.target.style.background = 'linear-gradient(135deg, #d4edda, #c3e6cb)';
+                    setTimeout(() => {
+                        e.target.textContent = original;
+                        e.target.style.background = '';
+                    }, 2000);
+                });
+            }
+        });
+    </script>
+</body>
+</html>

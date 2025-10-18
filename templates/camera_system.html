@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🐕 iDog RTSP Camera System</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #333;
+            min-height: 100vh;
+        }
+        
+        .header {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            padding: 20px;
+            text-align: center;
+            border-bottom: 2px solid #e0e0e0;
+            box-shadow: 0 2px 20px rgba(0, 0, 0, 0.1);
+        }
+        
+        .header h1 {
+            color: #2c3e50;
+            margin-bottom: 10px;
+            font-size: 2.5em;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        
+        .status-bar {
+            background: rgba(255, 255, 255, 0.9);
+            padding: 15px;
+            margin: 20px;
+            border-radius: 15px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 15px;
+        }
+        
+        .status-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 15px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            border: 2px solid #e9ecef;
+        }
+        
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #28a745;
+            box-shadow: 0 0 10px rgba(40, 167, 69, 0.5);
+        }
+        
+        .camera-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 20px;
+            padding: 20px;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        .camera-card {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            overflow: hidden;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        
+        .camera-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.15);
+        }
+        
+        .camera-header {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+        
+        .camera-name {
+            font-size: 1.4em;
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
+        
+        .camera-info {
+            opacity: 0.9;
+            font-size: 0.9em;
+        }
+        
+        .camera-viewport {
+            position: relative;
+            height: 300px;
+            background: #000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+        
+        .camera-stream {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        
+        .camera-placeholder {
+            color: #6c757d;
+            font-size: 1.2em;
+            text-align: center;
+            padding: 20px;
+        }
+        
+        .camera-controls {
+            padding: 20px;
+            background: #f8f9fa;
+        }
+        
+        .control-row {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+            align-items: center;
+        }
+        
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 25px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-size: 0.9em;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: linear-gradient(135deg, #5a67d8, #6b46c1);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+        }
+        
+        .btn-danger {
+            background: linear-gradient(135deg, #ff6b6b, #ee5a52);
+            color: white;
+        }
+        
+        .btn-danger:hover {
+            background: linear-gradient(135deg, #ff5252, #e53935);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(255, 107, 107, 0.4);
+        }
+        
+        .btn-secondary {
+            background: linear-gradient(135deg, #6c757d, #5a6268);
+            color: white;
+        }
+        
+        .btn-secondary:hover {
+            background: linear-gradient(135deg, #5a6268, #495057);
+            transform: translateY(-2px);
+        }
+        
+        .rtsp-url {
+            font-family: 'Courier New', monospace;
+            background: #e9ecef;
+            padding: 8px 12px;
+            border-radius: 5px;
+            font-size: 0.8em;
+            color: #495057;
+            word-break: break-all;
+            border: 1px solid #ced4da;
+        }
+        
+        .status-badge {
+            padding: 4px 12px;
+            border-radius: 15px;
+            font-size: 0.8em;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+        
+        .status-active {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .status-inactive {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .status-unavailable {
+            background: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
+        
+        .loading {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .global-controls {
+            text-align: center;
+            padding: 20px;
+        }
+        
+        .global-controls .btn {
+            margin: 0 10px;
+            padding: 15px 30px;
+            font-size: 1.1em;
+        }
+        
+        .footer {
+            text-align: center;
+            padding: 30px;
+            color: rgba(255, 255, 255, 0.8);
+            font-size: 0.9em;
+        }
+        
+        @media (max-width: 768px) {
+            .camera-grid {
+                grid-template-columns: 1fr;
+                padding: 10px;
+            }
+            
+            .status-bar {
+                flex-direction: column;
+                margin: 10px;
+            }
+            
+            .control-row {
+                flex-direction: column;
+            }
+            
+            .btn {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🐕 iDog RTSP Camera System</h1>
+        <p>Multi-Camera Streaming Dashboard - Jetson ORIN</p>
+    </div>
+    
+    <div class="status-bar">
+        <div class="status-item">
+            <div class="status-indicator"></div>
+            <span><strong>Jetson IP:</strong> {{ jetson_ip }}</span>
+        </div>
+        <div class="status-item">
+            <div class="status-indicator"></div>
+            <span><strong>RTSP Port:</strong> {{ rtsp_port }}</span>
+        </div>
+        <div class="status-item">
+            <div class="status-indicator"></div>
+            <span><strong>Active Streams:</strong> <span id="active-count">0</span></span>
+        </div>
+        <div class="status-item">
+            <div class="status-indicator"></div>
+            <span><strong>Available Cameras:</strong> <span id="available-count">0</span></span>
+        </div>
+    </div>
+    
+    <div class="global-controls">
+        <button class="btn btn-primary" onclick="startAllStreams()">🚀 Start All Cameras</button>
+        <button class="btn btn-danger" onclick="stopAllStreams()">🛑 Stop All Cameras</button>
+        <button class="btn btn-secondary" onclick="refreshStatus()">🔄 Refresh Status</button>
+    </div>
+    
+    <div class="camera-grid" id="camera-grid">
+        <!-- Cameras will be populated by JavaScript -->
+    </div>
+    
+    <div class="footer">
+        <p>🐕 iDog Camera System | Built for Unitree Go2 Research | Real-time RTSP Streaming</p>
+    </div>
+
+    <script>
+        let cameras = {};
+        let statusInterval;
+        
+        // Initialize the system
+        document.addEventListener('DOMContentLoaded', function() {
+            loadCameras();
+            startStatusUpdates();
+        });
+        
+        async function loadCameras() {
+            try {
+                const response = await fetch('/api/cameras');
+                cameras = await response.json();
+                renderCameras();
+                updateStatusCounts();
+            } catch (error) {
+                console.error('Failed to load cameras:', error);
+            }
+        }
+        
+        function renderCameras() {
+            const grid = document.getElementById('camera-grid');
+            grid.innerHTML = '';
+            
+            Object.entries(cameras).forEach(([cameraId, camera]) => {
+                const card = createCameraCard(cameraId, camera);
+                grid.appendChild(card);
+            });
+        }
+        
+        function createCameraCard(cameraId, camera) {
+            const card = document.createElement('div');
+            card.className = 'camera-card';
+            card.id = `camera-${cameraId}`;
+            
+            const statusClass = camera.available 
+                ? (camera.status === 'active' ? 'status-active' : 'status-inactive')
+                : 'status-unavailable';
+            
+            const statusText = camera.available 
+                ? (camera.status === 'active' ? 'Active' : 'Inactive')
+                : 'Unavailable';
+            
+            card.innerHTML = `
+                <div class="camera-header">
+                    <div class="camera-name">${camera.name}</div>
+                    <div class="camera-info">${camera.device}</div>
+                </div>
+                
+                <div class="camera-viewport">
+                    ${camera.status === 'active' 
+                        ? `<img class="camera-stream" src="/video_feed/${cameraId}" alt="${camera.name}" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">`
+                        : ''
+                    }
+                    <div class="camera-placeholder" ${camera.status === 'active' ? 'style="display:none;"' : ''}>
+                        ${camera.available ? '📹 Camera Ready' : '❌ Camera Not Available'}
+                        <br><small>Click Start Stream to begin</small>
+                    </div>
+                </div>
+                
+                <div class="camera-controls">
+                    <div class="control-row">
+                        <span class="status-badge ${statusClass}">${statusText}</span>
+                        <div style="flex: 1;"></div>
+                        <div id="loading-${cameraId}" class="loading" style="display: none;"></div>
+                    </div>
+                    
+                    <div class="control-row">
+                        <button class="btn btn-primary" onclick="startStream('${cameraId}')" 
+                                ${!camera.available || camera.status === 'active' ? 'disabled' : ''}>
+                            ▶️ Start Stream
+                        </button>
+                        <button class="btn btn-danger" onclick="stopStream('${cameraId}')"
+                                ${camera.status !== 'active' ? 'disabled' : ''}>
+                            ⏹️ Stop Stream
+                        </button>
+                    </div>
+                    
+                    <div class="control-row">
+                        <div style="flex: 1;">
+                            <strong>RTSP URL:</strong><br>
+                            <div class="rtsp-url">${camera.rtsp_url}</div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            return card;
+        }
+        
+        async function startStream(cameraId) {
+            showLoading(cameraId, true);
+            
+            try {
+                const response = await fetch(`/api/start_stream/${cameraId}`, {
+                    method: 'POST'
+                });
+                const result = await response.json();
+                
+                if (result.success) {
+                    setTimeout(() => {
+                        loadCameras(); // Refresh camera status
+                    }, 2000); // Give RTSP server time to start
+                } else {
+                    alert(`Failed to start stream for ${cameraId}`);
+                }
+            } catch (error) {
+                console.error('Failed to start stream:', error);
+                alert('Failed to start stream');
+            }
+            
+            showLoading(cameraId, false);
+        }
+        
+        async function stopStream(cameraId) {
+            showLoading(cameraId, true);
+            
+            try {
+                const response = await fetch(`/api/stop_stream/${cameraId}`, {
+                    method: 'POST'
+                });
+                const result = await response.json();
+                
+                if (result.success) {
+                    loadCameras(); // Refresh camera status
+                }
+            } catch (error) {
+                console.error('Failed to stop stream:', error);
+            }
+            
+            showLoading(cameraId, false);
+        }
+        
+        async function startAllStreams() {
+            for (const cameraId of Object.keys(cameras)) {
+                if (cameras[cameraId].available && cameras[cameraId].status !== 'active') {
+                    await startStream(cameraId);
+                    await new Promise(resolve => setTimeout(resolve, 1000)); // Stagger starts
+                }
+            }
+        }
+        
+        async function stopAllStreams() {
+            for (const cameraId of Object.keys(cameras)) {
+                if (cameras[cameraId].status === 'active') {
+                    await stopStream(cameraId);
+                }
+            }
+        }
+        
+        async function refreshStatus() {
+            await loadCameras();
+        }
+        
+        function showLoading(cameraId, show) {
+            const loader = document.getElementById(`loading-${cameraId}`);
+            if (loader) {
+                loader.style.display = show ? 'inline-block' : 'none';
+            }
+        }
+        
+        function updateStatusCounts() {
+            const activeCount = Object.values(cameras).filter(c => c.status === 'active').length;
+            const availableCount = Object.values(cameras).filter(c => c.available).length;
+            
+            document.getElementById('active-count').textContent = activeCount;
+            document.getElementById('available-count').textContent = availableCount;
+        }
+        
+        function startStatusUpdates() {
+            statusInterval = setInterval(() => {
+                loadCameras();
+            }, 5000); // Update every 5 seconds
+        }
+        
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', function() {
+            if (statusInterval) {
+                clearInterval(statusInterval);
+            }
+        });
+        
+        // Copy RTSP URL to clipboard
+        document.addEventListener('click', function(e) {
+            if (e.target.classList.contains('rtsp-url')) {
+                navigator.clipboard.writeText(e.target.textContent).then(() => {
+                    const original = e.target.textContent;
+                    e.target.textContent = '📋 Copied to clipboard!';
+                    setTimeout(() => {
+                        e.target.textContent = original;
+                    }, 2000);
+                });
+            }
+        });
+    </script>
+</body>
+</html>
