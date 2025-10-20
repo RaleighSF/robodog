@@ -57,8 +57,17 @@ class WebApp:
                     # Perform detection
                     detections = detector.detect(frame)
                     
-                    # Log detections (with cooldown logic)
-                    logged = detection_logger.log_detections(frame, detections)
+                    # Log detections (with cooldown logic) only if alert logging is enabled
+                    from config import get_config
+                    config_manager = get_config()
+                    logged = False
+                    if config_manager.is_alert_logging_enabled():
+                        # Get configured classes for logging
+                        target_classes = config_manager.get_classes()
+                        # If no classes configured, fall back to all detected classes
+                        if not target_classes:
+                            target_classes = list(set(d.class_name for d in detections))
+                        logged = detection_logger.log_detections(frame, detections, target_classes)
                     
                     # Update camera source in the last log entry if a new log was created
                     if logged and detection_logger.detection_logs:
@@ -301,8 +310,11 @@ def video_feed():
 @app.route('/start_detection', methods=['POST'])
 def start_detection():
     """Start object detection with proper state synchronization"""
+    print("🔍 WEB_APP: start_detection() endpoint called!")
+    import sys; sys.stdout.flush()
     try:
         print(f"🚀 Starting detection - Current camera: {camera_manager.camera_source}")
+        sys.stdout.flush()
         
         # Ensure clean state before starting
         if web_app.is_running:
@@ -311,7 +323,9 @@ def start_detection():
             camera_manager.stop()
         
         # Start camera
-        if camera_manager.start():
+        camera_started = camera_manager.start()
+
+        if camera_started:
             web_app.is_running = True
             print(f"✅ Detection started successfully with {camera_manager.camera_source}")
             return jsonify({'status': 'success', 'message': 'Detection started'})
@@ -437,7 +451,7 @@ def get_status():
 def switch_detection_model():
     """Switch between different YOLO models"""
     data = request.json
-    model_type = data.get('model_type', 'yolov4')
+    model_type = data.get('model_type', 'yoloe')
     
     print(f"Switch model request: {model_type}")
     
@@ -569,6 +583,298 @@ def get_webrtc_status():
     """Get WebRTC connection status"""
     status = webrtc_manager.get_status()
     return jsonify(status)
+
+@app.route('/api/yoloe/config', methods=['GET'])
+def get_yoloe_config():
+    """Get current YOLO-E configuration"""
+    try:
+        from config import get_config
+        config_manager = get_config()
+        vision_config = config_manager.get_vision_config()
+
+        # Get visual prompts with class names for UI display
+        visual_prompts_with_names = config_manager.get_visual_prompts_with_names()
+
+        return jsonify({
+            'status': 'success',
+            'detector': vision_config.get('detector', 'yoloe'),
+            'detection_mode': config_manager.get_detection_mode(),
+            'conf': vision_config.get('conf', 0.25),
+            'iou': vision_config.get('iou', 0.45),
+            'max_det': vision_config.get('max_det', 100),
+            'classes': config_manager.get_classes(),
+            'visual_prompts': visual_prompts_with_names,  # Return structured format with class names
+            'model_path': config_manager.get_model_path(),
+            'source': vision_config.get('source', ''),
+            'rtsp_tcp': vision_config.get('rtsp_tcp', True),
+            'alert_logging': config_manager.is_alert_logging_enabled(),
+            'nlp_enabled': config_manager.is_nlp_enabled(),
+            'nlp_prompt': config_manager.get_nlp_prompt(),
+            'openai_api_key': config_manager.get_openai_api_key()
+        })
+    except Exception as e:
+        print(f"❌ Error getting YOLO-E config: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@app.route('/api/yoloe/config', methods=['POST'])
+def save_yoloe_config():
+    """Save YOLO-E configuration"""
+    try:
+        from config import get_config
+        config_manager = get_config()
+        data = request.json
+        
+        # Update vision configuration
+        vision_config = config_manager.config['vision']
+        vision_config.update({
+            'detector': data.get('detector', 'yoloe'),
+            'conf': float(data.get('conf', 0.25)),
+            'iou': float(data.get('iou', 0.45)),
+            'max_det': int(data.get('max_det', 100))
+        })
+        
+        # Update classes (text prompts)
+        classes = data.get('classes', [])
+        if isinstance(classes, str):
+            classes = [c.strip() for c in classes.split(',') if c.strip()]
+        config_manager.update_classes(classes)
+        
+        # Update alert logging setting
+        if 'alert_logging' in data:
+            config_manager.set_alert_logging(bool(data['alert_logging']))
+
+        # Update NLP settings based on detection_mode or nlp_enabled flag
+        detection_mode = data.get('detection_mode', '')
+        nlp_enabled = data.get('nlp_enabled', False) or detection_mode == 'nlp'
+        nlp_prompt = data.get('nlp_prompt', '').strip()
+
+        if nlp_enabled and nlp_prompt:
+            # Enable NLP mode with the prompt
+            config_manager.set_nlp_prompt(nlp_prompt, enabled=True)
+            print(f"✅ NLP mode enabled with prompt: '{nlp_prompt}'")
+        elif not nlp_enabled:
+            # Disable NLP mode
+            config_manager.disable_nlp()
+            print("✅ NLP mode disabled")
+
+        # Update OpenAI API key if provided
+        if 'openai_api_key' in data:
+            api_key = data.get('openai_api_key', '').strip()
+            if api_key:
+                config_manager.set_openai_api_key(api_key)
+                print("✅ OpenAI API key updated")
+
+        # Save configuration to file
+        config_manager.save_config()
+        
+        # Reload detector configuration if using YOLO-E
+        if vision_config['detector'] == 'yoloe':
+            try:
+                from yoloe_detector import get_yoloe_detector
+                yoloe_detector = get_yoloe_detector()
+                yoloe_detector.reload_config()
+                print("✅ YOLO-E detector configuration reloaded")
+            except Exception as reload_error:
+                print(f"⚠️ Failed to reload YOLO-E detector: {reload_error}")
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Configuration saved successfully'
+        })
+        
+    except Exception as e:
+        print(f"❌ Error saving YOLO-E config: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@app.route('/api/yoloe/test_nlp', methods=['POST'])
+def test_nlp_mapping():
+    """Test NLP prompt mapping to YOLO classes"""
+    try:
+        data = request.json
+        api_key = data.get('api_key', '').strip()
+        nlp_prompt = data.get('nlp_prompt', '').strip()
+
+        if not api_key:
+            return jsonify({'status': 'error', 'error': 'API key is required'}), 400
+
+        if not nlp_prompt:
+            return jsonify({'status': 'error', 'error': 'NLP prompt is required'}), 400
+
+        # Import and use NLP mapper
+        from nlp_mapper import get_nlp_mapper
+        mapper = get_nlp_mapper(api_key)
+
+        # Get mapping with explanations
+        result = mapper.map_prompt_with_explanations(nlp_prompt)
+
+        return jsonify({
+            'status': 'success',
+            'classes': result.get('classes', []),
+            'explanation': result.get('explanation', ''),
+            'confidence': result.get('confidence', 0.0)
+        })
+
+    except Exception as e:
+        print(f"❌ Error testing NLP mapping: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'status': 'error', 'error': str(e)}), 500
+
+@app.route('/api/yoloe/visual_prompts', methods=['POST'])
+def upload_visual_prompts():
+    """Upload visual prompt images with class names"""
+    try:
+        from config import get_config
+        import os
+        import shutil
+        config_manager = get_config()
+        
+        if 'images' not in request.files:
+            return jsonify({'status': 'error', 'message': 'No images provided'}), 400
+        
+        files = request.files.getlist('images')
+        if not files or files[0].filename == '':
+            return jsonify({'status': 'error', 'message': 'No valid images provided'}), 400
+        
+        # Get class names from form data
+        class_names = request.form.getlist('class_names')
+        
+        # Create visual_prompts directory if it doesn't exist
+        prompts_dir = 'visual_prompts'
+        os.makedirs(prompts_dir, exist_ok=True)
+        
+        uploaded_prompts = []
+        valid_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.webp'}
+        
+        for i, file in enumerate(files):
+            if file and file.filename:
+                filename = file.filename.lower()
+                file_ext = os.path.splitext(filename)[1]
+                
+                if file_ext in valid_extensions:
+                    # Generate safe filename
+                    import time
+                    import uuid
+                    safe_filename = f"prompt_{int(time.time())}_{str(uuid.uuid4())[:8]}{file_ext}"
+                    file_path = os.path.join(prompts_dir, safe_filename)
+                    
+                    # Save file
+                    file.save(file_path)
+                    
+                    # Get class name for this file (if provided)
+                    class_name = class_names[i] if i < len(class_names) and class_names[i] else None
+                    
+                    # Add to configuration with class name
+                    if config_manager.add_visual_prompt(file_path, class_name):
+                        uploaded_prompts.append({
+                            'filename': safe_filename,
+                            'class_name': class_name or f'custom-{i+1}',
+                            'path': file_path
+                        })
+                        print(f"✅ Visual prompt saved: {file_path} (class: {class_name or f'custom-{i+1}'})")
+                    else:
+                        os.remove(file_path)  # Clean up if config add failed
+                else:
+                    print(f"⚠️ Skipped invalid file type: {filename}")
+        
+        if uploaded_prompts:
+            # Save updated configuration
+            config_manager.save_config()
+            
+            # Reload detector if using YOLO-E
+            try:
+                from yoloe_detector import get_yoloe_detector
+                yoloe_detector = get_yoloe_detector()
+                yoloe_detector.reload_config()
+                print("✅ YOLO-E detector visual prompts reloaded")
+            except Exception as reload_error:
+                print(f"⚠️ Failed to reload YOLO-E detector: {reload_error}")
+            
+            return jsonify({
+                'status': 'success',
+                'message': f'Uploaded {len(uploaded_prompts)} visual prompt(s)',
+                'uploaded': len(uploaded_prompts),
+                'prompts': uploaded_prompts
+            })
+        else:
+            return jsonify({'status': 'error', 'message': 'No valid images were uploaded'}), 400
+            
+    except Exception as e:
+        print(f"❌ Error uploading visual prompts: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@app.route('/api/yoloe/visual_prompts', methods=['GET'])
+def get_visual_prompts():
+    """Get current visual prompts with class names"""
+    try:
+        from config import get_config
+        config_manager = get_config()
+        
+        prompts_with_names = config_manager.get_visual_prompts_with_names()
+        
+        return jsonify({
+            'status': 'success',
+            'visual_prompts': prompts_with_names
+        })
+        
+    except Exception as e:
+        print(f"❌ Error getting visual prompts: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@app.route('/api/yoloe/visual_prompts/<filename>', methods=['DELETE'])
+def remove_visual_prompt(filename):
+    """Remove a visual prompt image"""
+    try:
+        from config import get_config
+        import os
+        config_manager = get_config()
+        
+        # Find the full path
+        prompts_dir = 'visual_prompts'
+        file_path = os.path.join(prompts_dir, filename)
+        
+        # Remove from configuration
+        if config_manager.remove_visual_prompt(file_path):
+            # Delete the actual file
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                print(f"✅ Visual prompt removed: {file_path}")
+            
+            # Save updated configuration
+            config_manager.save_config()
+            
+            # Reload detector if using YOLO-E
+            try:
+                from yoloe_detector import get_yoloe_detector
+                yoloe_detector = get_yoloe_detector()
+                yoloe_detector.reload_config()
+                print("✅ YOLO-E detector visual prompts reloaded")
+            except Exception as reload_error:
+                print(f"⚠️ Failed to reload YOLO-E detector: {reload_error}")
+            
+            return jsonify({
+                'status': 'success',
+                'message': 'Visual prompt removed successfully'
+            })
+        else:
+            return jsonify({'status': 'error', 'message': 'Visual prompt not found in configuration'}), 404
+            
+    except Exception as e:
+        print(f"❌ Error removing visual prompt: {e}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@app.route('/visual_prompts/<filename>')
+def serve_visual_prompt(filename):
+    """Serve visual prompt images"""
+    try:
+        prompts_dir = 'visual_prompts'
+        file_path = os.path.join(prompts_dir, filename)
+        if os.path.exists(file_path):
+            return send_file(file_path)
+        else:
+            return jsonify({'error': 'Visual prompt not found'}), 404
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     print("Starting Computer Vision Object Detector Web App")

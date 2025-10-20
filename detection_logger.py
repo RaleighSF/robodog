@@ -83,21 +83,26 @@ class DetectionLogger:
             print(f"Error saving images: {e}")
             return ""
     
-    def log_detections(self, frame: np.ndarray, detections: List[Detection]) -> bool:
+    def log_detections(self, frame: np.ndarray, detections: List[Detection], target_classes: List[str] = None) -> bool:
         """
         Log object detections with cooldown logic
         
         Args:
             frame: The current video frame
             detections: List of detected objects
+            target_classes: List of class names to log (if None, uses default classes)
             
         Returns:
             bool: True if a new log entry was created
         """
         current_time = time.time()
         
+        # Use default classes if none provided
+        if target_classes is None:
+            target_classes = ["person", "Orange Cone"]
+        
         # Check if any target object was detected
-        objects_detected = any(detection.class_name in ["person", "Orange Cone"] for detection in detections)
+        objects_detected = any(detection.class_name in target_classes for detection in detections)
         
         if not objects_detected:
             return False
@@ -114,32 +119,38 @@ class DetectionLogger:
         thumbnail_filename = self._save_thumbnail(frame, timestamp_str)
         
         # Count objects detected by type
-        person_count = sum(1 for detection in detections if detection.class_name == "person")
-        orange_count = sum(1 for detection in detections if detection.class_name == "Orange Cone")
+        class_counts = {}
+        for detection in detections:
+            if detection.class_name in target_classes:
+                class_counts[detection.class_name] = class_counts.get(detection.class_name, 0) + 1
         
         # Get highest confidence detection for additional info
-        all_target_detections = [d for d in detections if d.class_name in ["person", "Orange Cone"]]
+        all_target_detections = [d for d in detections if d.class_name in target_classes]
         max_confidence = max(d.confidence for d in all_target_detections) if all_target_detections else 0
         
         # Create appropriate alert message
         alerts = []
-        if person_count > 0:
-            alerts.append(f"{person_count} Person{'s' if person_count > 1 else ''}")
-        if orange_count > 0:
-            alerts.append(f"{orange_count} Orange Cone{'s' if orange_count > 1 else ''}")
+        for class_name, count in class_counts.items():
+            # Capitalize class name and handle plurals
+            display_name = class_name.title() 
+            if count > 1:
+                # Simple plural handling - add 's' unless it ends with 's'
+                if not display_name.endswith('s'):
+                    display_name += 's'
+            alerts.append(f"{count} {display_name}")
         
         alert_message = f"Alert: {' & '.join(alerts)} Detected"
         
+        # Create dynamic log entry with detected classes
         log_entry = {
             "id": len(self.detection_logs) + 1,
             "timestamp": timestamp.isoformat(),
             "formatted_time": timestamp.strftime("%Y-%m-%d %H:%M:%S"),
             "message": alert_message,
-            "person_count": person_count,
-            "orange_count": orange_count,
             "max_confidence": round(max_confidence, 2),
             "thumbnail": thumbnail_filename,
-            "camera_source": "unknown"  # Will be set by the caller
+            "camera_source": "unknown",  # Will be set by the caller
+            "class_counts": class_counts  # Dynamic class counts
         }
         
         # Add to logs
