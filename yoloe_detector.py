@@ -91,13 +91,24 @@ class YOLOEDetector:
     
     def _update_detection_mode(self):
         """Update detection mode based on configuration"""
+        # Get explicit detection mode first
+        self.detection_mode = self.config.get_detection_mode()
+
+        # Clear per-frame logging flags when mode changes
+        if hasattr(self, '_open_detection_logged'):
+            delattr(self, '_open_detection_logged')
+        if hasattr(self, '_visual_detection_logged'):
+            delattr(self, '_visual_detection_logged')
+        if hasattr(self, '_visual_no_prompts_logged'):
+            delattr(self, '_visual_no_prompts_logged')
+
+        # Load prompts based on detection mode
         self.visual_prompts = self.config.get_visual_prompts()
 
-        # Check if NLP mode is enabled
-        if self.config.is_nlp_enabled():
+        if self.detection_mode == "nlp":
+            # NLP mode: Use AI to map natural language to classes
             nlp_prompt = self.config.get_nlp_prompt()
             if nlp_prompt:
-                # Use NLP mapper to convert natural language to class list
                 print(f"🤖 NLP Mode: Processing prompt '{nlp_prompt}'")
                 from nlp_mapper import get_nlp_mapper
 
@@ -113,11 +124,12 @@ class YOLOEDetector:
                     self.text_prompts = []
             else:
                 self.text_prompts = []
-        else:
-            # Use manual class list
+        elif self.detection_mode == "text":
+            # Text mode: Use manually specified classes
             self.text_prompts = self.config.get_classes()
-
-        self.detection_mode = self.config.get_detection_mode()
+        else:
+            # Visual or Open mode: no text prompts needed
+            self.text_prompts = []
 
         print(f"🎯 Detection mode: {self.detection_mode}")
         if self.detection_mode == "visual":
@@ -471,11 +483,16 @@ class YOLOEDetector:
         Direct visual search: Find regions in the frame that look like the reference image
         Uses multi-scale template matching to search the entire frame for the logo
         """
-        print(f"🖼️  Running direct visual search for reference image...", flush=True)
+        # Only log once when starting visual detection mode
+        if not hasattr(self, '_visual_detection_logged'):
+            print(f"🖼️  Running direct visual search for reference image...", flush=True)
+            self._visual_detection_logged = True
 
         # If no visual prompts are loaded, return empty results
         if not self.visual_prompts or not self.cached_reference_images:
-            print("⚠️ No visual prompts loaded - returning empty results", flush=True)
+            if not hasattr(self, '_visual_no_prompts_logged'):
+                print("⚠️ No visual prompts loaded - returning empty results", flush=True)
+                self._visual_no_prompts_logged = True
             return []
 
         try:
@@ -653,8 +670,11 @@ class YOLOEDetector:
     
     def _open_detection(self, frame: np.ndarray, config: Dict) -> Any:
         """Perform open detection (detect all classes)"""
-        print("🌐 Running open detection (all classes)")
-        
+        # Only log once when starting open detection mode
+        if not hasattr(self, '_open_detection_logged'):
+            print("🌐 Running open detection (all classes)")
+            self._open_detection_logged = True
+
         results = self.model.predict(
             frame,
             conf=config.get("conf", 0.25),
@@ -663,7 +683,7 @@ class YOLOEDetector:
             imgsz=config.get("imgsz", 640),
             verbose=False
         )
-        
+
         return results
     
     def _convert_results(self, results: Any, frame_ts: float) -> List[Dict[str, Any]]:
@@ -683,7 +703,7 @@ class YOLOEDetector:
                         'similarity': match['similarity']
                     }
                     detections.append(detection)
-                    print(f"🔍 Visual Match: class_name='{match['class_name']}', similarity={match['similarity']:.3f}", flush=True)
+                    # Removed per-frame logging for performance - was printing every match on every frame
 
                 return detections
 

@@ -1171,6 +1171,20 @@
             <div class="config-modal-body">
                 <div id="configStatusMessage" style="display: none;"></div>
 
+                <!-- Global Detection Mode Selector -->
+                <div class="config-section" style="margin-bottom: 20px; padding: 15px; background: rgba(255, 255, 255, 0.05); border-radius: 8px;">
+                    <div class="config-field" style="margin-bottom: 0;">
+                        <label class="config-label" style="font-weight: 600; font-size: 14px;">Detection Mode</label>
+                        <select id="detectionModeSelect" class="config-input">
+                            <option value="open">Open Detection (All 80 classes)</option>
+                            <option value="nlp">NLP Mode (Natural Language)</option>
+                            <option value="visual">Visual Mode (Image Prompts)</option>
+                            <option value="text">Text Mode (Manual Classes)</option>
+                        </select>
+                        <div class="config-help-text">Choose which detection mode to use. Configure mode-specific details in the tabs below.</div>
+                    </div>
+                </div>
+
                 <!-- Tabs -->
                 <div class="config-tabs">
                     <button class="config-tab active" data-tab="api">API Key</button>
@@ -1197,17 +1211,14 @@
                 <div class="config-tab-content" data-tab-content="nlp">
                     <div class="config-section">
                         <div class="config-section-title">Natural Language Processing</div>
-                        <div class="config-field">
-                            <label class="config-checkbox">
-                                <input type="checkbox" id="nlpEnabled">
-                                <span>Enable NLP Mode</span>
-                            </label>
-                            <div class="config-help-text">Use natural language to describe what you want to detect</div>
+                        <div class="config-help-text" style="margin-bottom: 15px;">
+                            Use natural language to describe what you want to detect.
+                            Set Detection Mode to "NLP Mode" above to activate.
                         </div>
 
                         <div class="config-field">
                             <label class="config-label">Natural Language Prompt</label>
-                            <textarea id="nlpPrompt" class="config-textarea" placeholder="e.g., Find all electronics, dangerous items, and tools"></textarea>
+                            <textarea id="nlpPrompt" class="config-textarea" placeholder="e.g., Find all electronics, things you can drink from, people"></textarea>
                             <div class="config-help-text">
                                 Describe what you want to detect in natural language.
                                 <strong>Click "Test NLP" to see mapped classes, then "Save" to apply changes.</strong>
@@ -1227,7 +1238,10 @@
                 <div class="config-tab-content" data-tab-content="visual">
                     <div class="config-section">
                         <div class="config-section-title">Visual Prompt Images</div>
-                        <div class="config-help-text" style="margin-bottom: 15px;">Upload images of objects you want to detect. YOLO-E will learn to recognize similar objects.</div>
+                        <div class="config-help-text" style="margin-bottom: 15px;">
+                            Upload images of objects you want to detect. YOLO-E will learn to recognize similar objects.
+                            Select "Visual Mode" in Settings tab to activate.
+                        </div>
 
                         <div class="config-file-upload" onclick="document.getElementById('visualPromptFiles').click()">
                             <input type="file" id="visualPromptFiles" accept="image/*" multiple>
@@ -1252,10 +1266,18 @@
                 <div class="config-tab-content" data-tab-content="text">
                     <div class="config-section">
                         <div class="config-section-title">Custom Text Prompts</div>
+                        <div class="config-help-text" style="margin-bottom: 15px;">
+                            Detect specific YOLO class names (e.g., person, car, cup).
+                            Select "Text Mode" in Settings tab to activate.
+                        </div>
+
                         <div class="config-field">
                             <label class="config-label">Class Names (comma-separated)</label>
-                            <textarea id="textPrompts" class="config-textarea" placeholder="e.g., my-object, red-hat, dangerous-item, electronics"></textarea>
-                            <div class="config-help-text">Enter custom object classes separated by commas. Use lowercase with hyphens.</div>
+                            <textarea id="textPrompts" class="config-textarea" placeholder="e.g., person, car, cup, bottle, laptop"></textarea>
+                            <div class="config-help-text">
+                                Enter YOLO class names separated by commas.
+                                See <a href="https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/datasets/coco.yaml" target="_blank" style="color: var(--brand-600);">COCO classes</a> for valid names.
+                            </div>
                         </div>
                         <button class="config-button config-button-primary" onclick="saveTextPrompts()">Save Text Prompts</button>
                     </div>
@@ -1348,6 +1370,8 @@
         }
 
         function hideVideo() {
+            // Clear the video source to stop the stream gracefully
+            videoStream.src = '';
             videoStream.style.display = 'none';
             loadingText.style.display = 'block';
             loadingText.textContent = 'Robot patrol unit offline';
@@ -1355,20 +1379,32 @@
 
 
         stopBtn.addEventListener('click', async () => {
+            console.log('Stop button clicked');
+            updateStatus('Stopping patrol monitoring...', 'success');
+
+            // Immediately hide video and clear source to stop stream
+            hideVideo();
+
             try {
                 const response = await fetch('/stop_detection', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
-                    }
+                    },
+                    signal: AbortSignal.timeout(5000)  // 5 second timeout
                 });
-                
+
                 const result = await response.json();
                 updateStatus(result.message, 'success');
-                hideVideo();
+                console.log('Stop successful:', result);
             } catch (error) {
-                updateStatus('Failed to stop patrol monitoring', 'error');
-                console.error('Error:', error);
+                if (error.name === 'TimeoutError') {
+                    updateStatus('Stop timed out - force stopped video stream', 'success');
+                    console.log('Stop request timed out but video stream closed');
+                } else {
+                    updateStatus('Video stream stopped', 'success');
+                    console.error('Stop error:', error);
+                }
             }
         });
 
@@ -1837,12 +1873,14 @@
                     // Populate API key (masked)
                     document.getElementById('openaiApiKey').value = data.openai_api_key ? '••••••••' : '';
 
-                    // Populate NLP settings
-                    document.getElementById('nlpEnabled').checked = data.nlp_enabled || false;
+                    // Populate NLP prompt
                     document.getElementById('nlpPrompt').value = data.nlp_prompt || '';
 
                     // Populate text prompts
                     document.getElementById('textPrompts').value = data.classes ? data.classes.join(', ') : '';
+
+                    // Populate detection mode selector
+                    document.getElementById('detectionModeSelect').value = data.detection_mode || 'open';
 
                     // Populate settings
                     document.getElementById('confSlider').value = data.conf || 0.25;
@@ -2030,7 +2068,6 @@
 
         // Save NLP configuration
         async function saveNLPConfig() {
-            const nlpEnabled = document.getElementById('nlpEnabled').checked;
             const nlpPrompt = document.getElementById('nlpPrompt').value.trim();
 
             try {
@@ -2038,7 +2075,6 @@
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
-                        nlp_enabled: nlpEnabled,
                         nlp_prompt: nlpPrompt
                     })
                 });
@@ -2192,7 +2228,7 @@
         // Save all configuration
         async function saveAllConfig() {
             const apiKey = document.getElementById('openaiApiKey').value.trim();
-            const nlpEnabled = document.getElementById('nlpEnabled').checked;
+            const detectionMode = document.getElementById('detectionModeSelect').value;
             const nlpPrompt = document.getElementById('nlpPrompt').value.trim();
             const textPrompts = document.getElementById('textPrompts').value.trim();
             const classes = textPrompts ? textPrompts.split(',').map(c => c.trim()).filter(c => c) : [];
@@ -2206,7 +2242,7 @@
                 iou: iou,
                 max_det: maxDet,
                 classes: classes,
-                nlp_enabled: nlpEnabled,
+                detection_mode: detectionMode,
                 nlp_prompt: nlpPrompt,
                 alert_logging: alertLogging
             };

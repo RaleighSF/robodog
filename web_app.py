@@ -47,10 +47,35 @@ class WebApp:
     def __init__(self):
         self.is_running = False
         self.current_frame = None
-        
+        # Cache config manager to avoid repeated imports
+        self._config_manager = None
+        # Track active stream to prevent multiple concurrent streams
+        self.stream_active = False
+        self.stream_generation_id = 0
+
     def generate_frames(self):
-        """Generate video frames for streaming"""
+        """Generate video frames for streaming with optimized performance"""
+        import sys
+
+        # Assign unique ID to this generator instance
+        my_stream_id = self.stream_generation_id
+        self.stream_generation_id += 1
+        self.stream_active = True
+
+        print(f"🎬 Starting video stream generator (ID: {my_stream_id})")
+        sys.stdout.flush()
+
         frame_count = 0
+
+        # Load config once at start instead of every frame
+        from config import get_config
+        self._config_manager = get_config()
+        alert_logging_enabled = self._config_manager.is_alert_logging_enabled()
+
+        # JPEG encoding parameters: quality 75 provides good balance of quality/size/speed
+        # Lower quality = smaller files = faster transmission = less browser lag
+        jpeg_params = [cv2.IMWRITE_JPEG_QUALITY, 75]
+
         while True:
             try:
                 if self.is_running and camera_manager.is_camera_available():
@@ -58,19 +83,16 @@ class WebApp:
                     if frame is not None:
                         frame_count += 1
 
-                        # Perform detection
+                        # Perform detection on every frame
                         detections = detector.detect(frame)
 
-                        # Log detections (with cooldown logic) only if alert logging is enabled
-                        from config import get_config
-                        config_manager = get_config()
+                        # Log detections (only if alert logging is enabled - check cached value)
                         logged = False
-                        if config_manager.is_alert_logging_enabled():
+                        if alert_logging_enabled:
                             # Get configured classes for logging
-                            target_classes = config_manager.get_classes()
+                            target_classes = self._config_manager.get_classes()
                             # If no classes configured, fall back to all detected classes
                             if not target_classes:
-                                # Detections are dicts, not objects - use dict access
                                 target_classes = list(set(d['class_name'] if isinstance(d, dict) else d.class_name for d in detections))
                             logged = detection_logger.log_detections(frame, detections, target_classes)
 
@@ -81,8 +103,19 @@ class WebApp:
                         # Draw detections on frame
                         annotated_frame = detector.draw_detections(frame, detections)
 
-                        # Encode frame as JPEG
-                        ret, buffer = cv2.imencode('.jpg', annotated_frame)
+                        # Optionally resize for web display (reduces bandwidth, improves browser performance)
+                        # Scale to max width of 1280px if larger (maintains aspect ratio)
+                        height, width = annotated_frame.shape[:2]
+                        max_width = 1280
+                        if width > max_width:
+                            scale = max_width / width
+                            new_width = max_width
+                            new_height = int(height * scale)
+                            annotated_frame = cv2.resize(annotated_frame, (new_width, new_height),
+                                                        interpolation=cv2.INTER_AREA)
+
+                        # Encode frame as JPEG with quality optimization (75% quality for speed)
+                        ret, buffer = cv2.imencode('.jpg', annotated_frame, jpeg_params)
                         if ret:
                             frame_bytes = buffer.tobytes()
                             yield (b'--frame\r\n'
@@ -90,12 +123,24 @@ class WebApp:
                     else:
                         time.sleep(0.01)  # Reduced sleep when waiting for frames
                 else:
+                    # Detection stopped - exit gracefully instead of looping
+                    if not self.is_running:
+                        print(f"🛑 Frame generation stopped - exiting stream (ID: {my_stream_id})")
+                        break
                     time.sleep(0.1)
+            except GeneratorExit:
+                # Client disconnected - clean exit
+                print(f"🔌 Client disconnected from video stream (ID: {my_stream_id})")
+                break
             except Exception as e:
                 print(f"❌ Error in frame generation: {e}")
                 import traceback
                 traceback.print_exc()
                 time.sleep(0.1)
+
+        # Mark stream as inactive when exiting
+        self.stream_active = False
+        print(f"✅ Video stream generator exited cleanly (ID: {my_stream_id})")
 
 web_app = WebApp()
 
@@ -315,9 +360,14 @@ def webrtc_test():
 
 @app.route('/video_feed')
 def video_feed():
-    """Video streaming route"""
-    return Response(web_app.generate_frames(),
-                    mimetype='multipart/x-mixed-replace; boundary=frame')
+    """Video streaming route with optimized headers"""
+    response = Response(web_app.generate_frames(),
+                       mimetype='multipart/x-mixed-replace; boundary=frame')
+    # Prevent caching to ensure fresh frames
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
 
 @app.route('/start_detection', methods=['POST'])
 def start_detection():
@@ -333,7 +383,22 @@ def start_detection():
             print("⚠️ Detection already running, stopping first")
             web_app.is_running = False
             camera_manager.stop()
-        
+
+            # Wait for stream to fully exit before restarting
+            import time
+            timeout = 3.0
+            start_time = time.time()
+            while web_app.stream_active and (time.time() - start_time) < timeout:
+                time.sleep(0.1)
+
+            if web_app.stream_active:
+                print("⚠️ Warning: Stream still active after stop, forcing restart anyway")
+            else:
+                print("✅ Previous stream exited cleanly")
+
+            # Extra delay to ensure camera is fully released
+            time.sleep(0.5)
+
         # Start camera
         camera_started = camera_manager.start()
 
@@ -355,20 +420,28 @@ def stop_detection():
     """Stop object detection with complete cleanup"""
     try:
         print(f"🛑 Stopping detection - Current camera: {camera_manager.camera_source}")
-        
+
         # Set state first to stop loops
         web_app.is_running = False
-        
+
         # Stop camera with proper cleanup
         camera_manager.stop()
-        
-        # Extra cleanup time for threads to exit
+
+        # Wait for video stream generator to exit (max 3 seconds)
         import time
-        time.sleep(0.1)
-        
+        timeout = 3.0
+        start_time = time.time()
+        while web_app.stream_active and (time.time() - start_time) < timeout:
+            time.sleep(0.1)
+
+        if web_app.stream_active:
+            print("⚠️ Warning: Video stream did not exit within timeout")
+        else:
+            print("✅ Video stream exited cleanly")
+
         print("✅ Detection stopped successfully")
         return jsonify({'status': 'success', 'message': 'Detection stopped'})
-        
+
     except Exception as e:
         print(f"❌ Stop detection error: {e}")
         web_app.is_running = False  # Ensure state is clean even on error
@@ -655,19 +728,27 @@ def save_yoloe_config():
         if 'alert_logging' in data:
             config_manager.set_alert_logging(bool(data['alert_logging']))
 
-        # Update NLP settings based on detection_mode or nlp_enabled flag
+        # Update detection mode if explicitly set
         detection_mode = data.get('detection_mode', '')
-        nlp_enabled = data.get('nlp_enabled', False) or detection_mode == 'nlp'
-        nlp_prompt = data.get('nlp_prompt', '').strip()
+        if detection_mode:
+            config_manager.set_detection_mode(detection_mode)
+            print(f"✅ Detection mode set to: {detection_mode}")
 
-        if nlp_enabled and nlp_prompt:
-            # Enable NLP mode with the prompt
-            config_manager.set_nlp_prompt(nlp_prompt, enabled=True)
-            print(f"✅ NLP mode enabled with prompt: '{nlp_prompt}'")
-        elif not nlp_enabled:
-            # Disable NLP mode
-            config_manager.disable_nlp()
-            print("✅ NLP mode disabled")
+        # Update NLP prompt if provided
+        nlp_prompt = data.get('nlp_prompt', '').strip()
+        if nlp_prompt:
+            config_manager.set_nlp_prompt(nlp_prompt, enabled=False)  # Don't override detection_mode
+            print(f"✅ NLP prompt updated: '{nlp_prompt}'")
+
+        # Backward compatibility: handle old nlp_enabled flag
+        if 'nlp_enabled' in data:
+            nlp_enabled = data.get('nlp_enabled', False)
+            if nlp_enabled:
+                config_manager.set_detection_mode('nlp')
+                print("✅ Detection mode set to NLP (via nlp_enabled flag)")
+            else:
+                # Don't automatically disable - user should set mode explicitly
+                pass
 
         # Update OpenAI API key if provided
         if 'openai_api_key' in data:
@@ -890,6 +971,6 @@ def serve_visual_prompt(filename):
 
 if __name__ == '__main__':
     print("Starting Computer Vision Object Detector Web App")
-    print("Open your browser and go to: http://127.0.0.1:5005")
-    # Use port 5005 temporarily (5004 has a stuck process)
-    app.run(debug=True, host='127.0.0.1', port=5005, threaded=True, use_reloader=False)
+    print("Open your browser and go to: http://127.0.0.1:8000")
+    # Debug mode disabled to prevent double camera initialization (Flask spawns child process in debug mode)
+    app.run(debug=False, host='127.0.0.1', port=8000, threaded=True, use_reloader=False)

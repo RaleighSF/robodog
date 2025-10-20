@@ -174,15 +174,27 @@ class VisionConfig:
         return len(self.get_classes()) > 0
     
     def get_detection_mode(self) -> str:
-        """Determine detection mode: 'nlp', 'visual', 'text', or 'open'"""
+        """Get explicitly set detection mode: 'nlp', 'visual', 'text', or 'open'"""
+        # Use explicit detection_mode if set
+        mode = self.config["vision"].get("detection_mode", None)
+        if mode in ["nlp", "visual", "text", "open"]:
+            return mode
+
+        # Fallback to old priority-based logic for backward compatibility
         if self.is_nlp_enabled():
-            return "nlp"     # NLP-prompted detection (AI natural language)
+            return "nlp"
         elif self.has_visual_prompts():
-            return "visual"  # Visual-prompted detection
+            return "visual"
         elif self.has_text_prompts():
-            return "text"    # Text-prompted detection
+            return "text"
         else:
-            return "open"    # Open detection (detect everything)
+            return "open"
+
+    def set_detection_mode(self, mode: str):
+        """Set detection mode explicitly"""
+        if mode not in ["nlp", "visual", "text", "open"]:
+            raise ValueError(f"Invalid detection mode: {mode}")
+        self.config["vision"]["detection_mode"] = mode
     
     def update_classes(self, classes: List[str]):
         """Update text prompt classes"""

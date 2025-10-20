@@ -281,16 +281,28 @@ class CameraManager:
             return False
             
     def stop(self):
-        """Stop the camera capture"""
+        """Stop the camera capture with aggressive cleanup"""
         print("🛑 DEBUG: stop() called")
         self.is_running = False
+
+        # Wait a moment for capture thread to stop reading
+        import time
+        time.sleep(0.2)
 
         # Force release camera BEFORE waiting for thread
         if self.cap:
             print("🛑 DEBUG: Releasing camera capture...")
             try:
+                # Release the capture
                 self.cap.release()
                 print("🛑 DEBUG: Camera released")
+
+                # Destroy any OpenCV windows (helps release camera on some systems)
+                cv2.destroyAllWindows()
+
+                # Extra delay to ensure camera hardware releases
+                time.sleep(0.3)
+                print("🛑 DEBUG: Camera hardware should be released now")
             except Exception as e:
                 print(f"⚠️ Error releasing camera: {e}")
             finally:
