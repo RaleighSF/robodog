@@ -123,39 +123,50 @@ class CameraManager:
     def _start_mac_camera(self) -> bool:
         """Start Mac camera capture"""
         try:
+            print("🎥 DEBUG: Starting Mac camera initialization...")
             # Try different camera indices if default fails
             for cam_idx in [0, 1, 2]:
-                print(f"Trying camera index {cam_idx}...")
+                print(f"🎥 DEBUG: Trying camera index {cam_idx}...")
                 self.cap = cv2.VideoCapture(cam_idx)
-                
+                print(f"🎥 DEBUG: cv2.VideoCapture({cam_idx}) created")
+
                 if self.cap.isOpened():
+                    print(f"🎥 DEBUG: Camera {cam_idx} isOpened() = True, testing frame read...")
                     # Test if we can actually read a frame
                     ret, test_frame = self.cap.read()
+                    print(f"🎥 DEBUG: Frame read result: ret={ret}, frame shape={test_frame.shape if test_frame is not None else None}")
                     if ret and test_frame is not None:
-                        print(f"Camera {cam_idx} working!")
+                        print(f"✅ Camera {cam_idx} working!")
                         break
                     else:
+                        print(f"❌ Camera {cam_idx} opened but frame read failed")
                         self.cap.release()
                         continue
                 else:
+                    print(f"❌ Camera {cam_idx} isOpened() = False")
                     if self.cap:
                         self.cap.release()
                     continue
             else:
                 raise Exception("No working camera found. Please check camera permissions in System Preferences > Security & Privacy > Camera")
-                
+
+            print("🎥 DEBUG: Setting camera properties...")
             # Set camera properties for better performance on Mac
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
             self.cap.set(cv2.CAP_PROP_FPS, 30)
-            
+
+            print("🎥 DEBUG: Starting capture thread...")
             self.is_running = True
             self.capture_thread = threading.Thread(target=self._mac_capture_loop, daemon=True)
             self.capture_thread.start()
-            
+
+            print("✅ Mac camera started successfully!")
             return True
         except Exception as e:
-            print(f"Failed to start Mac camera: {e}")
+            print(f"❌ Failed to start Mac camera: {e}")
+            import traceback
+            traceback.print_exc()
             return False
             
     def _start_unitree_camera(self) -> bool:
@@ -188,7 +199,10 @@ class CameraManager:
         """Start RTSP camera capture from Jetson with robust connection handling"""
         try:
             print(f"Starting RTSP camera from {self.rtsp_url}...")
-            
+
+            # Set OpenCV environment variable for shorter RTSP timeout (5 seconds instead of 30)
+            os.environ['OPENCV_FFMPEG_CAPTURE_OPTIONS'] = 'rtsp_transport;tcp|stimeout;5000000'
+
             # Build RTSP URL with optimized transport parameters
             rtsp_options = {
                 "rtsp_transport": "tcp",  # Use TCP for more reliable transport
@@ -200,14 +214,16 @@ class CameraManager:
                 "probesize": "32",  # Smaller probe size for faster startup
                 "analyzeduration": "100000"  # 100ms analyze duration
             }
-            
+
             # Connect to RTSP stream with retry logic
             print(f"Attempting RTSP connection to: {self.rtsp_url}")
-            
+
             max_retries = 3
             for attempt in range(max_retries):
                 try:
+                    print(f"📡 DEBUG: Creating cv2.VideoCapture for RTSP (attempt {attempt+1})...")
                     self.cap = cv2.VideoCapture(self.rtsp_url, cv2.CAP_FFMPEG)
+                    print(f"📡 DEBUG: cv2.VideoCapture created (attempt {attempt+1})")
                     
                     # Apply optimized properties immediately after opening
                     self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Minimal buffering
@@ -266,26 +282,29 @@ class CameraManager:
             
     def stop(self):
         """Stop the camera capture"""
+        print("🛑 DEBUG: stop() called")
         self.is_running = False
-        
-        # Give threads time to exit gracefully
-        if self.capture_thread:
-            self.capture_thread.join(timeout=2.0)  # Increased timeout
-            if self.capture_thread.is_alive():
-                print("⚠️ Warning: Camera thread didn't exit cleanly")
-            self.capture_thread = None
-            
-        # Clean up camera resources
+
+        # Force release camera BEFORE waiting for thread
         if self.cap:
+            print("🛑 DEBUG: Releasing camera capture...")
             try:
                 self.cap.release()
-                # Force garbage collection to help clean up semaphores
-                import gc
-                gc.collect()
+                print("🛑 DEBUG: Camera released")
             except Exception as e:
-                print(f"Error releasing camera: {e}")
+                print(f"⚠️ Error releasing camera: {e}")
             finally:
                 self.cap = None
+
+        # Give threads time to exit gracefully
+        if self.capture_thread:
+            print(f"🛑 DEBUG: Waiting for capture thread to exit (timeout=2s)...")
+            self.capture_thread.join(timeout=2.0)
+            if self.capture_thread.is_alive():
+                print("⚠️ Warning: Camera thread didn't exit cleanly - forcing cleanup")
+            else:
+                print("✅ DEBUG: Capture thread exited cleanly")
+            self.capture_thread = None
             
         # Clean up Unitree client
         if self.unitree_client:

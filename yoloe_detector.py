@@ -294,6 +294,18 @@ class YOLOEDetector:
         if frame is None or frame.size == 0:
             return []
 
+        # Frame counter for performance monitoring (log every 30 frames = ~1 second)
+        if not hasattr(self, '_frame_count'):
+            self._frame_count = 0
+            self._last_fps_time = time.time()
+
+        self._frame_count += 1
+        if self._frame_count % 30 == 0:
+            elapsed = time.time() - self._last_fps_time
+            fps = 30 / elapsed if elapsed > 0 else 0
+            print(f"📊 Detection FPS: {fps:.1f} | Frame #{self._frame_count}")
+            self._last_fps_time = time.time()
+
         frame_ts = frame_timestamp if frame_timestamp else time.time()
 
         try:
@@ -588,38 +600,45 @@ class YOLOEDetector:
     
     def _text_prompted_detection(self, frame: np.ndarray, config: Dict) -> Any:
         """Perform text-prompted detection restricted to specified classes"""
-        print(f"📝 Running text-prompted detection for classes: {self.text_prompts}")
-        
-        # Find class indices for text prompts with flexible matching
-        class_indices = []
-        for class_name in self.text_prompts:
-            class_name_lower = class_name.lower()
-            
-            # Try exact match first
-            if class_name_lower in [name.lower() for name in self.class_names]:
-                idx = next(i for i, name in enumerate(self.class_names) if name.lower() == class_name_lower)
-                class_indices.append(idx)
-                print(f"✅ Found exact match: '{class_name}' -> class {idx} ('{self.class_names[idx]}')")
-            else:
-                # Try partial match (e.g., "phone" matches "cell phone")
-                found = False
-                for i, name in enumerate(self.class_names):
-                    if class_name_lower in name.lower() or name.lower() in class_name_lower:
-                        class_indices.append(i)
-                        print(f"✅ Found partial match: '{class_name}' -> class {i} ('{name}')")
-                        found = True
-                        break
-                
-                if not found:
-                    print(f"❌ No match found for class: '{class_name}'")
-                    print(f"💡 Available classes: {', '.join(self.class_names[:10])}...")
-        
-        if not class_indices:
-            print("⚠️ No valid classes found - returning empty results to prevent detecting all classes")
-            # Return empty results instead of detecting all classes
-            return []
-        
-        print(f"🎯 Filtering to class indices: {class_indices}")
+
+        # Cache class indices to avoid repeated lookups (huge performance boost)
+        if not hasattr(self, '_cached_class_indices') or self._cached_class_prompts != tuple(self.text_prompts):
+            print(f"🔍 Mapping text prompts to class indices: {self.text_prompts}")
+
+            # Find class indices for text prompts with flexible matching
+            class_indices = []
+            for class_name in self.text_prompts:
+                class_name_lower = class_name.lower()
+
+                # Try exact match first
+                if class_name_lower in [name.lower() for name in self.class_names]:
+                    idx = next(i for i, name in enumerate(self.class_names) if name.lower() == class_name_lower)
+                    class_indices.append(idx)
+                    print(f"  ✓ '{class_name}' -> class {idx}")
+                else:
+                    # Try partial match (e.g., "phone" matches "cell phone")
+                    found = False
+                    for i, name in enumerate(self.class_names):
+                        if class_name_lower in name.lower() or name.lower() in class_name_lower:
+                            class_indices.append(i)
+                            print(f"  ✓ '{class_name}' -> class {i} (partial match: '{name}')")
+                            found = True
+                            break
+
+                    if not found:
+                        print(f"  ✗ No match found for: '{class_name}'")
+
+            if not class_indices:
+                print("⚠️ No valid classes found - returning empty results")
+                self._cached_class_indices = []
+                self._cached_class_prompts = tuple(self.text_prompts)
+                return []
+
+            print(f"✅ Class mapping complete: {len(class_indices)} classes")
+            self._cached_class_indices = class_indices
+            self._cached_class_prompts = tuple(self.text_prompts)
+
+        class_indices = self._cached_class_indices
         results = self.model.predict(
             frame,
             conf=config.get("conf", 0.25),
@@ -690,10 +709,9 @@ class YOLOEDetector:
                         if hasattr(boxes, 'cls'):
                             class_id = int(boxes.cls[i].cpu().numpy())
                             class_name = self.class_names[class_id] if class_id < len(self.class_names) else f"class_{class_id}"
-                            print(f"🔍 Detection: class_id={class_id}, class_name='{class_name}', confidence={confidence:.3f}")
+                            # Logging disabled for performance - only log when alert logging is enabled
                         else:
                             class_name = "unknown"
-                            print(f"🔍 Detection: class_name='unknown' (no cls attribute), confidence={confidence:.3f}")
 
                         detection = {
                             'xyxy': xyxy,

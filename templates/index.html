@@ -1208,7 +1208,10 @@
                         <div class="config-field">
                             <label class="config-label">Natural Language Prompt</label>
                             <textarea id="nlpPrompt" class="config-textarea" placeholder="e.g., Find all electronics, dangerous items, and tools"></textarea>
-                            <div class="config-help-text">Describe what you want to detect in natural language</div>
+                            <div class="config-help-text">
+                                Describe what you want to detect in natural language.
+                                <strong>Click "Test NLP" to see mapped classes, then "Save" to apply changes.</strong>
+                            </div>
                         </div>
 
                         <div style="display: flex; gap: 10px;">
@@ -1494,29 +1497,29 @@
             }
         });
 
-        // Check status periodically
+        // Check status periodically (optimized interval for better performance)
         setInterval(async () => {
             try {
                 const response = await fetch('/status');
                 const statusData = await response.json();
-                
-                console.log('Status check:', statusData);
-                
+
+                // Reduced logging for performance
+
                 if (statusData.is_running && statusData.camera_available) {
                     if (videoStream.style.display !== 'block') {
-                        console.log('Status shows running but video not visible, showing video...');
+                        console.log('Showing video stream');
                         showVideo();
                     }
                 } else if (!statusData.is_running) {
                     if (videoStream.style.display === 'block') {
-                        console.log('Status shows not running but video visible, hiding video...');
+                        console.log('Hiding video stream');
                         hideVideo();
                     }
                 }
             } catch (error) {
                 console.error('Status check failed:', error);
             }
-        }, 2000);
+        }, 5000);  // Increased from 2s to 5s for better performance
 
         // Detection Log Functions
         const refreshLogBtn = document.getElementById('refreshLogBtn');
@@ -1593,12 +1596,12 @@
         refreshLogBtn.addEventListener('click', refreshLog);
         clearLogBtn.addEventListener('click', clearLog);
 
-        // Auto-refresh log every 3 seconds when patrol is running
+        // Auto-refresh log when patrol is running (optimized for performance)
         setInterval(() => {
             if (document.getElementById('videoStream').style.display === 'block') {
                 refreshLog();
             }
-        }, 3000);
+        }, 5000);  // Increased from 3s to 5s for better performance
 
         // Initial log load
         refreshLog();
@@ -1717,7 +1720,8 @@
         }
         
         // Start Color Channel patrol automatically after page loads
-        setTimeout(autoStartColorChannel, 1000);
+        // DISABLED: User requested manual start only
+        // setTimeout(autoStartColorChannel, 1000);
 
         // Image Modal Functions
         function openImageModal(imageSrc, message, timestamp) {

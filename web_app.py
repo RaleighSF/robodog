@@ -50,39 +50,51 @@ class WebApp:
         
     def generate_frames(self):
         """Generate video frames for streaming"""
+        frame_count = 0
         while True:
-            if self.is_running and camera_manager.is_camera_available():
-                frame = camera_manager.get_frame()
-                if frame is not None:
-                    # Perform detection
-                    detections = detector.detect(frame)
-                    
-                    # Log detections (with cooldown logic) only if alert logging is enabled
-                    from config import get_config
-                    config_manager = get_config()
-                    logged = False
-                    if config_manager.is_alert_logging_enabled():
-                        # Get configured classes for logging
-                        target_classes = config_manager.get_classes()
-                        # If no classes configured, fall back to all detected classes
-                        if not target_classes:
-                            target_classes = list(set(d.class_name for d in detections))
-                        logged = detection_logger.log_detections(frame, detections, target_classes)
-                    
-                    # Update camera source in the last log entry if a new log was created
-                    if logged and detection_logger.detection_logs:
-                        detection_logger.detection_logs[-1]['camera_source'] = camera_manager.camera_source
-                    
-                    # Draw detections on frame
-                    annotated_frame = detector.draw_detections(frame, detections)
-                    
-                    # Encode frame as JPEG
-                    ret, buffer = cv2.imencode('.jpg', annotated_frame)
-                    if ret:
-                        frame_bytes = buffer.tobytes()
-                        yield (b'--frame\r\n'
-                               b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
-            else:
+            try:
+                if self.is_running and camera_manager.is_camera_available():
+                    frame = camera_manager.get_frame()
+                    if frame is not None:
+                        frame_count += 1
+
+                        # Perform detection
+                        detections = detector.detect(frame)
+
+                        # Log detections (with cooldown logic) only if alert logging is enabled
+                        from config import get_config
+                        config_manager = get_config()
+                        logged = False
+                        if config_manager.is_alert_logging_enabled():
+                            # Get configured classes for logging
+                            target_classes = config_manager.get_classes()
+                            # If no classes configured, fall back to all detected classes
+                            if not target_classes:
+                                # Detections are dicts, not objects - use dict access
+                                target_classes = list(set(d['class_name'] if isinstance(d, dict) else d.class_name for d in detections))
+                            logged = detection_logger.log_detections(frame, detections, target_classes)
+
+                        # Update camera source in the last log entry if a new log was created
+                        if logged and detection_logger.detection_logs:
+                            detection_logger.detection_logs[-1]['camera_source'] = camera_manager.camera_source
+
+                        # Draw detections on frame
+                        annotated_frame = detector.draw_detections(frame, detections)
+
+                        # Encode frame as JPEG
+                        ret, buffer = cv2.imencode('.jpg', annotated_frame)
+                        if ret:
+                            frame_bytes = buffer.tobytes()
+                            yield (b'--frame\r\n'
+                                   b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+                    else:
+                        time.sleep(0.01)  # Reduced sleep when waiting for frames
+                else:
+                    time.sleep(0.1)
+            except Exception as e:
+                print(f"❌ Error in frame generation: {e}")
+                import traceback
+                traceback.print_exc()
                 time.sleep(0.1)
 
 web_app = WebApp()
@@ -878,6 +890,6 @@ def serve_visual_prompt(filename):
 
 if __name__ == '__main__':
     print("Starting Computer Vision Object Detector Web App")
-    print("Open your browser and go to: http://127.0.0.1:5004")
-    # Use port 5004 to avoid stuck processes on other ports
-    app.run(debug=True, host='127.0.0.1', port=5004, threaded=True, use_reloader=False)
+    print("Open your browser and go to: http://127.0.0.1:5005")
+    # Use port 5005 temporarily (5004 has a stuck process)
+    app.run(debug=True, host='127.0.0.1', port=5005, threaded=True, use_reloader=False)
