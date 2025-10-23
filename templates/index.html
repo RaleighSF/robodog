@@ -291,6 +291,59 @@
             font-weight: 600;
         }
 
+        /* GO2 Robot Action Bar */
+        .go2-action-bar {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: linear-gradient(to top, rgba(0, 0, 0, 0.95), rgba(0, 0, 0, 0.85));
+            backdrop-filter: blur(10px);
+            padding: 8px 16px;
+            display: none;
+            justify-content: center;
+            align-items: center;
+            gap: 10px;
+            border-top: 1px solid rgba(0, 114, 187, 0.3);
+        }
+
+        .go2-action-bar.visible {
+            display: flex;
+        }
+
+        .go2-cmd-btn {
+            background: linear-gradient(135deg, var(--brand-500) 0%, var(--brand-600) 100%);
+            color: var(--bg-0);
+            border: none;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+        }
+
+        .go2-cmd-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0, 114, 187, 0.4);
+            background: linear-gradient(135deg, var(--brand-600) 0%, var(--brand-700) 100%);
+        }
+
+        .go2-cmd-btn:active {
+            transform: translateY(0);
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+        }
+
+        .go2-cmd-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+
         .status {
             margin: 0;
             padding: 12px 20px;
@@ -1091,14 +1144,13 @@
                 <div class="header-controls">
                     <div class="camera-control">
                         <select id="cameraSelect" class="header-select">
-                            <option value="rtsp_color" selected>Color Channel</option>
+                            <option value="go2_webrtc" selected>Native Go2 Camera</option>
+                            <option value="rtsp_color">Color Channel</option>
                             <option value="rtsp_ir">IR Channel</option>
                             <option value="rtsp_depth">Depth Channel</option>
                             <option value="mac">Mac Camera (Backup)</option>
-                            <option value="unitree">Watch Dog Robot (Direct)</option>
                         </select>
-                    </div>
-                    
+                    </div>                    
                     <div id="robotIpGroup" class="ip-control hidden">
                         <input type="text" id="robotIpInput" class="header-input" value="192.168.87.25" placeholder="Robot IP">
                     </div>
@@ -1120,11 +1172,49 @@
 
     <div class="container">
         <div class="video-container">
-            <div class="patrol-overlay">Robot Dog Patrol Unit - Live Feed</div>
+            <div class="patrol-overlay">
+                <span id="cameraName">Robot Dog Patrol Unit</span>
+                <span id="go2Battery" style="margin-left: 20px; display: none; align-items: center; gap: 6px;">
+                    <svg id="batteryIcon" width="24" height="12" viewBox="0 0 24 12" style="vertical-align: middle;">
+                        <rect x="0" y="1" width="20" height="10" rx="2" stroke="currentColor" stroke-width="1.5" fill="none"/>
+                        <rect x="20" y="4" width="2" height="4" rx="1" fill="currentColor"/>
+                        <rect id="batteryFill" x="2" y="3" width="16" height="6" rx="1" fill="#10b981"/>
+                    </svg>
+                    <span id="batteryPercent" style="font-weight: 600; font-size: 14px; color: #10b981;">--</span>%
+                </span>
+            </div>
             <img id="videoStream" class="video-stream" src="" alt="Robot patrol video feed will appear here" style="display: none;">
             <div id="loadingText" class="loading">Waiting for robot patrol unit connection...</div>
-        </div>
-        
+
+            <!-- GO2 Robot Control Action Bar -->
+            <div id="go2ActionBar" class="go2-action-bar">
+                <button class="go2-cmd-btn" onclick="sendGO2Command('crouch')" title="Crouch (lower body)">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 19V5M5 12l7 7 7-7"/>
+                    </svg>
+                    Crouch
+                </button>
+                <button class="go2-cmd-btn" onclick="sendGO2Command('stand')" title="Stand up">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 5v14M5 12l7-7 7 7"/>
+                    </svg>
+                    Stand
+                </button>
+                <button class="go2-cmd-btn" onclick="sendGO2Command('sit')" title="Sit down">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M3 12h18M3 6h18M3 18h18"/>
+                    </svg>
+                    Sit
+                </button>
+                <button class="go2-cmd-btn" onclick="sendGO2Command('shake')" title="Shake hands">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M9 11l3 3L22 4"/>
+                        <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>
+                    </svg>
+                    Shake
+                </button>
+            </div>
+        </div>        
         <div id="status" class="status info">Color Channel ready - Auto-starting patrol...</div>
         
         <!-- Detection Log Viewer -->
@@ -1425,7 +1515,7 @@
                 'rtsp_ir': 'IR Channel', 
                 'rtsp_depth': 'Depth Channel',
                 'mac': 'Mac Camera',
-                'unitree': 'Watch Dog Robot (Direct)'
+                'go2_webrtc': 'Native Go2 Camera'
             };
             const cameraName = cameraNames[source] || 'Unknown Camera';
             
@@ -1518,7 +1608,7 @@
                         'rtsp_ir': 'IR Channel',
                         'rtsp_depth': 'Depth Channel', 
                         'mac': 'Mac Camera',
-                        'unitree': 'Watch Dog Robot (Direct)'
+                        'go2_webrtc': 'Native Go2 Camera'
                     };
                     const cameraName = cameraNames[source] || source;
                     updateStatus(`Patrol started with ${cameraName}`, 'success');
@@ -1650,7 +1740,7 @@
                 'rtsp_ir': 'IR Channel', 
                 'rtsp_depth': 'Depth Channel',
                 'mac': 'Mac Camera',
-                'unitree': 'Watch Dog Robot (Direct)'
+                'go2_webrtc': 'Native Go2 Camera'
             };
             
             console.log(`Initializing with default source: ${initialSource}`);
@@ -2302,6 +2392,162 @@
 
         // Load mode badge on page load
         initializeModeBadge();
+
+        // GO2 Battery Update - Fetch battery data when GO2 camera is active
+        let go2BatteryInterval = null;
+
+        async function updateGO2Battery() {
+            console.log('[GO2 Battery] Fetching battery data...');
+            try {
+                const response = await fetch('/go2/battery');
+
+                console.log('[GO2 Battery] Response status:', response.status);
+
+                if (response.ok) {
+                    const data = await response.json();
+                    console.log('[GO2 Battery] Data received:', data);
+                    if (data.soc !== null && data.soc !== undefined) {
+                        console.log('[GO2 Battery] Setting battery to:', data.soc + '%');
+
+                        // Update battery percentage text
+                        const batteryPercent = document.getElementById('batteryPercent');
+                        batteryPercent.textContent = data.soc;
+
+                        // Get battery fill element
+                        const batteryFill = document.getElementById('batteryFill');
+
+                        // Color code based on battery level
+                        let color;
+                        let fillWidth;
+                        if (data.soc >= 60) {
+                            color = '#10b981';  // Green for good battery
+                        } else if (data.soc >= 30) {
+                            color = '#f59e0b';  // Orange/amber for medium battery
+                        } else {
+                            color = '#ef4444';  // Red for low battery
+                        }
+
+                        // Calculate fill width (16px max width, scaled by percentage)
+                        fillWidth = (data.soc / 100) * 16;
+
+                        // Update battery fill color and width
+                        batteryFill.setAttribute('fill', color);
+                        batteryFill.setAttribute('width', fillWidth);
+
+                        // Update text color to match
+                        batteryPercent.style.color = color;
+
+                        document.getElementById('go2Battery').style.display = 'inline-flex';
+                    }
+                } else {
+                    console.warn('[GO2 Battery] Service not available, status:', response.status);
+                    document.getElementById('go2Battery').style.display = 'none';
+                }
+            } catch (error) {
+                console.error('[GO2 Battery] Fetch error:', error);
+                document.getElementById('go2Battery').style.display = 'none';
+            }
+        }
+
+        function startGO2BatteryUpdates() {
+            console.log('[GO2 Battery] Starting battery updates');
+            if (!go2BatteryInterval) {
+                updateGO2Battery();  // Initial fetch
+                go2BatteryInterval = setInterval(updateGO2Battery, 60000);  // Update every 60 seconds
+            }
+        }
+
+        function stopGO2BatteryUpdates() {
+            console.log('[GO2 Battery] Stopping battery updates');
+            if (go2BatteryInterval) {
+                clearInterval(go2BatteryInterval);
+                go2BatteryInterval = null;
+            }
+            document.getElementById('go2Battery').style.display = 'none';
+        }
+
+        // Monitor camera selection to show/hide battery
+        if (cameraSelect) {
+            // Check on page load if GO2 is selected
+            if (cameraSelect.value === 'go2_webrtc') {
+                console.log('[GO2 Battery] GO2 camera detected on page load');
+                startGO2BatteryUpdates();
+            }
+
+            // Monitor camera changes
+            cameraSelect.addEventListener('change', function() {
+                const selectedCamera = this.value;
+                console.log('[GO2 Battery] Camera changed to:', selectedCamera);
+
+                // Show battery and action bar for GO2 WebRTC camera
+                if (selectedCamera === 'go2_webrtc') {
+                    startGO2BatteryUpdates();
+                    showGO2ActionBar();
+                } else {
+                    stopGO2BatteryUpdates();
+                    hideGO2ActionBar();
+                }
+            });
+        }
+
+        // GO2 Action Bar Management
+        function showGO2ActionBar() {
+            const actionBar = document.getElementById('go2ActionBar');
+            if (actionBar) {
+                actionBar.classList.add('visible');
+            }
+        }
+
+        function hideGO2ActionBar() {
+            const actionBar = document.getElementById('go2ActionBar');
+            if (actionBar) {
+                actionBar.classList.remove('visible');
+            }
+        }
+
+        // Show action bar on page load if GO2 is selected
+        if (cameraSelect && cameraSelect.value === 'go2_webrtc') {
+            showGO2ActionBar();
+        }
+
+        // GO2 Robot Command Functions
+        async function sendGO2Command(command) {
+            console.log(`[GO2 Command] Sending: ${command}`);
+
+            try {
+                const response = await fetch('/go2/command', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ command: command })
+                });
+
+                if (response.ok) {
+                    const result = await response.json();
+                    console.log(`[GO2 Command] ${command} response:`, result);
+
+                    if (result.success) {
+                        showStatus(`GO2 command "${command}" executed successfully`, 'success');
+                    } else {
+                        showStatus(`GO2 command "${command}" failed: ${result.message}`, 'error');
+                    }
+                } else {
+                    showStatus(`Failed to send GO2 command "${command}"`, 'error');
+                }
+            } catch (error) {
+                console.error(`[GO2 Command] Error sending ${command}:`, error);
+                showStatus(`Error sending GO2 command "${command}"`, 'error');
+            }
+        }
+
+        function showStatus(message, type) {
+            const statusEl = document.getElementById('status');
+            if (statusEl) {
+                statusEl.textContent = message;
+                statusEl.className = `status ${type}`;
+            }
+        }
     </script>
 </body>
 </html>

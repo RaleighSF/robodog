@@ -13,6 +13,7 @@ import threading
 import json
 import logging
 from datetime import datetime
+import requests
 
 # Enable more detailed logging for WebRTC debugging
 logging.basicConfig(level=logging.INFO)
@@ -531,6 +532,48 @@ def get_status():
         'camera_status': camera_status,
         'current_model': detector.get_current_model()
     })
+
+@app.route('/go2/battery')
+def go2_battery():
+    """Proxy endpoint for GO2 battery data to avoid CORS issues"""
+    try:
+        response = requests.get('http://192.168.86.21:5001/battery', timeout=2)
+        if response.status_code == 200:
+            return jsonify(response.json())
+        else:
+            return jsonify({'connected': False, 'soc': None}), response.status_code
+    except Exception as e:
+        logger.error(f"Failed to fetch GO2 battery: {e}")
+        return jsonify({'connected': False, 'soc': None, 'error': str(e)}), 503
+
+@app.route('/go2/command', methods=['POST'])
+def go2_command():
+    """Proxy endpoint for sending GO2 robot commands"""
+    try:
+        data = request.get_json()
+        command = data.get('command')
+
+        if not command:
+            return jsonify({'success': False, 'message': 'No command specified'}), 400
+
+        logger.info(f"Sending GO2 command: {command}")
+
+        # Forward command to GO2 service
+        response = requests.post('http://192.168.86.21:5001/command',
+                                json={'command': command},
+                                timeout=5)
+
+        if response.status_code == 200:
+            result = response.json()
+            logger.info(f"GO2 command '{command}' result: {result}")
+            return jsonify(result)
+        else:
+            logger.error(f"GO2 command '{command}' failed with status {response.status_code}")
+            return jsonify({'success': False, 'message': f'Command failed with status {response.status_code}'}), response.status_code
+
+    except Exception as e:
+        logger.error(f"Failed to send GO2 command: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 503
 
 @app.route('/switch_model', methods=['POST'])
 def switch_detection_model():

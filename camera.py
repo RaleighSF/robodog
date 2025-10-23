@@ -7,6 +7,8 @@ import numpy as np
 from unitree_client import UnitreeGo2Client
 import os
 import signal
+import requests
+from io import BytesIO
 
 class CameraManager:
     def __init__(self, camera_index: int = 0):
@@ -17,23 +19,27 @@ class CameraManager:
         self.capture_thread = None
         self.frame_lock = threading.Lock()
         
-        # Camera source options - default to Mac for reliability, Color Channel auto-starts via web UI  
-        self.camera_source = "mac"  # "mac", "unitree", or "rtsp_*"
+        # Camera source options - default to Mac for reliability, Color Channel auto-starts via web UI
+        self.camera_source = "mac"  # "mac", "unitree", "rtsp_*", or "go2_webrtc"
         self.unitree_client = None
         self.robot_ip = "192.168.87.25"
-        
+
         # RTSP channel URLs with TCP transport for better reliability
         self.rtsp_channels = {
             "rtsp_color": "rtsp://192.168.86.21:8554/color",
-            "rtsp_ir": "rtsp://192.168.86.21:8554/ir", 
+            "rtsp_ir": "rtsp://192.168.86.21:8554/ir",
             "rtsp_depth": "rtsp://192.168.86.21:8554/depth",
             "rtsp_test": "rtsp://192.168.86.21:8554/test"  # Keep for backward compatibility
         }
         self.rtsp_url = self.rtsp_channels["rtsp_color"]  # Default to color
+
+        # GO2 WebRTC service configuration
+        self.go2_service_url = "http://192.168.86.21:5001"
+        self.go2_stream_active = False
         
     def set_camera_source(self, source: str, robot_ip: str = None, rtsp_url: str = None):
-        """Set camera source: 'mac', 'unitree', or 'rtsp_*' with robust cleanup"""
-        valid_sources = ["mac", "unitree"] + list(self.rtsp_channels.keys())
+        """Set camera source: 'mac', 'unitree', 'rtsp_*', or 'go2_webrtc' with robust cleanup"""
+        valid_sources = ["mac", "unitree", "go2_webrtc"] + list(self.rtsp_channels.keys())
         if source in valid_sources:
             print(f"🔄 Camera source change: {self.camera_source} -> {source}")
             
@@ -114,6 +120,8 @@ class CameraManager:
             return self._start_mac_camera()
         elif self.camera_source == "unitree":
             return self._start_unitree_camera()
+        elif self.camera_source == "go2_webrtc":
+            return self._start_go2_webrtc_camera()
         elif self.camera_source.startswith("rtsp"):
             return self._start_rtsp_camera()
         else:
@@ -173,26 +181,55 @@ class CameraManager:
         """Start Unitree Go2 camera capture"""
         try:
             print(f"Starting Unitree Go2 camera at {self.robot_ip}...")
-            
+
             # Use existing client if available, otherwise create new one
             if not self.unitree_client:
                 print("Creating new Unitree client...")
                 self.unitree_client = UnitreeGo2Client(self.robot_ip, serial_number="B42D4000P6PC04GE")
             else:
                 print("Using existing Unitree client")
-            
+
             # Discover robot first
             discovery = self.unitree_client.discover_robot()
             print(f"Robot discovery: {discovery}")
-            
+
             # Start async connection in background
             self.is_running = True
             self.capture_thread = threading.Thread(target=self._unitree_capture_loop, daemon=True)
             self.capture_thread.start()
-            
+
             return True
         except Exception as e:
             print(f"Failed to start Unitree camera: {e}")
+            return False
+
+    def _start_go2_webrtc_camera(self) -> bool:
+        """Start GO2 WebRTC camera capture from service"""
+        try:
+            print(f"Starting GO2 WebRTC camera from service at {self.go2_service_url}...")
+
+            # Test service connectivity
+            try:
+                response = requests.get(f"{self.go2_service_url}/status", timeout=2)
+                if response.status_code == 200:
+                    print("GO2 service is accessible")
+                else:
+                    print(f"GO2 service returned status {response.status_code}")
+                    return False
+            except requests.exceptions.RequestException as e:
+                print(f"Failed to connect to GO2 service: {e}")
+                return False
+
+            # Start capture thread
+            self.is_running = True
+            self.go2_stream_active = True
+            self.capture_thread = threading.Thread(target=self._go2_webrtc_capture_loop, daemon=True)
+            self.capture_thread.start()
+
+            print("GO2 WebRTC camera started successfully")
+            return True
+        except Exception as e:
+            print(f"Failed to start GO2 WebRTC camera: {e}")
             return False
             
     def _start_rtsp_camera(self) -> bool:
@@ -410,12 +447,12 @@ class CameraManager:
     def _unitree_capture_loop(self):
         """Internal capture loop for Unitree Go2 camera"""
         print("DEBUG: Starting Unitree capture loop...")
-        
+
         # Start test pattern immediately as fallback
         print("DEBUG: Starting immediate test pattern fallback...")
         self.unitree_client.start_video_stream()
         print(f"DEBUG: Immediate test pattern started, streaming: {self.unitree_client.is_streaming}")
-        
+
         # Simple frame loop - just get frames from test pattern
         try:
             while self.is_running:
@@ -426,6 +463,70 @@ class CameraManager:
                 time.sleep(1/30)  # 30 FPS
         except Exception as e:
             print(f"DEBUG: Frame loop error: {e}")
+
+    def _go2_webrtc_capture_loop(self):
+        """Internal capture loop for GO2 WebRTC camera from service"""
+        print("Starting GO2 WebRTC capture loop...")
+
+        video_url = f"{self.go2_service_url}/video_feed"
+        consecutive_failures = 0
+        max_consecutive_failures = 10
+
+        try:
+            # Open streaming connection to GO2 service (no read timeout for streaming)
+            response = requests.get(video_url, stream=True, timeout=(5, None))
+
+            if response.status_code != 200:
+                print(f"Failed to connect to GO2 video stream: HTTP {response.status_code}")
+                self.go2_stream_active = False
+                return
+
+            print("Connected to GO2 video stream")
+            bytes_buffer = b''
+
+            # Parse MJPEG stream
+            for chunk in response.iter_content(chunk_size=8192):
+                if not self.is_running or not self.go2_stream_active:
+                    break
+
+                bytes_buffer += chunk
+
+                # Look for JPEG boundaries
+                start = bytes_buffer.find(b'\xff\xd8')  # JPEG start
+                end = bytes_buffer.find(b'\xff\xd9')    # JPEG end
+
+                if start != -1 and end != -1 and end > start:
+                    # Extract JPEG image
+                    jpg = bytes_buffer[start:end+2]
+                    bytes_buffer = bytes_buffer[end+2:]
+
+                    try:
+                        # Decode JPEG to numpy array
+                        img_array = np.frombuffer(jpg, dtype=np.uint8)
+                        frame = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+
+                        if frame is not None:
+                            with self.frame_lock:
+                                self.current_frame = frame.copy()
+                            consecutive_failures = 0
+                        else:
+                            consecutive_failures += 1
+
+                    except Exception as decode_error:
+                        print(f"Frame decode error: {decode_error}")
+                        consecutive_failures += 1
+
+                    if consecutive_failures >= max_consecutive_failures:
+                        print("Too many consecutive frame failures, stopping GO2 capture")
+                        break
+
+        except requests.exceptions.RequestException as e:
+            print(f"GO2 WebRTC stream connection error: {e}")
+        except Exception as e:
+            print(f"GO2 WebRTC capture loop error: {e}")
+        finally:
+            print("GO2 WebRTC capture loop ended")
+            self.go2_stream_active = False
             
     def _rtsp_capture_loop_robust(self):
         """Robust RTSP capture loop with automatic recovery"""
@@ -520,6 +621,8 @@ class CameraManager:
         elif self.camera_source == "unitree":
             # Return True if unitree client exists and is streaming (includes test pattern fallback)
             return self.unitree_client is not None and self.unitree_client.is_streaming
+        elif self.camera_source == "go2_webrtc":
+            return self.go2_stream_active
         elif self.camera_source.startswith("rtsp"):
             return self.cap is not None and self.cap.isOpened()
         return False
@@ -531,7 +634,7 @@ class CameraManager:
             "is_running": self.is_running,
             "available": self.is_camera_available()
         }
-        
+
         if self.camera_source == "mac":
             status.update({
                 "camera_index": self.camera_index,
@@ -542,9 +645,15 @@ class CameraManager:
                 "robot_ip": self.robot_ip,
                 "unitree_client": self.unitree_client is not None
             })
-            
+
             if self.unitree_client:
                 status.update(self.unitree_client.get_robot_status())
+        elif self.camera_source == "go2_webrtc":
+            status.update({
+                "go2_service_url": self.go2_service_url,
+                "stream_active": self.go2_stream_active,
+                "connected": self.go2_stream_active
+            })
         elif self.camera_source.startswith("rtsp"):
             status.update({
                 "rtsp_url": self.rtsp_url,
@@ -552,5 +661,5 @@ class CameraManager:
                 "opencv_available": self.cap is not None,
                 "connected": self.cap is not None and self.cap.isOpened()
             })
-                
+
         return status
