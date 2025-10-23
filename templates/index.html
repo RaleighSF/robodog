@@ -1430,8 +1430,6 @@
     </div>
 
     <script>
-        console.log('JavaScript is loading...');
-        
         const startBtn = document.getElementById('startBtn');
         const stopBtn = document.getElementById('stopBtn');
         const cameraSelect = document.getElementById('cameraSelect');
@@ -1440,10 +1438,6 @@
         const videoStream = document.getElementById('videoStream');
         const loadingText = document.getElementById('loadingText');
         const status = document.getElementById('status');
-        
-        console.log('Elements retrieved successfully');
-        console.log('startBtn element:', startBtn);
-        console.log('startBtn is null?', startBtn === null);
 
         function updateStatus(message, type = 'info') {
             status.textContent = message;
@@ -1451,12 +1445,9 @@
         }
 
         function showVideo() {
-            console.log('showVideo() called');
             videoStream.src = '/video_feed?' + new Date().getTime();
             videoStream.style.display = 'block';
             loadingText.style.display = 'none';
-            console.log('Video stream src set to:', videoStream.src);
-            console.log('Video stream display:', videoStream.style.display);
         }
 
         function hideVideo() {
@@ -1469,7 +1460,6 @@
 
 
         stopBtn.addEventListener('click', async () => {
-            console.log('Stop button clicked');
             updateStatus('Stopping patrol monitoring...', 'success');
 
             // Immediately hide video and clear source to stop stream
@@ -1486,11 +1476,9 @@
 
                 const result = await response.json();
                 updateStatus(result.message, 'success');
-                console.log('Stop successful:', result);
             } catch (error) {
                 if (error.name === 'TimeoutError') {
                     updateStatus('Stop timed out - force stopped video stream', 'success');
-                    console.log('Stop request timed out but video stream closed');
                 } else {
                     updateStatus('Video stream stopped', 'success');
                     console.error('Stop error:', error);
@@ -1526,7 +1514,6 @@
                 
                 if (statusData.is_running) {
                     // Auto-switch camera feed
-                    console.log(`Auto-switching to ${source} while detection is running`);
                     updateStatus(`Switching to ${cameraName}...`, 'info');
                     
                     // Switch camera source
@@ -1561,17 +1548,8 @@
         });
 
         // Enhanced Start Patrol - handles camera switching and initialization
-        console.log('Debugging elements...');
-        console.log('startBtn exists:', startBtn !== null);
-        console.log('cameraSelect exists:', cameraSelect !== null);
-        console.log('robotIpInput exists:', robotIpInput !== null);
-        
-        console.log('Adding Start Patrol event listener...');
         startBtn.addEventListener('click', async () => {
-            console.log('Start Patrol button clicked!');
             const source = cameraSelect.value;
-            
-            console.log(`Starting patrol with source: ${source}`);
             updateStatus('Starting patrol...', 'info');
             
             try {
@@ -1580,8 +1558,7 @@
                 if (source === 'unitree') {
                     switchData.robot_ip = robotIpInput.value;
                 }
-                
-                console.log(`Switching to camera source: ${source}`, switchData);
+
                 const switchResponse = await fetch('/switch_camera', {
                     method: 'POST',
                     headers: {
@@ -1629,16 +1606,12 @@
                 const response = await fetch('/status');
                 const statusData = await response.json();
 
-                // Reduced logging for performance
-
                 if (statusData.is_running && statusData.camera_available) {
                     if (videoStream.style.display !== 'block') {
-                        console.log('Showing video stream');
                         showVideo();
                     }
                 } else if (!statusData.is_running) {
                     if (videoStream.style.display === 'block') {
-                        console.log('Hiding video stream');
                         hideVideo();
                     }
                 }
@@ -1743,7 +1716,6 @@
                 'go2_webrtc': 'Native Go2 Camera'
             };
             
-            console.log(`Initializing with default source: ${initialSource}`);
             updateStatus(`Testing ${cameraNames[initialSource]}...`, 'info');
             
             try {
@@ -1768,7 +1740,6 @@
                         // Camera works, stop detection and show ready status
                         await fetch('/stop_detection', { method: 'POST' });
                         updateStatus(`${cameraNames[initialSource]} ready - Click "Start Patrol" to begin`, 'success');
-                        console.log(`${initialSource} camera is working`);
                     } else {
                         throw new Error(`Camera test failed: ${startResult.message}`);
                     }
@@ -1776,7 +1747,6 @@
                     throw new Error(`Camera switch failed: ${switchResult.message}`);
                 }
             } catch (error) {
-                console.log(`Default camera ${initialSource} failed, trying fallback to Mac camera...`);
                 // Fall back to Mac camera
                 try {
                     cameraSelect.value = 'mac';  // Update dropdown
@@ -1803,7 +1773,6 @@
         
         // Auto-start Color Channel patrol on page load
         async function autoStartColorChannel() {
-            console.log('Auto-starting Color Channel patrol...');
             updateStatus('Auto-starting Color Channel patrol...', 'info');
             
             try {
@@ -1834,7 +1803,6 @@
                 if (startResult.status === 'success') {
                     updateStatus('Color Channel patrol started automatically', 'success');
                     showVideo();
-                    console.log('Auto-start successful - Color Channel patrol is running');
                 } else {
                     updateStatus(`Failed to start patrol: ${startResult.message}`, 'error');
                 }
@@ -2022,7 +1990,6 @@
                     break;
             }
 
-            console.log(`Detection mode updated to: ${mode}`);
         }
 
         // Load visual prompts list
@@ -2397,17 +2364,13 @@
         let go2BatteryInterval = null;
 
         async function updateGO2Battery() {
-            console.log('[GO2 Battery] Fetching battery data...');
             try {
                 const response = await fetch('/go2/battery');
 
-                console.log('[GO2 Battery] Response status:', response.status);
 
                 if (response.ok) {
                     const data = await response.json();
-                    console.log('[GO2 Battery] Data received:', data);
                     if (data.soc !== null && data.soc !== undefined) {
-                        console.log('[GO2 Battery] Setting battery to:', data.soc + '%');
 
                         // Update battery percentage text
                         const batteryPercent = document.getElementById('batteryPercent');
@@ -2450,7 +2413,6 @@
         }
 
         function startGO2BatteryUpdates() {
-            console.log('[GO2 Battery] Starting battery updates');
             if (!go2BatteryInterval) {
                 updateGO2Battery();  // Initial fetch
                 go2BatteryInterval = setInterval(updateGO2Battery, 60000);  // Update every 60 seconds
@@ -2458,7 +2420,6 @@
         }
 
         function stopGO2BatteryUpdates() {
-            console.log('[GO2 Battery] Stopping battery updates');
             if (go2BatteryInterval) {
                 clearInterval(go2BatteryInterval);
                 go2BatteryInterval = null;
@@ -2470,14 +2431,12 @@
         if (cameraSelect) {
             // Check on page load if GO2 is selected
             if (cameraSelect.value === 'go2_webrtc') {
-                console.log('[GO2 Battery] GO2 camera detected on page load');
                 startGO2BatteryUpdates();
             }
 
             // Monitor camera changes
             cameraSelect.addEventListener('change', function() {
                 const selectedCamera = this.value;
-                console.log('[GO2 Battery] Camera changed to:', selectedCamera);
 
                 // Show battery and action bar for GO2 WebRTC camera
                 if (selectedCamera === 'go2_webrtc') {
@@ -2512,7 +2471,6 @@
 
         // GO2 Robot Command Functions
         async function sendGO2Command(command) {
-            console.log(`[GO2 Command] Sending: ${command}`);
 
             try {
                 const response = await fetch('/go2/command', {
@@ -2525,7 +2483,6 @@
 
                 if (response.ok) {
                     const result = await response.json();
-                    console.log(`[GO2 Command] ${command} response:`, result);
 
                     if (result.success) {
                         showStatus(`GO2 command "${command}" executed successfully`, 'success');

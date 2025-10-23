@@ -465,67 +465,59 @@ class CameraManager:
             print(f"DEBUG: Frame loop error: {e}")
 
     def _go2_webrtc_capture_loop(self):
-        """Internal capture loop for GO2 WebRTC camera from service"""
-        print("Starting GO2 WebRTC capture loop...")
-
+        """Optimized capture loop for GO2 WebRTC camera from service"""
         video_url = f"{self.go2_service_url}/video_feed"
         consecutive_failures = 0
-        max_consecutive_failures = 10
+        max_consecutive_failures = 15
+        bytes_buffer = b''
 
         try:
-            # Open streaming connection to GO2 service (no read timeout for streaming)
+            # Open streaming connection with optimized chunk size
             response = requests.get(video_url, stream=True, timeout=(5, None))
 
             if response.status_code != 200:
-                print(f"Failed to connect to GO2 video stream: HTTP {response.status_code}")
                 self.go2_stream_active = False
                 return
 
-            print("Connected to GO2 video stream")
-            bytes_buffer = b''
-
-            # Parse MJPEG stream
-            for chunk in response.iter_content(chunk_size=8192):
+            # Parse MJPEG stream with larger chunks for better performance
+            for chunk in response.iter_content(chunk_size=16384):  # 16KB chunks
                 if not self.is_running or not self.go2_stream_active:
                     break
 
                 bytes_buffer += chunk
 
                 # Look for JPEG boundaries
-                start = bytes_buffer.find(b'\xff\xd8')  # JPEG start
-                end = bytes_buffer.find(b'\xff\xd9')    # JPEG end
+                start = bytes_buffer.find(b'\xff\xd8')
+                end = bytes_buffer.find(b'\xff\xd9')
 
                 if start != -1 and end != -1 and end > start:
-                    # Extract JPEG image
                     jpg = bytes_buffer[start:end+2]
                     bytes_buffer = bytes_buffer[end+2:]
 
                     try:
-                        # Decode JPEG to numpy array
-                        img_array = np.frombuffer(jpg, dtype=np.uint8)
-                        frame = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+                        # Decode JPEG directly to frame (no intermediate array)
+                        frame = cv2.imdecode(np.frombuffer(jpg, dtype=np.uint8), cv2.IMREAD_COLOR)
 
                         if frame is not None:
                             with self.frame_lock:
-                                self.current_frame = frame.copy()
+                                self.current_frame = frame  # No copy needed - frame is already new
                             consecutive_failures = 0
                         else:
                             consecutive_failures += 1
 
-                    except Exception as decode_error:
-                        print(f"Frame decode error: {decode_error}")
+                    except:
                         consecutive_failures += 1
 
                     if consecutive_failures >= max_consecutive_failures:
-                        print("Too many consecutive frame failures, stopping GO2 capture")
                         break
 
-        except requests.exceptions.RequestException as e:
-            print(f"GO2 WebRTC stream connection error: {e}")
-        except Exception as e:
-            print(f"GO2 WebRTC capture loop error: {e}")
+                # Keep buffer size reasonable to avoid memory growth
+                if len(bytes_buffer) > 100000:  # 100KB max buffer
+                    bytes_buffer = bytes_buffer[-50000:]  # Keep last 50KB
+
+        except:
+            pass
         finally:
-            print("GO2 WebRTC capture loop ended")
             self.go2_stream_active = False
             
     def _rtsp_capture_loop_robust(self):
