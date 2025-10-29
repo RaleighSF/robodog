@@ -137,3 +137,14 @@ sshpass -p "123" ssh unitree@192.168.86.21 "tail -50 ~/go2_service.log"
 **Warning:** Do not add watchdog logic, automatic restarts, or complex error recovery to this service. Those features caused the service to fail. Keep it simple and reliable.
 
 If you need advanced features, create a separate experimental version and test thoroughly before deploying to production.
+
+## RTSP Proxy for IR/Depth
+
+To view the IR and depth feeds in the dashboard, run the provided `rtsp_proxy.py` on the Orin. It opens the RTSP streams locally and republishes them as MJPEG over HTTP, which the Mac client can decode reliably.
+
+```
+sshpass -p "123" ssh unitree@192.168.1.207
+python3 ~/rtsp_proxy.py
+```
+
+The proxy listens on `http://192.168.1.207:8600/ir.mjpg` and `.../depth.mjpg`; the web dashboard already points the IR/Depth dropdowns at these endpoints.

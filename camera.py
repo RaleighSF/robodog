@@ -26,15 +26,15 @@ class CameraManager:
 
         # RTSP channel URLs with TCP transport for better reliability
         self.rtsp_channels = {
-            "rtsp_color": "rtsp://192.168.86.21:8554/color",
-            "rtsp_ir": "rtsp://192.168.86.21:8554/ir",
-            "rtsp_depth": "rtsp://192.168.86.21:8554/depth",
-            "rtsp_test": "rtsp://192.168.86.21:8554/test"  # Keep for backward compatibility
+            "rtsp_color": "rtsp://192.168.1.207:8554/color",
+            "rtsp_ir": "rtsp://192.168.1.207:8554/ir",
+            "rtsp_depth": "rtsp://192.168.1.207:8554/depth",
+            "rtsp_test": "rtsp://192.168.1.207:8554/test"  # Keep for backward compatibility
         }
         self.rtsp_url = self.rtsp_channels["rtsp_color"]  # Default to color
 
         # GO2 WebRTC service configuration
-        self.go2_service_url = "http://192.168.86.21:5001"
+        self.go2_service_url = "http://192.168.1.207:5001"
         self.go2_stream_active = False
         
     def set_camera_source(self, source: str, robot_ip: str = None, rtsp_url: str = None):
@@ -236,6 +236,9 @@ class CameraManager:
         """Start RTSP camera capture from Jetson with robust connection handling"""
         try:
             print(f"Starting RTSP camera from {self.rtsp_url}...")
+
+            if self.rtsp_url.startswith(('http://', 'https://')):
+                return self._start_http_mjpeg_stream(self.rtsp_url)
 
             # Set OpenCV environment variable for shorter RTSP timeout (5 seconds instead of 30)
             os.environ['OPENCV_FFMPEG_CAPTURE_OPTIONS'] = 'rtsp_transport;tcp|stimeout;5000000'
@@ -519,6 +522,89 @@ class CameraManager:
             pass
         finally:
             self.go2_stream_active = False
+
+    def _start_http_mjpeg_stream(self, video_url: str) -> bool:
+        """Start a generic HTTP MJPEG stream (e.g., IR/depth proxies)."""
+        try:
+            print(f"Starting HTTP MJPEG stream from {video_url}...")
+
+            try:
+                response = requests.get(video_url, stream=True, timeout=5)
+                status = response.status_code
+            except requests.exceptions.RequestException as exc:
+                print(f"Failed to connect to HTTP MJPEG stream: {exc}")
+                return False
+            finally:
+                try:
+                    response.close()
+                except Exception:
+                    pass
+
+            if status != 200:
+                print(f"HTTP MJPEG stream returned status {status}")
+                return False
+
+            self.is_running = True
+            self.http_stream_active = True
+            self.capture_thread = threading.Thread(
+                target=self._http_mjpeg_capture_loop,
+                args=(video_url,),
+                daemon=True
+            )
+            self.capture_thread.start()
+            print("HTTP MJPEG stream started successfully")
+            return True
+        except Exception as e:
+            print(f"Failed to start HTTP MJPEG stream: {e}")
+            self.http_stream_active = False
+            return False
+
+    def _http_mjpeg_capture_loop(self, video_url: str):
+        """Capture loop for generic HTTP MJPEG sources."""
+        consecutive_failures = 0
+        max_consecutive_failures = 20
+        buffer = b""
+
+        try:
+            response = requests.get(video_url, stream=True, timeout=(5, None))
+            if response.status_code != 200:
+                print(f"HTTP MJPEG stream returned status {response.status_code}")
+                self.http_stream_active = False
+                return
+
+            for chunk in response.iter_content(chunk_size=8192):
+                if not self.is_running or not self.http_stream_active:
+                    break
+
+                buffer += chunk
+                start = buffer.find(b"\xff\xd8")
+                end = buffer.find(b"\xff\xd9")
+
+                if start != -1 and end != -1 and end > start:
+                    jpg = buffer[start:end + 2]
+                    buffer = buffer[end + 2:]
+                    try:
+                        frame = cv2.imdecode(np.frombuffer(jpg, dtype=np.uint8), cv2.IMREAD_COLOR)
+                        if frame is not None:
+                            with self.frame_lock:
+                                self.current_frame = frame
+                            consecutive_failures = 0
+                        else:
+                            consecutive_failures += 1
+                    except Exception:
+                        consecutive_failures += 1
+
+                    if consecutive_failures >= max_consecutive_failures:
+                        print("Too many MJPEG decode failures; stopping stream")
+                        break
+
+                if len(buffer) > 200000:
+                    buffer = buffer[-100000:]
+
+        except requests.exceptions.RequestException as e:
+            print(f"HTTP MJPEG request error: {e}")
+        finally:
+            self.http_stream_active = False
             
     def _rtsp_capture_loop_robust(self):
         """Robust RTSP capture loop with automatic recovery"""
@@ -616,6 +702,8 @@ class CameraManager:
         elif self.camera_source == "go2_webrtc":
             return self.go2_stream_active
         elif self.camera_source.startswith("rtsp"):
+            if self.rtsp_url.startswith(("http://", "https://")):
+                return self.http_stream_active
             return self.cap is not None and self.cap.isOpened()
         return False
         
@@ -647,11 +735,12 @@ class CameraManager:
                 "connected": self.go2_stream_active
             })
         elif self.camera_source.startswith("rtsp"):
+            connected = self.http_stream_active if self.rtsp_url.startswith(("http://", "https://")) else (self.cap is not None and self.cap.isOpened())
             status.update({
                 "rtsp_url": self.rtsp_url,
                 "rtsp_channel": self.camera_source,
                 "opencv_available": self.cap is not None,
-                "connected": self.cap is not None and self.cap.isOpened()
+                "connected": connected
             })
 
         return status

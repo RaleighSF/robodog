@@ -23,7 +23,7 @@ class VisionConfig:
                 "detector": "yoloe",
                 "model_path": "yolo11s-seg.pt",
                 "engine_path": "",  # Optional TensorRT engine path
-                "source": "rtsp://192.168.86.21:8554/color",
+                "source": "rtsp://192.168.1.207:8554/color",
                 "rtsp_tcp": True,
                 "classes": [],  # Text prompts - empty = detect all
                 "visual_prompts": [],  # Image paths for visual prompting

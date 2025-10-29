@@ -53,6 +53,14 @@ class WebApp:
         # Track active stream to prevent multiple concurrent streams
         self.stream_active = False
         self.stream_generation_id = 0
+        # Detection throttling / reuse
+        self._last_detections = []
+        self._last_detection_ts = 0.0
+        self._detection_interval = 0.25  # seconds between detector invocations (~4 FPS)
+        self._max_detection_width = 960  # downscale before inference to save memory/compute
+        self._last_start_request = 0.0
+        self._last_stop_request = 0.0
+        self._throttle_window = 3.0  # seconds between successive start/stop calls
 
     def generate_frames(self):
         """Generate video frames for streaming with optimized performance"""
@@ -84,12 +92,40 @@ class WebApp:
                     if frame is not None:
                         frame_count += 1
 
-                        # Perform detection on every frame
-                        detections = detector.detect(frame)
+                        now = time.time()
+                        run_detection = (now - self._last_detection_ts) >= self._detection_interval
+                        detections = self._last_detections
+
+                        if run_detection:
+                            # Optionally downscale frame before detection to lower GPU/CPU usage
+                            detection_frame = frame
+                            scale_factor = 1.0
+                            height, width = frame.shape[:2]
+                            if width > self._max_detection_width:
+                                scale_factor = self._max_detection_width / width
+                                new_size = (self._max_detection_width, int(height * scale_factor))
+                                detection_frame = cv2.resize(frame, new_size, interpolation=cv2.INTER_AREA)
+
+                            detections = detector.detect(detection_frame)
+
+                            # Rescale detections back to original frame coordinates if resized
+                            if detections and scale_factor != 1.0:
+                                inv_scale = 1.0 / scale_factor
+                                for detection in detections:
+                                    x, y, w, h = detection.bbox
+                                    detection.bbox = (
+                                        int(x * inv_scale),
+                                        int(y * inv_scale),
+                                        int(w * inv_scale),
+                                        int(h * inv_scale),
+                                    )
+
+                            self._last_detections = detections
+                            self._last_detection_ts = now
 
                         # Log detections (only if alert logging is enabled - check cached value)
                         logged = False
-                        if alert_logging_enabled:
+                        if run_detection and alert_logging_enabled:
                             # Get configured classes for logging
                             target_classes = self._config_manager.get_classes()
                             # If no classes configured, fall back to all detected classes
@@ -378,6 +414,16 @@ def start_detection():
     try:
         print(f"🚀 Starting detection - Current camera: {camera_manager.camera_source}")
         sys.stdout.flush()
+
+        now = time.time()
+        if now - web_app._last_start_request < web_app._throttle_window:
+            wait_remaining = max(0.0, web_app._throttle_window - (now - web_app._last_start_request))
+            print(f"⏳ Start request throttled - wait {wait_remaining:.1f}s before retrying")
+            return jsonify({
+                'status': 'error',
+                'message': f'Start request ignored to prevent rapid restart. Retry in {wait_remaining:.1f}s.'
+            }), 429
+        web_app._last_start_request = now
         
         # Ensure clean state before starting
         if web_app.is_running:
@@ -386,7 +432,6 @@ def start_detection():
             camera_manager.stop()
 
             # Wait for stream to fully exit before restarting
-            import time
             timeout = 3.0
             start_time = time.time()
             while web_app.stream_active and (time.time() - start_time) < timeout:
@@ -422,6 +467,16 @@ def stop_detection():
     try:
         print(f"🛑 Stopping detection - Current camera: {camera_manager.camera_source}")
 
+        now = time.time()
+        if now - web_app._last_stop_request < web_app._throttle_window:
+            wait_remaining = max(0.0, web_app._throttle_window - (now - web_app._last_stop_request))
+            print(f"⏳ Stop request throttled - wait {wait_remaining:.1f}s before retrying")
+            return jsonify({
+                'status': 'error',
+                'message': f'Stop request ignored to prevent rapid restart. Retry in {wait_remaining:.1f}s.'
+            }), 429
+        web_app._last_stop_request = now
+
         # Set state first to stop loops
         web_app.is_running = False
 
@@ -429,7 +484,6 @@ def stop_detection():
         camera_manager.stop()
 
         # Wait for video stream generator to exit (max 3 seconds)
-        import time
         timeout = 3.0
         start_time = time.time()
         while web_app.stream_active and (time.time() - start_time) < timeout:
@@ -537,7 +591,7 @@ def get_status():
 def go2_battery():
     """Proxy endpoint for GO2 battery data to avoid CORS issues"""
     try:
-        response = requests.get('http://192.168.86.21:5001/battery', timeout=2)
+        response = requests.get('http://192.168.1.207:5001/battery', timeout=2)
         if response.status_code == 200:
             return jsonify(response.json())
         else:
@@ -559,7 +613,7 @@ def go2_command():
         logger.info(f"Sending GO2 command: {command}")
 
         # Forward command to GO2 service
-        response = requests.post('http://192.168.86.21:5001/command',
+        response = requests.post('http://192.168.1.207:5001/command',
                                 json={'command': command},
                                 timeout=5)
 

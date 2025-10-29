@@ -103,7 +103,6 @@ class HybridDetector:
                 self.yoloe_detector = get_yoloe_detector()
             
             if not self.yoloe_detector or not self.yoloe_detector.initialized:
-                print("❌ YOLO-E detector not initialized")
                 return []
             
             # Get detections from YOLO-E

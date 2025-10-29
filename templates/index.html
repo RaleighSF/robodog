@@ -250,6 +250,15 @@
             box-shadow: 0 4px 8px rgba(0, 114, 187, 0.3);
         }
 
+        .btn-header.btn-disabled,
+        .btn-header.btn-disabled:hover {
+            background: rgba(100, 116, 139, 0.4);
+            color: rgba(255, 255, 255, 0.8);
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+
         .container {
             max-width: 1400px;
             margin: 20px auto;
@@ -357,6 +366,12 @@
             background: rgba(0, 168, 84, 0.1);
             color: var(--success);
             border: 1px solid var(--success);
+        }
+
+        .status.warning {
+            background: rgba(250, 140, 22, 0.12);
+            color: var(--warning);
+            border: 1px solid var(--warning);
         }
 
         .status.error {
@@ -1438,6 +1453,7 @@
         const videoStream = document.getElementById('videoStream');
         const loadingText = document.getElementById('loadingText');
         const status = document.getElementById('status');
+        const BUTTON_THROTTLE_MS = 3000;
 
         function updateStatus(message, type = 'info') {
             status.textContent = message;
@@ -1458,9 +1474,22 @@
             loadingText.textContent = 'Robot patrol unit offline';
         }
 
+        function temporarilyDisable(button, duration = BUTTON_THROTTLE_MS) {
+            button.disabled = true;
+            button.classList.add('btn-disabled');
+            setTimeout(() => {
+                button.disabled = false;
+                button.classList.remove('btn-disabled');
+            }, duration);
+        }
 
         stopBtn.addEventListener('click', async () => {
-            updateStatus('Stopping patrol monitoring...', 'success');
+            if (stopBtn.disabled) {
+                return;
+            }
+
+            temporarilyDisable(stopBtn);
+            updateStatus('Stopping patrol monitoring...', 'info');
 
             // Immediately hide video and clear source to stop stream
             hideVideo();
@@ -1474,13 +1503,29 @@
                     signal: AbortSignal.timeout(5000)  // 5 second timeout
                 });
 
-                const result = await response.json();
-                updateStatus(result.message, 'success');
+                let result = {};
+                try {
+                    result = await response.json();
+                } catch (parseError) {
+                    console.debug('Stop response parse warning:', parseError);
+                }
+
+                if (response.status === 429) {
+                    updateStatus(result.message || 'Stop request ignored to prevent rapid restart. Please wait a moment.', 'warning');
+                    return;
+                }
+
+                if (!response.ok) {
+                    updateStatus(result.message || 'Failed to stop detection', 'error');
+                    return;
+                }
+
+                updateStatus(result.message || 'Patrol stopped', 'success');
             } catch (error) {
                 if (error.name === 'TimeoutError') {
-                    updateStatus('Stop timed out - force stopped video stream', 'success');
+                    updateStatus('Stop timed out - force stopped video stream', 'warning');
                 } else {
-                    updateStatus('Video stream stopped', 'success');
+                    updateStatus('Video stream stopped', 'info');
                     console.error('Stop error:', error);
                 }
             }
@@ -1549,7 +1594,12 @@
 
         // Enhanced Start Patrol - handles camera switching and initialization
         startBtn.addEventListener('click', async () => {
+            if (startBtn.disabled) {
+                return;
+            }
+
             const source = cameraSelect.value;
+            temporarilyDisable(startBtn);
             updateStatus('Starting patrol...', 'info');
             
             try {
@@ -1578,7 +1628,18 @@
                     method: 'POST'
                 });
                 
-                const startResult = await startResponse.json();
+                let startResult = {};
+                try {
+                    startResult = await startResponse.json();
+                } catch (parseError) {
+                    console.debug('Start response parse warning:', parseError);
+                }
+
+                if (startResponse.status === 429) {
+                    updateStatus(startResult.message || 'Start request ignored to prevent rapid restart. Please wait a moment.', 'warning');
+                    return;
+                }
+
                 if (startResult.status === 'success') {
                     const cameraNames = {
                         'rtsp_color': 'Color Channel',
@@ -1591,7 +1652,7 @@
                     updateStatus(`Patrol started with ${cameraName}`, 'success');
                     showVideo();
                 } else {
-                    updateStatus(`Failed to start patrol: ${startResult.message}`, 'error');
+                    updateStatus(`Failed to start patrol: ${startResult.message || 'Unknown error'}`, 'error');
                 }
                 
             } catch (error) {
