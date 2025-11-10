@@ -591,7 +591,7 @@ def get_status():
 def go2_battery():
     """Proxy endpoint for GO2 battery data to avoid CORS issues"""
     try:
-        response = requests.get('http://192.168.1.207:5001/battery', timeout=2)
+        response = requests.get('http://192.168.50.207:5001/battery', timeout=2)
         if response.status_code == 200:
             return jsonify(response.json())
         else:
@@ -613,7 +613,7 @@ def go2_command():
         logger.info(f"Sending GO2 command: {command}")
 
         # Forward command to GO2 service
-        response = requests.post('http://192.168.1.207:5001/command',
+        response = requests.post('http://192.168.50.207:5001/command',
                                 json={'command': command},
                                 timeout=5)
 

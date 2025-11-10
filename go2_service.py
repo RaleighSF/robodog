@@ -42,7 +42,7 @@ async def recv_camera_stream(track: MediaStreamTrack):
 
 async def robot_loop():
     global battery_state, command_results
-    conn = UnitreeWebRTCConnection(WebRTCConnectionMethod.LocalSTA, ip='192.168.86.148')
+    conn = UnitreeWebRTCConnection(WebRTCConnectionMethod.LocalSTA, ip='192.168.50.75')
     await conn.connect()
     battery_state['connected'] = True
     

@@ -26,15 +26,15 @@ class CameraManager:
 
         # RTSP channel URLs with TCP transport for better reliability
         self.rtsp_channels = {
-            "rtsp_color": "rtsp://192.168.1.207:8554/color",
-            "rtsp_ir": "rtsp://192.168.1.207:8554/ir",
-            "rtsp_depth": "rtsp://192.168.1.207:8554/depth",
-            "rtsp_test": "rtsp://192.168.1.207:8554/test"  # Keep for backward compatibility
+            "rtsp_color": "rtsp://192.168.50.207:8554/color",
+            "rtsp_ir": "rtsp://192.168.50.207:8554/ir",
+            "rtsp_depth": "rtsp://192.168.50.207:8554/depth",
+            "rtsp_test": "rtsp://192.168.50.207:8554/test"  # Keep for backward compatibility
         }
         self.rtsp_url = self.rtsp_channels["rtsp_color"]  # Default to color
 
         # GO2 WebRTC service configuration
-        self.go2_service_url = "http://192.168.1.207:5001"
+        self.go2_service_url = "http://192.168.50.207:5001"
         self.go2_stream_active = False
         
     def set_camera_source(self, source: str, robot_ip: str = None, rtsp_url: str = None):
