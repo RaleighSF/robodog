@@ -73,6 +73,8 @@ class WebApp:
         self._detection_stop_event = threading.Event()
         self._last_detection_enqueue_ts = 0.0
         self._last_detection_frame_size = (0, 0)
+        self._feeder_thread = None
+        self._feeder_stop_event = threading.Event()
 
     def _ensure_detection_worker(self):
         """Make sure the background detection worker is running."""
@@ -85,6 +87,43 @@ class WebApp:
             daemon=True
         )
         self._detection_thread.start()
+
+    def _start_detection_feeder(self):
+        """Continuously enqueue frames for detection regardless of video feed usage."""
+        if self._feeder_thread and self._feeder_thread.is_alive():
+            return
+        self._feeder_stop_event.clear()
+        self._feeder_thread = threading.Thread(
+            target=self._detection_feeder_loop,
+            name="DetectionFeeder",
+            daemon=True
+        )
+        self._feeder_thread.start()
+
+    def _stop_detection_feeder(self):
+        self._feeder_stop_event.set()
+        if self._feeder_thread:
+            self._feeder_thread.join(timeout=1.0)
+            self._feeder_thread = None
+
+    def _detection_feeder_loop(self):
+        while not self._feeder_stop_event.is_set():
+            if self.is_running and camera_manager.is_camera_available():
+                frame = camera_manager.get_frame()
+                if frame is not None:
+                    now = time.time()
+                    if ((now - self._last_detection_enqueue_ts) >= self._detection_interval
+                            and not self._detection_queue.full()):
+                        try:
+                            self._detection_queue.put(frame.copy(), timeout=0.01)
+                            self._last_detection_enqueue_ts = now
+                            self._last_detection_frame_size = (frame.shape[1], frame.shape[0])
+                        except queue.Full:
+                            pass
+                else:
+                    time.sleep(0.01)
+            else:
+                time.sleep(0.05)
 
     def _detection_worker_loop(self):
         """Background worker that runs detection so streaming thread stays responsive."""
@@ -180,20 +219,14 @@ class WebApp:
         while True:
             try:
                 if self.is_running and camera_manager.is_camera_available():
-                    frame = camera_manager.get_frame()
-                    if frame is not None:
-                        frame_count += 1
+                        frame = camera_manager.get_frame()
+                        if frame is not None:
+                            frame_count += 1
 
-                        now = time.time()
-                        if ((now - self._last_detection_enqueue_ts) >= self._detection_interval
-                                and not self._detection_queue.full()):
-                            self._detection_queue.put(frame.copy())
-                            self._last_detection_enqueue_ts = now
+                            detections = self._last_detections or []
 
-                        detections = self._last_detections or []
-
-                        # Draw detections on frame only if we have results to overlay
-                        annotated_frame = detector.draw_detections(frame, detections) if detections else frame
+                            # Draw detections on frame only if we have results to overlay
+                            annotated_frame = detector.draw_detections(frame, detections) if detections else frame
 
                         # Optionally resize for web display (reduces bandwidth, improves browser performance)
                         # Scale to max width of 1280px if larger (maintains aspect ratio)
@@ -505,6 +538,7 @@ def start_detection():
 
         if camera_started:
             web_app.is_running = True
+            web_app._start_detection_feeder()
             print(f"✅ Detection started successfully with {camera_manager.camera_source}")
             return jsonify({'status': 'success', 'message': 'Detection started'})
         else:
@@ -534,6 +568,7 @@ def stop_detection():
 
         # Set state first to stop loops
         web_app.is_running = False
+        web_app._stop_detection_feeder()
 
         # Stop camera with proper cleanup
         camera_manager.stop()
