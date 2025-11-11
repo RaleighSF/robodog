@@ -1184,6 +1184,85 @@ def serve_visual_prompt(filename):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+def ssh_exec_command(command):
+    """Execute SSH command on Orin using paramiko"""
+    try:
+        import paramiko
+        ssh = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        ssh.connect('192.168.50.207', username='unitree', password='123', timeout=5)
+        stdin, stdout, stderr = ssh.exec_command(command, timeout=10)
+        exit_code = stdout.channel.recv_exit_status()
+        output = stdout.read().decode('utf-8').strip()
+        error = stderr.read().decode('utf-8').strip()
+        ssh.close()
+        return exit_code, output, error
+    except Exception as e:
+        raise Exception(f"SSH command failed: {str(e)}")
+
+@app.route('/rtsp/status', methods=['GET'])
+def rtsp_status():
+    """Check if RTSP server is running on the Orin"""
+    try:
+        exit_code, output, error = ssh_exec_command('sudo systemctl is-active rtsp-camera.service')
+        is_running = exit_code == 0 and 'active' in output
+        return jsonify({
+            'status': 'success',
+            'running': is_running,
+            'message': 'RTSP server is running' if is_running else 'RTSP server is stopped'
+        })
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@app.route('/rtsp/start', methods=['POST'])
+def rtsp_start():
+    """Start RTSP server on the Orin"""
+    try:
+        # Start RTSP systemd service
+        ssh_exec_command('sudo systemctl start rtsp-camera.service')
+        time.sleep(2)  # Give it time to start
+
+        # Verify it started
+        exit_code, output, error = ssh_exec_command('sudo systemctl is-active rtsp-camera.service')
+
+        if exit_code == 0 and 'active' in output:
+            return jsonify({
+                'status': 'success',
+                'message': 'RTSP server started successfully'
+            })
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': 'RTSP server failed to start'
+            }), 500
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+@app.route('/rtsp/stop', methods=['POST'])
+def rtsp_stop():
+    """Stop RTSP server on the Orin"""
+    try:
+        # Stop RTSP systemd service
+        ssh_exec_command('sudo systemctl stop rtsp-camera.service')
+        time.sleep(1)  # Give it time to stop
+
+        # Verify it stopped
+        exit_code, output, error = ssh_exec_command('sudo systemctl is-active rtsp-camera.service')
+
+        # systemctl is-active returns exit code 3 when inactive
+        if 'inactive' in output or exit_code != 0:
+            return jsonify({
+                'status': 'success',
+                'message': 'RTSP server stopped successfully'
+            })
+        else:
+            return jsonify({
+                'status': 'error',
+                'message': 'RTSP server failed to stop'
+            }), 500
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
 if __name__ == '__main__':
     print("Starting Computer Vision Object Detector Web App")
     print("Open your browser and go to: http://127.0.0.1:8000")

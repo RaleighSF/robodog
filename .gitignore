@@ -1,3 +1,15 @@
 # Large pretrained weights handled outside git
 yolov4.weights
+
+# Local environments / caches
+venv/
+venv_311/
+__pycache__/
+.vscode/
+
+# Logs & artifacts
+*.log
+web_app.py.agx_backup
+visual_prompts/
+unitree_sdk2_python/
 path/to/yolov4.weights

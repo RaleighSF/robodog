@@ -1436,12 +1436,76 @@
 
                         <button class="config-button config-button-primary" onclick="saveSettings()">Save Settings</button>
                     </div>
+
+                    <!-- RTSP Server Control Section -->
+                    <div class="config-section" style="margin-top: 20px;">
+                        <div class="config-section-title">RTSP Server Control (Orin Backpack)</div>
+                        <div class="config-help-text" style="margin-bottom: 15px;">
+                            Control the RealSense RTSP server on the Orin backpack. Start it only when you need IR/Depth camera feeds to save CPU resources.
+                        </div>
+
+                        <div class="config-field">
+                            <div style="display: flex; gap: 10px; align-items: center;">
+                                <button id="rtspStartBtn" class="config-button config-button-primary" onclick="startRTSPServer()" style="flex: 1;">
+                                    Start RTSP Server
+                                </button>
+                                <button id="rtspStopBtn" class="config-button config-button-danger" onclick="stopRTSPServer()" style="flex: 1;">
+                                    Stop RTSP Server
+                                </button>
+                                <button class="config-button config-button-secondary" onclick="checkRTSPStatus()" style="flex: 0.5;">
+                                    Check Status
+                                </button>
+                            </div>
+                            <div id="rtspStatus" style="margin-top: 10px; padding: 10px; border-radius: 4px; display: none;"></div>
+                        </div>
+                    </div>
                 </div>
             </div>
 
             <div class="config-modal-footer">
                 <button class="config-button config-button-secondary" onclick="closeConfigModal()">Close</button>
                 <button class="config-button config-button-primary" onclick="saveAllConfig()">Save All Configuration</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- RTSP Server Notice Modal -->
+    <div id="rtspNoticeModal" class="config-modal">
+        <div class="config-modal-content" style="max-width: 500px;">
+            <div class="config-modal-header">
+                <h2 style="display: flex; align-items: center; gap: 10px;">
+                    <span style="font-size: 32px;">⚠️</span>
+                    RTSP Server Not Running
+                </h2>
+                <button class="config-modal-close" onclick="closeRTSPNoticeModal()">&times;</button>
+            </div>
+
+            <div class="config-modal-body">
+                <div style="margin-bottom: 20px; font-size: 15px; line-height: 1.6;">
+                    <p style="margin-bottom: 15px;">
+                        You've selected an RTSP stream (<strong id="rtspSelectedChannel"></strong>), but the RTSP server on the Orin backpack is not currently running.
+                    </p>
+                    <p style="margin-bottom: 15px;">
+                        To use IR, Depth, or Color camera feeds, you need to start the RTSP server first.
+                    </p>
+                    <div style="background: rgba(59, 130, 246, 0.1); border-left: 4px solid var(--brand-600); padding: 15px; border-radius: 4px; margin-top: 15px;">
+                        <strong>How to start the RTSP server:</strong>
+                        <ol style="margin: 10px 0 0 20px; line-height: 1.8;">
+                            <li>Click "Go to Settings" below</li>
+                            <li>Scroll to "RTSP Server Control"</li>
+                            <li>Click "Start RTSP Server"</li>
+                            <li>Wait for confirmation (~2-3 seconds)</li>
+                            <li>Return and click "Start" again</li>
+                        </ol>
+                    </div>
+                </div>
+            </div>
+
+            <div class="config-modal-footer" style="gap: 10px;">
+                <button class="config-button config-button-secondary" onclick="closeRTSPNoticeModal()">Cancel</button>
+                <button class="config-button config-button-primary" onclick="openRTSPSettings()" style="background: var(--brand-600);">
+                    Go to Settings →
+                </button>
             </div>
         </div>
     </div>
@@ -1621,9 +1685,34 @@
             }
 
             const source = cameraSelect.value;
+
+            // Check if RTSP stream is selected
+            const rtspSources = ['rtsp_color', 'rtsp_ir', 'rtsp_depth'];
+            if (rtspSources.includes(source)) {
+                // Check if RTSP server is running
+                try {
+                    const rtspStatusResponse = await fetch('/rtsp/status');
+                    const rtspStatus = await rtspStatusResponse.json();
+
+                    if (rtspStatus.status === 'success' && !rtspStatus.running) {
+                        // RTSP server is not running, show notice
+                        const channelNames = {
+                            'rtsp_color': 'Color Channel',
+                            'rtsp_ir': 'IR Channel',
+                            'rtsp_depth': 'Depth Channel'
+                        };
+                        openRTSPNoticeModal(channelNames[source]);
+                        return; // Don't proceed with starting
+                    }
+                } catch (error) {
+                    console.error('Failed to check RTSP status:', error);
+                    // Continue anyway - might be a network issue
+                }
+            }
+
             temporarilyDisable(startBtn);
             updateStatus('Starting patrol...', 'info');
-            
+
             try {
                 // Switch camera source first
                 const switchData = { source: source };
@@ -1958,6 +2047,56 @@
         function closeConfigModal() {
             configModal.classList.remove('show');
             document.body.style.overflow = '';
+        }
+
+        // RTSP Notice Modal Functions
+        function openRTSPNoticeModal(channelName) {
+            const rtspNoticeModal = document.getElementById('rtspNoticeModal');
+            const channelDisplay = document.getElementById('rtspSelectedChannel');
+            channelDisplay.textContent = channelName;
+            rtspNoticeModal.classList.add('show');
+            document.body.style.overflow = 'hidden';
+        }
+
+        function closeRTSPNoticeModal() {
+            const rtspNoticeModal = document.getElementById('rtspNoticeModal');
+            rtspNoticeModal.classList.remove('show');
+            document.body.style.overflow = '';
+        }
+
+        function openRTSPSettings() {
+            // Close RTSP notice modal
+            closeRTSPNoticeModal();
+
+            // Open config modal
+            configModal.classList.add('show');
+            document.body.style.overflow = 'hidden';
+            loadConfiguration();
+
+            // Switch to Settings tab
+            const settingsTab = document.querySelector('.config-tab[data-tab="settings"]');
+            const allTabs = document.querySelectorAll('.config-tab');
+            const allContents = document.querySelectorAll('.config-tab-content');
+
+            allTabs.forEach(tab => tab.classList.remove('active'));
+            allContents.forEach(content => content.classList.remove('active'));
+
+            settingsTab.classList.add('active');
+            document.querySelector('.config-tab-content[data-tab-content="settings"]').classList.add('active');
+
+            // Scroll to RTSP control section
+            setTimeout(() => {
+                const rtspSection = document.querySelector('.config-section:has(#rtspStartBtn)');
+                if (rtspSection) {
+                    rtspSection.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    // Highlight it briefly
+                    rtspSection.style.transition = 'background-color 0.3s';
+                    rtspSection.style.backgroundColor = 'rgba(59, 130, 246, 0.15)';
+                    setTimeout(() => {
+                        rtspSection.style.backgroundColor = '';
+                    }, 2000);
+                }
+            }, 100);
         }
 
         // Tab switching
@@ -2366,6 +2505,102 @@
             }
         }
 
+        // RTSP Server Control Functions
+        async function checkRTSPStatus() {
+            const statusDiv = document.getElementById('rtspStatus');
+            statusDiv.style.display = 'block';
+            statusDiv.textContent = 'Checking RTSP server status...';
+            statusDiv.style.backgroundColor = '#e3f2fd';
+            statusDiv.style.color = '#1976d2';
+
+            try {
+                const response = await fetch('/rtsp/status');
+                const result = await response.json();
+
+                if (result.status === 'success') {
+                    statusDiv.textContent = result.message;
+                    statusDiv.style.backgroundColor = result.running ? '#c8e6c9' : '#fff3e0';
+                    statusDiv.style.color = result.running ? '#2e7d32' : '#e65100';
+                } else {
+                    statusDiv.textContent = 'Error: ' + result.message;
+                    statusDiv.style.backgroundColor = '#ffcdd2';
+                    statusDiv.style.color = '#c62828';
+                }
+            } catch (error) {
+                statusDiv.textContent = 'Error checking status: ' + error.message;
+                statusDiv.style.backgroundColor = '#ffcdd2';
+                statusDiv.style.color = '#c62828';
+            }
+        }
+
+        async function startRTSPServer() {
+            const startBtn = document.getElementById('rtspStartBtn');
+            const statusDiv = document.getElementById('rtspStatus');
+
+            startBtn.disabled = true;
+            startBtn.textContent = 'Starting...';
+            statusDiv.style.display = 'block';
+            statusDiv.textContent = 'Starting RTSP server on Orin backpack...';
+            statusDiv.style.backgroundColor = '#e3f2fd';
+            statusDiv.style.color = '#1976d2';
+
+            try {
+                const response = await fetch('/rtsp/start', { method: 'POST' });
+                const result = await response.json();
+
+                if (result.status === 'success') {
+                    statusDiv.textContent = result.message + ' - Ready for IR/Depth feeds!';
+                    statusDiv.style.backgroundColor = '#c8e6c9';
+                    statusDiv.style.color = '#2e7d32';
+                } else {
+                    statusDiv.textContent = 'Error: ' + result.message;
+                    statusDiv.style.backgroundColor = '#ffcdd2';
+                    statusDiv.style.color = '#c62828';
+                }
+            } catch (error) {
+                statusDiv.textContent = 'Error starting server: ' + error.message;
+                statusDiv.style.backgroundColor = '#ffcdd2';
+                statusDiv.style.color = '#c62828';
+            } finally {
+                startBtn.disabled = false;
+                startBtn.textContent = 'Start RTSP Server';
+            }
+        }
+
+        async function stopRTSPServer() {
+            const stopBtn = document.getElementById('rtspStopBtn');
+            const statusDiv = document.getElementById('rtspStatus');
+
+            stopBtn.disabled = true;
+            stopBtn.textContent = 'Stopping...';
+            statusDiv.style.display = 'block';
+            statusDiv.textContent = 'Stopping RTSP server on Orin backpack...';
+            statusDiv.style.backgroundColor = '#e3f2fd';
+            statusDiv.style.color = '#1976d2';
+
+            try {
+                const response = await fetch('/rtsp/stop', { method: 'POST' });
+                const result = await response.json();
+
+                if (result.status === 'success') {
+                    statusDiv.textContent = result.message + ' - CPU resources freed!';
+                    statusDiv.style.backgroundColor = '#c8e6c9';
+                    statusDiv.style.color = '#2e7d32';
+                } else {
+                    statusDiv.textContent = 'Error: ' + result.message;
+                    statusDiv.style.backgroundColor = '#ffcdd2';
+                    statusDiv.style.color = '#c62828';
+                }
+            } catch (error) {
+                statusDiv.textContent = 'Error stopping server: ' + error.message;
+                statusDiv.style.backgroundColor = '#ffcdd2';
+                statusDiv.style.color = '#c62828';
+            } finally {
+                stopBtn.disabled = false;
+                stopBtn.textContent = 'Stop RTSP Server';
+            }
+        }
+
         // Save all configuration
         async function saveAllConfig() {
             const apiKey = document.getElementById('openaiApiKey').value.trim();
@@ -2425,6 +2660,14 @@
         configModal.addEventListener('click', function(event) {
             if (event.target === configModal) {
                 closeConfigModal();
+            }
+        });
+
+        // Close RTSP notice modal when clicking outside
+        const rtspNoticeModal = document.getElementById('rtspNoticeModal');
+        rtspNoticeModal.addEventListener('click', function(event) {
+            if (event.target === rtspNoticeModal) {
+                closeRTSPNoticeModal();
             }
         });
 
