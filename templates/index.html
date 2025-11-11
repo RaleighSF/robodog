@@ -286,6 +286,16 @@
             max-width: 100%;
             max-height: 100%;
             border-radius: 4px;
+            display: none;
+        }
+
+        .detection-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
         }
 
         .patrol-overlay {
@@ -1199,6 +1209,7 @@
                 </span>
             </div>
             <img id="videoStream" class="video-stream" src="" alt="Robot patrol video feed will appear here" style="display: none;">
+            <canvas id="detectionOverlay" class="detection-overlay"></canvas>
             <div id="loadingText" class="loading">Waiting for robot patrol unit connection...</div>
 
             <!-- GO2 Robot Control Action Bar -->
@@ -1453,7 +1464,11 @@
         const videoStream = document.getElementById('videoStream');
         const loadingText = document.getElementById('loadingText');
         const status = document.getElementById('status');
+        const detectionCanvas = document.getElementById('detectionOverlay');
+        const detectionCtx = detectionCanvas ? detectionCanvas.getContext('2d') : null;
         const BUTTON_THROTTLE_MS = 3000;
+        let detectionPollHandle = null;
+        let overlayEnabled = false;
 
         function updateStatus(message, type = 'info') {
             status.textContent = message;
@@ -1461,9 +1476,12 @@
         }
 
         function showVideo() {
-            videoStream.src = '/video_feed?' + new Date().getTime();
+            const selectedCamera = cameraSelect ? cameraSelect.value : '';
+            const baseSrc = selectedCamera === 'go2_webrtc' ? '/go2/video_passthrough' : '/video_feed';
+            videoStream.src = `${baseSrc}?${Date.now()}`;
             videoStream.style.display = 'block';
             loadingText.style.display = 'none';
+            resizeDetectionCanvas();
         }
 
         function hideVideo() {
@@ -1472,6 +1490,7 @@
             videoStream.style.display = 'none';
             loadingText.style.display = 'block';
             loadingText.textContent = 'Robot patrol unit offline';
+            clearDetectionOverlay();
         }
 
         function temporarilyDisable(button, duration = BUTTON_THROTTLE_MS) {
@@ -1493,6 +1512,7 @@
 
             // Immediately hide video and clear source to stop stream
             hideVideo();
+            stopDetectionOverlay();
 
             try {
                 const response = await fetch('/stop_detection', {
@@ -1535,6 +1555,8 @@
         // Camera source selection - auto-switch if detection is running
         cameraSelect.addEventListener('change', async () => {
             const source = cameraSelect.value;
+            stopDetectionOverlay();
+            clearDetectionOverlay();
             
             // Show/hide IP input for Unitree robot (direct connection only)
             if (source === 'unitree') {
@@ -1651,6 +1673,7 @@
                     const cameraName = cameraNames[source] || source;
                     updateStatus(`Patrol started with ${cameraName}`, 'success');
                     showVideo();
+                    startDetectionOverlay();
                 } else {
                     updateStatus(`Failed to start patrol: ${startResult.message || 'Unknown error'}`, 'error');
                 }
@@ -2565,6 +2588,126 @@
                 statusEl.textContent = message;
                 statusEl.className = `status ${type}`;
             }
+        }
+
+        function resizeDetectionCanvas() {
+            if (!detectionCanvas || !videoStream) {
+                return;
+            }
+            const newWidth = videoStream.clientWidth || videoStream.naturalWidth || detectionCanvas.width || 640;
+            const newHeight = videoStream.clientHeight || videoStream.naturalHeight || detectionCanvas.height || 480;
+            detectionCanvas.width = newWidth;
+            detectionCanvas.height = newHeight;
+        }
+
+        window.addEventListener('resize', resizeDetectionCanvas);
+        if (videoStream) {
+            videoStream.addEventListener('load', resizeDetectionCanvas);
+            videoStream.addEventListener('loadedmetadata', resizeDetectionCanvas);
+        }
+
+        function startDetectionOverlay() {
+            if (!detectionCanvas || !detectionCtx) {
+                return;
+            }
+            resizeDetectionCanvas();
+            if (detectionPollHandle) {
+                return;
+            }
+            overlayEnabled = true;
+            detectionPollHandle = setInterval(fetchDetections, 350);
+        }
+
+        function stopDetectionOverlay() {
+            if (detectionPollHandle) {
+                clearInterval(detectionPollHandle);
+                detectionPollHandle = null;
+            }
+            overlayEnabled = false;
+            clearDetectionOverlay();
+        }
+
+        function clearDetectionOverlay() {
+            if (detectionCtx && detectionCanvas) {
+                detectionCtx.clearRect(0, 0, detectionCanvas.width, detectionCanvas.height);
+            }
+        }
+
+        async function fetchDetections() {
+            try {
+                const response = await fetch(`/detections/latest?ts=${Date.now()}`, { cache: 'no-store' });
+                if (!response.ok) {
+                    return;
+                }
+                const data = await response.json();
+                drawDetections(data);
+            } catch (error) {
+                // Occasional network hiccups are fine; keep polling
+            }
+        }
+
+        function drawDetections(data) {
+        if (!detectionCtx || !detectionCanvas) {
+            return;
+        }
+
+        if (!overlayEnabled) {
+            clearDetectionOverlay();
+            return;
+        }
+
+        detectionCtx.clearRect(0, 0, detectionCanvas.width, detectionCanvas.height);
+
+        if (!data || !data.detections || !data.detections.length) {
+            return;
+        }
+
+             // Drop stale detections or mismatched camera sources
+            const nowSec = Date.now() / 1000;
+            if ((data.timestamp && nowSec - data.timestamp > 2) ||
+                (data.camera_source && cameraSelect && data.camera_source !== cameraSelect.value)) {
+                return;
+            }
+
+            resizeDetectionCanvas();
+
+            const frameWidth = data.frame_width || videoStream.naturalWidth || detectionCanvas.width;
+            const frameHeight = data.frame_height || videoStream.naturalHeight || detectionCanvas.height;
+            if (!frameWidth || !frameHeight) {
+                return;
+            }
+
+            const scaleX = detectionCanvas.width / frameWidth;
+            const scaleY = detectionCanvas.height / frameHeight;
+
+            detectionCtx.lineWidth = 2;
+            detectionCtx.font = '14px Inter, sans-serif';
+            detectionCtx.textBaseline = 'top';
+
+            data.detections.forEach(det => {
+                if (!det || !det.bbox) {
+                    return;
+                }
+                const [x, y, w, h] = det.bbox;
+                const scaledX = x * scaleX;
+                const scaledY = y * scaleY;
+                const scaledW = w * scaleX;
+                const scaledH = h * scaleY;
+
+                detectionCtx.strokeStyle = '#00ff9d';
+                detectionCtx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+                detectionCtx.strokeRect(scaledX, scaledY, scaledW, scaledH);
+
+                const label = `${det.class_name || 'object'} ${(det.confidence || 0).toFixed(2)}`;
+                const metrics = detectionCtx.measureText(label);
+                const padding = 4;
+                const labelWidth = metrics.width + padding * 2;
+                const labelHeight = 18;
+
+                detectionCtx.fillRect(scaledX, scaledY - labelHeight, labelWidth, labelHeight);
+                detectionCtx.fillStyle = '#00ff9d';
+                detectionCtx.fillText(label, scaledX + padding, scaledY - labelHeight + padding / 2);
+            });
         }
     </script>
 </body>

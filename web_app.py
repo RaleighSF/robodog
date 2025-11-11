@@ -4,6 +4,7 @@ import time
 import os
 import atexit
 import signal
+import queue
 from flask import Flask, render_template, Response, jsonify, request, send_file
 from hybrid_detector import HybridDetector
 from camera import CameraManager
@@ -29,6 +30,11 @@ def cleanup_resources():
     """Clean up camera and detector resources"""
     print("🧹 Cleaning up resources...")
     camera_manager.cleanup()
+    try:
+        if 'web_app' in globals():
+            web_app.shutdown_detection_worker()
+    except Exception:
+        pass
     print("✅ Resource cleanup completed")
 
 # Register cleanup functions
@@ -61,6 +67,92 @@ class WebApp:
         self._last_start_request = 0.0
         self._last_stop_request = 0.0
         self._throttle_window = 3.0  # seconds between successive start/stop calls
+        # Asynchronous detection worker
+        self._detection_queue = queue.Queue(maxsize=2)
+        self._detection_thread = None
+        self._detection_stop_event = threading.Event()
+        self._last_detection_enqueue_ts = 0.0
+        self._last_detection_frame_size = (0, 0)
+
+    def _ensure_detection_worker(self):
+        """Make sure the background detection worker is running."""
+        if self._detection_thread and self._detection_thread.is_alive():
+            return
+        self._detection_stop_event.clear()
+        self._detection_thread = threading.Thread(
+            target=self._detection_worker_loop,
+            name="DetectionWorker",
+            daemon=True
+        )
+        self._detection_thread.start()
+
+    def _detection_worker_loop(self):
+        """Background worker that runs detection so streaming thread stays responsive."""
+        while not self._detection_stop_event.is_set():
+            try:
+                frame = self._detection_queue.get(timeout=0.1)
+            except queue.Empty:
+                continue
+
+            if frame is None:
+                self._detection_queue.task_done()
+                break
+
+            try:
+                if not self._config_manager:
+                    from config import get_config
+                    self._config_manager = get_config()
+
+                detection_frame = frame
+                scale_factor = 1.0
+                height, width = frame.shape[:2]
+                if width > self._max_detection_width:
+                    scale_factor = self._max_detection_width / width
+                    new_size = (self._max_detection_width, int(height * scale_factor))
+                    detection_frame = cv2.resize(frame, new_size, interpolation=cv2.INTER_AREA)
+
+                detections = detector.detect(detection_frame)
+
+                if detections and scale_factor != 1.0:
+                    inv_scale = 1.0 / scale_factor
+                    for detection in detections:
+                        x, y, w, h = detection.bbox
+                        detection.bbox = (
+                            int(x * inv_scale),
+                            int(y * inv_scale),
+                            int(w * inv_scale),
+                            int(h * inv_scale),
+                        )
+
+                self._last_detections = detections
+                self._last_detection_ts = time.time()
+                self._last_detection_frame_size = (frame.shape[1], frame.shape[0])
+
+                if self._config_manager.is_alert_logging_enabled():
+                    target_classes = self._config_manager.get_classes()
+                    if not target_classes:
+                        target_classes = list(
+                            set(d['class_name'] if isinstance(d, dict) else d.class_name for d in detections)
+                        )
+                    logged = detection_logger.log_detections(frame, detections, target_classes)
+                    if logged and detection_logger.detection_logs:
+                        detection_logger.detection_logs[-1]['camera_source'] = camera_manager.camera_source
+
+            except Exception as worker_error:
+                print(f"[DetectionWorker] Error: {worker_error}")
+            finally:
+                self._detection_queue.task_done()
+
+    def shutdown_detection_worker(self):
+        """Stop the detection worker thread gracefully."""
+        self._detection_stop_event.set()
+        try:
+            self._detection_queue.put_nowait(None)
+        except queue.Full:
+            pass
+        if self._detection_thread:
+            self._detection_thread.join(timeout=1.0)
+            self._detection_thread = None
 
     def generate_frames(self):
         """Generate video frames for streaming with optimized performance"""
@@ -79,7 +171,7 @@ class WebApp:
         # Load config once at start instead of every frame
         from config import get_config
         self._config_manager = get_config()
-        alert_logging_enabled = self._config_manager.is_alert_logging_enabled()
+        self._ensure_detection_worker()
 
         # JPEG encoding parameters: quality 75 provides good balance of quality/size/speed
         # Lower quality = smaller files = faster transmission = less browser lag
@@ -93,52 +185,15 @@ class WebApp:
                         frame_count += 1
 
                         now = time.time()
-                        run_detection = (now - self._last_detection_ts) >= self._detection_interval
-                        detections = self._last_detections
+                        if ((now - self._last_detection_enqueue_ts) >= self._detection_interval
+                                and not self._detection_queue.full()):
+                            self._detection_queue.put(frame.copy())
+                            self._last_detection_enqueue_ts = now
 
-                        if run_detection:
-                            # Optionally downscale frame before detection to lower GPU/CPU usage
-                            detection_frame = frame
-                            scale_factor = 1.0
-                            height, width = frame.shape[:2]
-                            if width > self._max_detection_width:
-                                scale_factor = self._max_detection_width / width
-                                new_size = (self._max_detection_width, int(height * scale_factor))
-                                detection_frame = cv2.resize(frame, new_size, interpolation=cv2.INTER_AREA)
+                        detections = self._last_detections or []
 
-                            detections = detector.detect(detection_frame)
-
-                            # Rescale detections back to original frame coordinates if resized
-                            if detections and scale_factor != 1.0:
-                                inv_scale = 1.0 / scale_factor
-                                for detection in detections:
-                                    x, y, w, h = detection.bbox
-                                    detection.bbox = (
-                                        int(x * inv_scale),
-                                        int(y * inv_scale),
-                                        int(w * inv_scale),
-                                        int(h * inv_scale),
-                                    )
-
-                            self._last_detections = detections
-                            self._last_detection_ts = now
-
-                        # Log detections (only if alert logging is enabled - check cached value)
-                        logged = False
-                        if run_detection and alert_logging_enabled:
-                            # Get configured classes for logging
-                            target_classes = self._config_manager.get_classes()
-                            # If no classes configured, fall back to all detected classes
-                            if not target_classes:
-                                target_classes = list(set(d['class_name'] if isinstance(d, dict) else d.class_name for d in detections))
-                            logged = detection_logger.log_detections(frame, detections, target_classes)
-
-                        # Update camera source in the last log entry if a new log was created
-                        if logged and detection_logger.detection_logs:
-                            detection_logger.detection_logs[-1]['camera_source'] = camera_manager.camera_source
-
-                        # Draw detections on frame
-                        annotated_frame = detector.draw_detections(frame, detections)
+                        # Draw detections on frame only if we have results to overlay
+                        annotated_frame = detector.draw_detections(frame, detections) if detections else frame
 
                         # Optionally resize for web display (reduces bandwidth, improves browser performance)
                         # Scale to max width of 1280px if larger (maintains aspect ratio)
@@ -600,6 +655,44 @@ def go2_battery():
         logger.error(f"Failed to fetch GO2 battery: {e}")
         return jsonify({'connected': False, 'soc': None, 'error': str(e)}), 503
 
+@app.route('/go2/video_passthrough')
+def go2_video_passthrough():
+    """Zero-copy proxy that relays the GO2 MJPEG stream for low-latency viewing."""
+    def proxy():
+        try:
+            with requests.get('http://192.168.50.207:5001/video_feed', stream=True, timeout=(3, None)) as resp:
+                resp.raise_for_status()
+                for chunk in resp.iter_content(chunk_size=8192):
+                    if chunk:
+                        yield chunk
+        except Exception as err:
+            logger.error(f"GO2 passthrough error: {err}")
+    response = Response(proxy(), mimetype='multipart/x-mixed-replace; boundary=frame')
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
+
+@app.route('/detections/latest')
+def latest_detections():
+    """Expose the freshest detection metadata for the UI overlay."""
+    detections_payload = []
+    for detection in web_app._last_detections or []:
+        detections_payload.append({
+            'bbox': detection.bbox,
+            'class_id': detection.class_id,
+            'class_name': detection.class_name,
+            'confidence': detection.confidence
+        })
+    width, height = web_app._last_detection_frame_size
+    return jsonify({
+        'timestamp': web_app._last_detection_ts,
+        'detections': detections_payload,
+        'frame_width': width,
+        'frame_height': height,
+        'camera_source': camera_manager.camera_source
+    })
+
 @app.route('/go2/command', methods=['POST'])
 def go2_command():
     """Proxy endpoint for sending GO2 robot commands"""
@@ -627,6 +720,31 @@ def go2_command():
 
     except Exception as e:
         logger.error(f"Failed to send GO2 command: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 503
+
+@app.route('/go2/motion_mode', methods=['POST'])
+def go2_motion_mode():
+    """Proxy endpoint to adjust the GO2 motion mode (e.g., set to normal)."""
+    try:
+        data = request.get_json() or {}
+        mode = data.get('mode', 'normal')
+
+        logger.info(f"Setting GO2 motion mode to: {mode}")
+
+        response = requests.post('http://192.168.50.207:5001/motion_mode',
+                                 json={'mode': mode},
+                                 timeout=5)
+
+        if response.status_code == 200:
+            result = response.json()
+            logger.info(f"GO2 motion mode '{mode}' result: {result}")
+            return jsonify(result)
+        else:
+            logger.error(f"GO2 motion mode '{mode}' failed with status {response.status_code}")
+            return jsonify({'success': False, 'message': f'Mode switch failed with status {response.status_code}'}), response.status_code
+
+    except Exception as e:
+        logger.error(f"Failed to set GO2 motion mode: {e}")
         return jsonify({'success': False, 'message': str(e)}), 503
 
 @app.route('/switch_model', methods=['POST'])
