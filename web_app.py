@@ -219,14 +219,14 @@ class WebApp:
         while True:
             try:
                 if self.is_running and camera_manager.is_camera_available():
-                        frame = camera_manager.get_frame()
-                        if frame is not None:
-                            frame_count += 1
+                    frame = camera_manager.get_frame()
+                    if frame is not None:
+                        frame_count += 1
 
-                            detections = self._last_detections or []
+                        detections = self._last_detections or []
 
-                            # Draw detections on frame only if we have results to overlay
-                            annotated_frame = detector.draw_detections(frame, detections) if detections else frame
+                        # Draw detections on frame only if we have results to overlay
+                        annotated_frame = detector.draw_detections(frame, detections) if detections else frame
 
                         # Optionally resize for web display (reduces bandwidth, improves browser performance)
                         # Scale to max width of 1280px if larger (maintains aspect ratio)
@@ -538,6 +538,7 @@ def start_detection():
 
         if camera_started:
             web_app.is_running = True
+            web_app._ensure_detection_worker()
             web_app._start_detection_feeder()
             print(f"✅ Detection started successfully with {camera_manager.camera_source}")
             return jsonify({'status': 'success', 'message': 'Detection started'})
@@ -569,6 +570,7 @@ def stop_detection():
         # Set state first to stop loops
         web_app.is_running = False
         web_app._stop_detection_feeder()
+        web_app.shutdown_detection_worker()
 
         # Stop camera with proper cleanup
         camera_manager.stop()
