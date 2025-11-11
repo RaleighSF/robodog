@@ -1,0 +1,36 @@
+detection:
+  alert_logging: true
+  detection_cooldown: 2.0
+  log_detections: true
+  save_images: false
+  save_thumbnails: false
+go2:
+  enabled: true
+  robot_ip: 192.168.50.75
+  service_url: http://192.168.50.207:5001
+rtsp:
+  buffer_size: 1
+  max_reconnect_attempts: 10
+  reconnect_interval: 5
+  timeout: 30000
+vision:
+  classes:
+  - ball
+  conf: 0.25
+  detection_mode: text
+  detector: yoloe
+  device: auto
+  engine_path: ''
+  imgsz: 640
+  iou: 0.45
+  max_det: 100
+  model_path: yolo11s.pt
+  nlp_enabled: false
+  nlp_prompt: Find all electronics
+  openai_api_key: ""
+  rtsp_tcp: true
+  source: rtsp://192.168.50.207:8554/color
+  visual_prompts:
+  - class_name: ups
+    filename: prompt_1760912757_c3fdbe1f.png
+    path: visual_prompts/prompt_1760912757_c3fdbe1f.png
