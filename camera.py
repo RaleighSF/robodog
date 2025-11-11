@@ -473,25 +473,38 @@ class CameraManager:
         consecutive_failures = 0
         max_consecutive_failures = 15
         bytes_buffer = b''
+        frame_count = 0
 
+        print(f"[GO2 Capture] Starting capture from {video_url}")
         try:
             # Open streaming connection with optimized chunk size
             response = requests.get(video_url, stream=True, timeout=(5, None))
+            print(f"[GO2 Capture] Connected, status code: {response.status_code}")
 
             if response.status_code != 200:
+                print(f"[GO2 Capture] Bad status code, stopping")
                 self.go2_stream_active = False
                 return
 
             # Parse MJPEG stream with larger chunks for better performance
+            chunk_count = 0
             for chunk in response.iter_content(chunk_size=16384):  # 16KB chunks
                 if not self.is_running or not self.go2_stream_active:
+                    print(f"[GO2 Capture] Stopping: is_running={self.is_running}, stream_active={self.go2_stream_active}")
                     break
 
                 bytes_buffer += chunk
+                chunk_count += 1
+
+                if chunk_count <= 5 or chunk_count % 100 == 0:
+                    print(f"[GO2 Capture] Chunk {chunk_count}: size={len(chunk)}, buffer={len(bytes_buffer)} bytes")
 
                 # Look for JPEG boundaries
                 start = bytes_buffer.find(b'\xff\xd8')
                 end = bytes_buffer.find(b'\xff\xd9')
+
+                if chunk_count <= 5:
+                    print(f"[GO2 Capture] JPEG markers: start={start}, end={end}")
 
                 if start != -1 and end != -1 and end > start:
                     jpg = bytes_buffer[start:end+2]
@@ -505,22 +518,36 @@ class CameraManager:
                             with self.frame_lock:
                                 self.current_frame = frame  # No copy needed - frame is already new
                             consecutive_failures = 0
+                            frame_count += 1
+                            if frame_count == 1 or frame_count % 100 == 0:
+                                print(f"[GO2 Capture] Captured {frame_count} frames")
                         else:
                             consecutive_failures += 1
+                            if consecutive_failures <= 5:
+                                print(f"[GO2 Capture] Frame decode returned None (failures: {consecutive_failures})")
 
-                    except:
+                    except Exception as e:
                         consecutive_failures += 1
+                        if consecutive_failures <= 5:
+                            print(f"[GO2 Capture] Frame decode exception: {e}")
 
                     if consecutive_failures >= max_consecutive_failures:
+                        print(f"[GO2 Capture] Too many consecutive failures ({consecutive_failures}), exiting")
                         break
 
                 # Keep buffer size reasonable to avoid memory growth
-                if len(bytes_buffer) > 100000:  # 100KB max buffer
-                    bytes_buffer = bytes_buffer[-50000:]  # Keep last 50KB
+                # Increased buffer size for large JPEG frames (GO2 sends high-res frames)
+                if len(bytes_buffer) > 500000:  # 500KB max buffer
+                    # Only trim if we haven't found a start marker yet
+                    if start == -1:
+                        bytes_buffer = bytes_buffer[-250000:]  # Keep last 250KB
+                    elif chunk_count % 50 == 0:
+                        print(f"[GO2 Capture] Warning: Buffer at {len(bytes_buffer)} bytes, no end marker yet")
 
-        except:
-            pass
+        except Exception as e:
+            print(f"[GO2 Capture] Exception in capture loop: {e}")
         finally:
+            print(f"[GO2 Capture] Exiting - captured {frame_count} total frames")
             self.go2_stream_active = False
 
     def _start_http_mjpeg_stream(self, video_url: str) -> bool:

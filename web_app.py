@@ -107,7 +107,15 @@ class WebApp:
             self._feeder_thread = None
 
     def _detection_feeder_loop(self):
+        frame_count = 0
+        none_frame_count = 0
+        loop_iterations = 0
+        print(f"[DetectionFeeder] Starting feeder loop...")
         while not self._feeder_stop_event.is_set():
+            loop_iterations += 1
+            if loop_iterations <= 5:  # Log first 5 iterations for debugging
+                print(f"[DetectionFeeder] Iteration {loop_iterations}: is_running={self.is_running}, camera_available={camera_manager.is_camera_available()}")
+
             if self.is_running and camera_manager.is_camera_available():
                 frame = camera_manager.get_frame()
                 if frame is not None:
@@ -118,15 +126,25 @@ class WebApp:
                             self._detection_queue.put(frame.copy(), timeout=0.01)
                             self._last_detection_enqueue_ts = now
                             self._last_detection_frame_size = (frame.shape[1], frame.shape[0])
+                            frame_count += 1
+                            if frame_count == 1 or frame_count % 20 == 0:  # Log first frame and every 20 frames
+                                print(f"[DetectionFeeder] Enqueued {frame_count} frames for detection")
                         except queue.Full:
                             pass
                 else:
+                    none_frame_count += 1
+                    if none_frame_count <= 10 or none_frame_count % 100 == 0:  # Log first 10 and every 100
+                        print(f"[DetectionFeeder] Frame is None (count: {none_frame_count})")
                     time.sleep(0.01)
             else:
+                if loop_iterations <= 5:
+                    print(f"[DetectionFeeder] Not running or camera not available, sleeping...")
                 time.sleep(0.05)
+        print(f"[DetectionFeeder] Exiting - enqueued {frame_count} total frames, got {none_frame_count} None frames, {loop_iterations} iterations")
 
     def _detection_worker_loop(self):
         """Background worker that runs detection so streaming thread stays responsive."""
+        detection_count = 0
         while not self._detection_stop_event.is_set():
             try:
                 frame = self._detection_queue.get(timeout=0.1)
@@ -166,6 +184,9 @@ class WebApp:
                 self._last_detections = detections
                 self._last_detection_ts = time.time()
                 self._last_detection_frame_size = (frame.shape[1], frame.shape[0])
+                detection_count += 1
+                if detection_count % 20 == 0:  # Log every 20 detections
+                    print(f"[DetectionWorker] Processed {detection_count} frames, latest: {len(detections)} objects")
 
                 if self._config_manager.is_alert_logging_enabled():
                     target_classes = self._config_manager.get_classes()

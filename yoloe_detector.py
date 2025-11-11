@@ -618,6 +618,12 @@ class YOLOEDetector:
     def _text_prompted_detection(self, frame: np.ndarray, config: Dict) -> Any:
         """Perform text-prompted detection restricted to specified classes"""
 
+        if not self.text_prompts:
+            if not hasattr(self, '_empty_text_logged'):
+                print("⚠️ Text prompt mode active but no classes provided; falling back to open detection")
+                self._empty_text_logged = True
+            return self._open_detection(frame, config)
+
         # Cache class indices to avoid repeated lookups (huge performance boost)
         if not hasattr(self, '_cached_class_indices') or self._cached_class_prompts != tuple(self.text_prompts):
             print(f"🔍 Mapping text prompts to class indices: {self.text_prompts}")
