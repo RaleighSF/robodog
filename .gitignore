@@ -1,0 +1,3 @@
+# Large pretrained weights handled outside git
+yolov4.weights
+path/to/yolov4.weights
