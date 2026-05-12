@@ -1413,9 +1413,10 @@ def _init_telemetry():
     logger.info("[Telemetry] Initialized and running")
 
 
+_init_telemetry()
+
 if __name__ == '__main__':
     print("Starting Computer Vision Object Detector Web App")
     print("Open your browser and go to: http://0.0.0.0:8000")
-    _init_telemetry()
     # Debug mode disabled to prevent double camera initialization (Flask spawns child process in debug mode)
     app.run(debug=False, host='0.0.0.0', port=8000, threaded=True, use_reloader=False)
