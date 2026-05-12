@@ -6,13 +6,28 @@ detection:
   save_thumbnails: false
 go2:
   enabled: true
-  robot_ip: 192.168.50.75
+  robot_ip: 192.168.123.161
   service_url: http://192.168.50.207:5001
 rtsp:
   buffer_size: 1
   max_reconnect_attempts: 10
   reconnect_interval: 5
   timeout: 30000
+telemetry:
+  enabled: true
+  deployment_id: watchdog-snowflake-summit-2026
+  backend: s3
+  s3_bucket: watchdog-telemetry
+  s3_prefix: v1
+  s3_endpoint_url: null
+  s3_region: us-east-1
+  # Credentials loaded from AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY env vars
+  heartbeat_interval_seconds: 30
+  flush_interval_seconds: 10
+  upload_images: true
+  device_id: watchdog-edge-01
+  device_type: nvidia_agx_xavier
+  local_export_dir: telemetry_export
 vision:
   classes:
   - ball
