@@ -257,7 +257,7 @@ async def establish_connection_with_retry():
     while True:
         attempt += 1
         try:
-            conn = UnitreeWebRTCConnection(WebRTCConnectionMethod.LocalSTA, ip='192.168.50.75')
+            conn = UnitreeWebRTCConnection(WebRTCConnectionMethod.LocalSTA, ip='192.168.123.161')
             await conn.connect()
             battery_state['connected'] = True
             if attempt > 1:

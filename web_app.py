@@ -9,6 +9,7 @@ from flask import Flask, render_template, Response, jsonify, request, send_file
 from hybrid_detector import HybridDetector
 from camera import CameraManager
 from detection_logger import DetectionLogger
+from telemetry_exporter import TelemetryManager, init_telemetry, get_telemetry
 import asyncio
 import threading
 import json
@@ -75,6 +76,12 @@ class WebApp:
         self._last_detection_frame_size = (0, 0)
         self._feeder_thread = None
         self._feeder_stop_event = threading.Event()
+        # Cached battery/robot state for telemetry (refreshed by heartbeat)
+        self._cached_robot_state = {
+            'soc': None, 'voltage': None,
+            'current': None, 'connected': False,
+            'motion_mode': 'normal',
+        }
 
     def _ensure_detection_worker(self):
         """Make sure the background detection worker is running."""
@@ -197,6 +204,21 @@ class WebApp:
                     logged = detection_logger.log_detections(frame, detections, target_classes)
                     if logged and detection_logger.detection_logs:
                         detection_logger.detection_logs[-1]['camera_source'] = camera_manager.camera_source
+
+                # Emit telemetry for every detection frame (TelemetryManager handles its own throttling)
+                telemetry = get_telemetry()
+                if telemetry and telemetry.enabled and detections:
+                    try:
+                        telemetry.emit_detection(
+                            detections=detections,
+                            frame=frame,
+                            robot_state=self._cached_robot_state,
+                            vision_config=self._config_manager.get_vision_config(),
+                            camera_source=camera_manager.camera_source,
+                            frame_size=self._last_detection_frame_size,
+                        )
+                    except Exception as telem_err:
+                        logger.debug(f"[Telemetry] Detection emit error: {telem_err}")
 
             except Exception as worker_error:
                 print(f"[DetectionWorker] Error: {worker_error}")
@@ -771,6 +793,17 @@ def go2_command():
         if response.status_code == 200:
             result = response.json()
             logger.info(f"GO2 command '{command}' result: {result}")
+            telemetry = get_telemetry()
+            if telemetry and telemetry.enabled:
+                try:
+                    telemetry.emit_command(
+                        command=command,
+                        success=result.get('success', False),
+                        message=result.get('message', ''),
+                        robot_state=web_app._cached_robot_state,
+                    )
+                except Exception:
+                    pass
             return jsonify(result)
         else:
             logger.error(f"GO2 command '{command}' failed with status {response.status_code}")
@@ -868,6 +901,14 @@ def clear_detection_logs():
             'status': 'error',
             'message': str(e)
         })
+
+@app.route('/api/telemetry/stats')
+def telemetry_stats():
+    """Return telemetry exporter statistics."""
+    telemetry = get_telemetry()
+    if not telemetry:
+        return jsonify({'enabled': False})
+    return jsonify(telemetry.get_stats())
 
 @app.route('/thumbnail/<filename>')
 def serve_thumbnail(filename):
@@ -1321,8 +1362,60 @@ def rtsp_stop():
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
+def _refresh_robot_state():
+    """Fetch battery/status from go2_service and cache for telemetry."""
+    try:
+        resp = requests.get('http://192.168.50.207:5001/battery', timeout=2)
+        if resp.status_code == 200:
+            data = resp.json()
+            web_app._cached_robot_state.update({
+                'soc': data.get('soc'),
+                'voltage': data.get('voltage'),
+                'current': data.get('current'),
+                'connected': data.get('connected', False),
+            })
+    except Exception:
+        pass
+
+
+def _build_heartbeat_event():
+    """Collect system state for periodic heartbeat telemetry."""
+    import psutil
+    _refresh_robot_state()
+    from config import get_config
+    cfg = get_config()
+    telemetry = get_telemetry()
+    if not telemetry or not telemetry.enabled:
+        return None
+    telemetry.emit_heartbeat(
+        robot_state=web_app._cached_robot_state,
+        system_health={
+            'cpu_percent': psutil.cpu_percent(interval=0.5),
+            'memory_percent': psutil.virtual_memory().percent,
+            'disk_percent': psutil.disk_usage('/').percent,
+        },
+        vision_config=cfg.get_vision_config(),
+    )
+
+
+def _init_telemetry():
+    """Initialize and start the telemetry subsystem if enabled."""
+    from config import get_config
+    cfg = get_config()
+    telemetry_cfg = cfg.get_telemetry_config()
+    if not telemetry_cfg.get('enabled', False):
+        logger.info("[Telemetry] Disabled in config — skipping init")
+        return
+    tm = init_telemetry(cfg.config)
+    tm.start()
+    tm.start_heartbeat(_build_heartbeat_event)
+    atexit.register(tm.stop)
+    logger.info("[Telemetry] Initialized and running")
+
+
 if __name__ == '__main__':
     print("Starting Computer Vision Object Detector Web App")
-    print("Open your browser and go to: http://127.0.0.1:8000")
+    print("Open your browser and go to: http://0.0.0.0:8000")
+    _init_telemetry()
     # Debug mode disabled to prevent double camera initialization (Flask spawns child process in debug mode)
-    app.run(debug=False, host='127.0.0.1', port=8000, threaded=True, use_reloader=False)
+    app.run(debug=False, host='0.0.0.0', port=8000, threaded=True, use_reloader=False)

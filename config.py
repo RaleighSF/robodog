@@ -47,6 +47,24 @@ class VisionConfig:
                 "save_thumbnails": True,
                 "log_detections": True,
                 "detection_cooldown": 2.0  # seconds between alerts
+            },
+            "telemetry": {
+                "enabled": False,
+                "deployment_id": "watchdog-demo",
+                "backend": "local",
+                "s3_bucket": "watchdog-telemetry",
+                "s3_prefix": "v1",
+                "s3_endpoint_url": None,
+                "s3_region": "us-east-1",
+                "heartbeat_interval_seconds": 30,
+                "flush_interval_seconds": 10,
+                "max_buffer_size": 100,
+                "upload_images": True,
+                "image_max_width": 960,
+                "thumbnail_max_width": 320,
+                "device_id": "watchdog-edge-01",
+                "device_type": "nvidia_agx_xavier",
+                "local_export_dir": "telemetry_export"
             }
         }
     
@@ -318,6 +336,19 @@ class VisionConfig:
     def disable_nlp(self):
         """Disable NLP-based class mapping"""
         self.config["vision"]["nlp_enabled"] = False
+        self.save_config()
+
+    def get_telemetry_config(self) -> Dict[str, Any]:
+        """Get telemetry export configuration"""
+        return self.config.get("telemetry", {})
+
+    def is_telemetry_enabled(self) -> bool:
+        return self.config.get("telemetry", {}).get("enabled", False)
+
+    def set_telemetry_enabled(self, enabled: bool):
+        if "telemetry" not in self.config:
+            self.config["telemetry"] = {}
+        self.config["telemetry"]["enabled"] = enabled
         self.save_config()
 
 # Global configuration instance
