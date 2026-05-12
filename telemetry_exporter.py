@@ -514,8 +514,9 @@ class TelemetryManager:
         with self._lock:
             self._buffer.append(event)
             self._events_emitted += 1
-        if self._events_emitted == 1 or self._events_emitted % 50 == 0:
-            logger.info(f"[Telemetry] Events emitted: {self._events_emitted}")
+            count = self._events_emitted
+        if count == 1 or count % 50 == 0:
+            logger.info(f"[Telemetry] Events emitted: {count}")
 
     # -- Background loops ----------------------------------------------------
 

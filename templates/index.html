@@ -8,6 +8,7 @@
     <style>
         :root {
             /* NTT DATA Brand Colors */
+            --brand-500: #1a8fd1;       /* Brand medium blue */
             --brand-600: #0072BB;       /* Primary NTT DATA Blue */
             --brand-700: #005FA0;       /* Hover/pressed state */
             --brand-50: #E6F2FA;        /* Subtle tints, cards, focus */
@@ -1177,7 +1178,7 @@
                         </select>
                     </div>                    
                     <div id="robotIpGroup" class="ip-control hidden">
-                        <input type="text" id="robotIpInput" class="header-input" value="192.168.87.25" placeholder="Robot IP">
+                        <input type="text" id="robotIpInput" class="header-input" value="192.168.123.161" placeholder="Robot IP">
                     </div>
 
                     <div class="detection-mode-indicator">
@@ -1542,7 +1543,11 @@
         function showVideo() {
             const selectedCamera = cameraSelect ? cameraSelect.value : '';
             const baseSrc = selectedCamera === 'go2_webrtc' ? '/go2/video_passthrough' : '/video_feed';
-            videoStream.src = `${baseSrc}?${Date.now()}`;
+            // Only set src if it's empty or doesn't match the current base path
+            // Avoids tearing down an active MJPEG stream on every status poll
+            if (!videoStream.src || !videoStream.src.includes(baseSrc)) {
+                videoStream.src = `${baseSrc}?${Date.now()}`;
+            }
             videoStream.style.display = 'block';
             loadingText.style.display = 'none';
             resizeDetectionCanvas();
@@ -1774,24 +1779,27 @@
         });
 
         // Check status periodically (optimized interval for better performance)
-        setInterval(async () => {
-            try {
-                const response = await fetch('/status');
-                const statusData = await response.json();
+        function statusPollFn() {
+            (async () => {
+                try {
+                    const response = await fetch('/status');
+                    const statusData = await response.json();
 
-                if (statusData.is_running && statusData.camera_available) {
-                    if (videoStream.style.display !== 'block') {
-                        showVideo();
+                    if (statusData.is_running && statusData.camera_available) {
+                        if (videoStream.style.display !== 'block') {
+                            showVideo();
+                        }
+                    } else if (!statusData.is_running) {
+                        if (videoStream.style.display === 'block') {
+                            hideVideo();
+                        }
                     }
-                } else if (!statusData.is_running) {
-                    if (videoStream.style.display === 'block') {
-                        hideVideo();
-                    }
+                } catch (error) {
+                    console.error('Status check failed:', error);
                 }
-            } catch (error) {
-                console.error('Status check failed:', error);
-            }
-        }, 5000);  // Increased from 2s to 5s for better performance
+            })();
+        }
+        let _statusPollHandle = setInterval(statusPollFn, 5000);
 
         // Detection Log Functions
         const refreshLogBtn = document.getElementById('refreshLogBtn');
@@ -1869,15 +1877,29 @@
         clearLogBtn.addEventListener('click', clearLog);
 
         // Auto-refresh log when patrol is running (optimized for performance)
-        setInterval(() => {
+        function logPollFn() {
             if (document.getElementById('videoStream').style.display === 'block') {
                 refreshLog();
             }
-        }, 5000);  // Increased from 3s to 5s for better performance
+        }
+        let _logPollHandle = setInterval(logPollFn, 5000);
 
         // Initial log load
         refreshLog();
-        
+
+        // Pause/resume polling when tab visibility changes
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                clearInterval(_statusPollHandle);
+                clearInterval(_logPollHandle);
+                _statusPollHandle = null;
+                _logPollHandle = null;
+            } else {
+                if (!_statusPollHandle) _statusPollHandle = setInterval(statusPollFn, 5000);
+                if (!_logPollHandle) _logPollHandle = setInterval(logPollFn, 5000);
+            }
+        });
+
         // Initialize camera source on page load with fallback logic
         async function initializeCameraSource() {
             const initialSource = cameraSelect.value;
@@ -2876,7 +2898,10 @@
             }
         }
 
+        let _detectionFetchInFlight = false;
         async function fetchDetections() {
+            if (_detectionFetchInFlight) return;
+            _detectionFetchInFlight = true;
             try {
                 const response = await fetch(`/detections/latest?ts=${Date.now()}`, { cache: 'no-store' });
                 if (!response.ok) {
@@ -2886,6 +2911,8 @@
                 drawDetections(data);
             } catch (error) {
                 // Occasional network hiccups are fine; keep polling
+            } finally {
+                _detectionFetchInFlight = false;
             }
         }
 
@@ -2911,8 +2938,6 @@
                 (data.camera_source && cameraSelect && data.camera_source !== cameraSelect.value)) {
                 return;
             }
-
-            resizeDetectionCanvas();
 
             const frameWidth = data.frame_width || videoStream.naturalWidth || detectionCanvas.width;
             const frameHeight = data.frame_height || videoStream.naturalHeight || detectionCanvas.height;

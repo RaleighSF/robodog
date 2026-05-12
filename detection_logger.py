@@ -2,6 +2,8 @@ import cv2
 import os
 import time
 import json
+import queue
+import threading
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 import numpy as np
@@ -14,14 +16,20 @@ class DetectionLogger:
         self.last_detection_time = 0
         self.detection_logs = []
         self.max_logs = 100  # Keep only the last 100 log entries
-        
+        self._log_counter = 0
+
         # Create directories
         os.makedirs(self.log_dir, exist_ok=True)
         os.makedirs(os.path.join(self.log_dir, "thumbnails"), exist_ok=True)
         os.makedirs(os.path.join(self.log_dir, "images"), exist_ok=True)
-        
+
         # Load existing logs
         self._load_logs()
+
+        # Background I/O writer
+        self._io_queue: queue.Queue = queue.Queue()
+        self._io_thread = threading.Thread(target=self._io_worker, daemon=True)
+        self._io_thread.start()
         
     def _load_logs(self):
         """Load existing logs from file"""
@@ -33,6 +41,26 @@ class DetectionLogger:
         except Exception as e:
             print(f"Error loading logs: {e}")
             self.detection_logs = []
+        if self.detection_logs:
+            self._log_counter = max(e["id"] for e in self.detection_logs) + 1
+        else:
+            self._log_counter = 1
+
+    def _io_worker(self):
+        """Background thread that processes I/O work items"""
+        while True:
+            item = self._io_queue.get()
+            try:
+                kind = item[0]
+                if kind == "thumbnail":
+                    _, frame, timestamp_str = item
+                    self._save_thumbnail(frame, timestamp_str)
+                elif kind == "logs":
+                    self._save_logs()
+            except Exception as e:
+                print(f"Background I/O error: {e}")
+            finally:
+                self._io_queue.task_done()
     
     def _save_logs(self):
         """Save logs to file"""
@@ -115,8 +143,9 @@ class DetectionLogger:
         timestamp = datetime.now()
         timestamp_str = timestamp.strftime("%Y%m%d_%H%M%S_%f")[:-3]  # Include milliseconds
         
-        # Save thumbnail
-        thumbnail_filename = self._save_thumbnail(frame, timestamp_str)
+        # Save thumbnail in background
+        thumbnail_filename = f"detection_{timestamp_str}.jpg"
+        self._io_queue.put(("thumbnail", frame.copy(), timestamp_str))
         
         # Count objects detected by type
         class_counts = {}
@@ -143,7 +172,7 @@ class DetectionLogger:
         
         # Create dynamic log entry with detected classes
         log_entry = {
-            "id": len(self.detection_logs) + 1,
+            "id": self._log_counter,
             "timestamp": timestamp.isoformat(),
             "formatted_time": timestamp.strftime("%Y-%m-%d %H:%M:%S"),
             "message": alert_message,
@@ -155,12 +184,13 @@ class DetectionLogger:
         
         # Add to logs
         self.detection_logs.append(log_entry)
-        
+        self._log_counter += 1
+
         # Update last detection time
         self.last_detection_time = current_time
-        
-        # Save logs
-        self._save_logs()
+
+        # Save logs in background
+        self._io_queue.put(("logs",))
         
         print(f"Detection logged: {log_entry['message']} at {log_entry['formatted_time']}")
         return True

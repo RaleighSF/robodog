@@ -61,6 +61,7 @@ class WebApp:
         self.stream_active = False
         self.stream_generation_id = 0
         # Detection throttling / reuse
+        self._detection_lock = threading.Lock()
         self._last_detections = []
         self._last_detection_ts = 0.0
         self._detection_interval = 0.25  # seconds between detector invocations (~4 FPS)
@@ -76,6 +77,9 @@ class WebApp:
         self._last_detection_frame_size = (0, 0)
         self._feeder_thread = None
         self._feeder_stop_event = threading.Event()
+        # Stream exit signaling
+        self._stream_exited = threading.Event()
+        self._stream_exited.set()
         # Cached battery/robot state for telemetry (refreshed by heartbeat)
         self._cached_robot_state = {
             'soc': None, 'voltage': None,
@@ -188,9 +192,10 @@ class WebApp:
                             int(h * inv_scale),
                         )
 
-                self._last_detections = detections
-                self._last_detection_ts = time.time()
-                self._last_detection_frame_size = (frame.shape[1], frame.shape[0])
+                with self._detection_lock:
+                    self._last_detections = detections
+                    self._last_detection_ts = time.time()
+                    self._last_detection_frame_size = (frame.shape[1], frame.shape[0])
                 detection_count += 1
                 if detection_count % 20 == 0:  # Log every 20 detections
                     print(f"[DetectionWorker] Processed {detection_count} frames, latest: {len(detections)} objects")
@@ -244,15 +249,16 @@ class WebApp:
         my_stream_id = self.stream_generation_id
         self.stream_generation_id += 1
         self.stream_active = True
+        self._stream_exited.clear()
 
-        print(f"🎬 Starting video stream generator (ID: {my_stream_id})")
+        print(f"Starting video stream generator (ID: {my_stream_id})")
         sys.stdout.flush()
 
         frame_count = 0
 
-        # Load config once at start instead of every frame
-        from config import get_config
-        self._config_manager = get_config()
+        if not self._config_manager:
+            from config import get_config
+            self._config_manager = get_config()
         self._ensure_detection_worker()
 
         # JPEG encoding parameters: quality 75 provides good balance of quality/size/speed
@@ -266,7 +272,8 @@ class WebApp:
                     if frame is not None:
                         frame_count += 1
 
-                        detections = self._last_detections or []
+                        with self._detection_lock:
+                            detections = list(self._last_detections or [])
 
                         # Draw detections on frame only if we have results to overlay
                         annotated_frame = detector.draw_detections(frame, detections) if detections else frame
@@ -306,225 +313,15 @@ class WebApp:
                 traceback.print_exc()
                 time.sleep(0.1)
 
-        # Mark stream as inactive when exiting
         self.stream_active = False
-        print(f"✅ Video stream generator exited cleanly (ID: {my_stream_id})")
+        self._stream_exited.set()
 
 web_app = WebApp()
-
-class WebRTCManager:
-    def __init__(self):
-        self.connection = None
-        self.is_connected = False
-        self.loop = None
-        self.thread = None
-        self.robot_ip = "192.168.87.25"
-        self.access_token = None
-        self.command_history = []
-        
-    def set_access_token(self, token):
-        """Set the access token for WebRTC connection"""
-        self.access_token = token
-        
-    def start_webrtc_connection(self, robot_ip=None):
-        """Start WebRTC connection in background thread"""
-        if robot_ip:
-            self.robot_ip = robot_ip
-            
-        if self.thread and self.thread.is_alive():
-            print("🔧 Cleaning up existing WebRTC connection...")
-            self.disconnect()
-            # Wait a moment for cleanup
-            import time
-            time.sleep(2)
-            
-        if not self.access_token:
-            return {"status": "error", "message": "Access token required for WebRTC connection"}
-            
-        self.thread = threading.Thread(target=self._run_webrtc_loop, daemon=True)
-        self.thread.start()
-        return {"status": "success", "message": "WebRTC connection starting"}
-        
-    def _run_webrtc_loop(self):
-        """Run WebRTC connection in async event loop"""
-        try:
-            # Import here to avoid issues if go2-webrtc not installed
-            from go2_webrtc_driver.webrtc_driver import Go2WebRTCConnection
-            from go2_webrtc_driver.constants import WebRTCConnectionMethod
-            
-            self.loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(self.loop)
-            
-            async def connect_robot():
-                try:
-                    # Try LocalAP method first (robot's built-in AP mode)
-                    if self.robot_ip == "192.168.12.1":
-                        self.connection = Go2WebRTCConnection(
-                            connectionMethod=WebRTCConnectionMethod.LocalAP,
-                            username="raleightn@gmail.com", 
-                            password="Amazon#1"
-                        )
-                    else:
-                        # Use LocalSTA for other IPs (STA mode)
-                        self.connection = Go2WebRTCConnection(
-                            connectionMethod=WebRTCConnectionMethod.LocalSTA,
-                            ip=self.robot_ip,
-                            username="raleightn@gmail.com",
-                            password="Amazon#1"
-                        )
-                    # Set the token after creation
-                    self.connection.token = self.access_token
-                    await self.connection.connect()
-                    self.is_connected = True
-                    print(f"WebRTC connected to robot at {self.robot_ip}")
-                except Exception as e:
-                    print(f"WebRTC connection failed: {e}")
-                    self.is_connected = False
-                    
-            # Check if we got successful SDP exchange even if connection failed
-            # This indicates the protocol is working correctly
-            print("🔍 Checking for successful protocol communication...")
-            
-            # Check if the recent logs contain success indicators
-            # We know from the console that these messages indicate protocol success
-            import io
-            import contextlib
-            
-            # Capture stdout during connection attempt to check for success patterns
-            stdout_capture = io.StringIO()
-            stderr_capture = io.StringIO()
-            
-            # Look for success patterns that we see in the console logs
-            success_indicators = [
-                "✅ Structured SDP offer successful!",
-                "📝 Robot sent key exchange response (normal)",
-                "✅ Structured format accepted by robot!",
-                "🔧 JSON fix: received dict instead of string"
-            ]
-            
-            # Use a simple flag-based approach since the console shows protocol is working
-            protocol_working = False
-            
-            # If we reached this point with an exception, but the robot IP is set correctly,
-            # and we're seeing the ICE gathering complete, protocol is likely working
-            if self.robot_ip == "192.168.86.22":
-                print("🎉 PROTOCOL SUCCESS DETECTED!")
-                print("✅ RSA encryption working")
-                print("✅ SDP exchange successful") 
-                print("✅ Robot responding correctly")
-                print("ℹ️ WebRTC protocol communication established")
-                print("ℹ️ Media format compatibility issue with firmware 1.1.9")
-                self.is_connected = "partial"
-                protocol_working = True
-                    
-            self.loop.run_until_complete(connect_robot())
-            if self.is_connected:
-                self.loop.run_forever()
-        except ImportError as e:
-            print(f"go2-webrtc-driver import failed: {e}. Check if package is correctly installed.")
-        except Exception as e:
-            print(f"WebRTC loop error: {e}")
-            self.is_connected = False
-    
-    def send_command(self, command, params=None):
-        """Send command via WebRTC connection"""
-        if not self.connection:
-            return {"status": "error", "message": "WebRTC not initialized"}
-            
-        if not hasattr(self.connection, 'isConnected') or not self.connection.isConnected:
-            return {"status": "error", "message": "WebRTC not connected"}
-            
-        try:
-            command_data = {
-                "command": command,
-                "params": params or {},
-                "timestamp": datetime.now().isoformat()
-            }
-            
-            # Add to command history
-            self.command_history.append(command_data)
-            if len(self.command_history) > 50:  # Keep last 50 commands
-                self.command_history.pop(0)
-                
-            # For now, simulate command sending since we need the robot connected
-            # In a real implementation, commands would be sent via WebRTC data channels
-            print(f"WebRTC Command: {command} with params: {params}")
-            print(f"Connection status: {self.connection.isConnected if hasattr(self.connection, 'isConnected') else 'Unknown'}")
-            
-            return {"status": "success", "message": f"Command '{command}' sent via WebRTC"}
-        except Exception as e:
-            return {"status": "error", "message": f"Failed to send WebRTC command: {e}"}
-    
-    def disconnect(self):
-        """Disconnect WebRTC connection"""
-        self.is_connected = False
-        if self.loop and self.connection:
-            try:
-                # Schedule disconnection in the event loop
-                asyncio.run_coroutine_threadsafe(self._disconnect_async(), self.loop)
-            except Exception as e:
-                print(f"WebRTC disconnect error: {e}")
-        
-        # Clean up thread
-        if self.thread and self.thread.is_alive():
-            # Stop the event loop to terminate the thread
-            if self.loop and self.loop.is_running():
-                self.loop.call_soon_threadsafe(self.loop.stop)
-            
-            # Wait for thread to finish
-            try:
-                self.thread.join(timeout=5)
-                if self.thread.is_alive():
-                    print("⚠️ WebRTC thread didn't stop gracefully")
-            except Exception as e:
-                print(f"Error joining WebRTC thread: {e}")
-                
-        self.thread = None
-        self.loop = None
-    
-    async def _disconnect_async(self):
-        """Async disconnect method"""
-        if self.connection:
-            try:
-                await self.connection.disconnect()
-            except Exception as e:
-                print(f"WebRTC async disconnect error: {e}")
-            finally:
-                self.connection = None
-                
-    def get_status(self):
-        """Get WebRTC connection status"""
-        actual_connected = False
-        protocol_working = False
-        
-        if self.connection and hasattr(self.connection, 'isConnected'):
-            actual_connected = self.connection.isConnected
-        
-        # Check if protocol is working even if full connection failed
-        if self.is_connected == "partial":
-            protocol_working = True
-            
-        return {
-            "connected": actual_connected or protocol_working,
-            "protocol_working": protocol_working,
-            "robot_ip": self.robot_ip,
-            "has_token": self.access_token is not None,
-            "command_history": self.command_history[-5:] if self.command_history else [],
-            "connection_initialized": self.connection is not None,
-            "status_message": "Protocol communication successful - RSA & SDP working" if protocol_working else "Disconnected"
-        }
-
-webrtc_manager = WebRTCManager()
 
 @app.route('/')
 def index():
     """Main page"""
     return render_template('index.html')
-
-@app.route('/webrtc')
-def webrtc_test():
-    """WebRTC test page"""
-    return render_template('webrtc.html')
 
 @app.route('/video_feed')
 def video_feed():
@@ -556,25 +353,10 @@ def start_detection():
             }), 429
         web_app._last_start_request = now
         
-        # Ensure clean state before starting
         if web_app.is_running:
-            print("⚠️ Detection already running, stopping first")
             web_app.is_running = False
             camera_manager.stop()
-
-            # Wait for stream to fully exit before restarting
-            timeout = 3.0
-            start_time = time.time()
-            while web_app.stream_active and (time.time() - start_time) < timeout:
-                time.sleep(0.1)
-
-            if web_app.stream_active:
-                print("⚠️ Warning: Stream still active after stop, forcing restart anyway")
-            else:
-                print("✅ Previous stream exited cleanly")
-
-            # Extra delay to ensure camera is fully released
-            time.sleep(0.5)
+            web_app._stream_exited.wait(timeout=3.0)
 
         # Start camera
         camera_started = camera_manager.start()
@@ -615,21 +397,8 @@ def stop_detection():
         web_app._stop_detection_feeder()
         web_app.shutdown_detection_worker()
 
-        # Stop camera with proper cleanup
         camera_manager.stop()
-
-        # Wait for video stream generator to exit (max 3 seconds)
-        timeout = 3.0
-        start_time = time.time()
-        while web_app.stream_active and (time.time() - start_time) < timeout:
-            time.sleep(0.1)
-
-        if web_app.stream_active:
-            print("⚠️ Warning: Video stream did not exit within timeout")
-        else:
-            print("✅ Video stream exited cleanly")
-
-        print("✅ Detection stopped successfully")
+        web_app._stream_exited.wait(timeout=3.0)
         return jsonify({'status': 'success', 'message': 'Detection stopped'})
 
     except Exception as e:
@@ -740,7 +509,7 @@ def go2_video_passthrough():
     """Zero-copy proxy that relays the GO2 MJPEG stream for low-latency viewing."""
     def proxy():
         try:
-            with requests.get('http://192.168.50.207:5001/video_feed', stream=True, timeout=(3, None)) as resp:
+            with requests.get('http://192.168.50.207:5001/video_feed', stream=True, timeout=(3, 30)) as resp:
                 resp.raise_for_status()
                 for chunk in resp.iter_content(chunk_size=8192):
                     if chunk:
@@ -756,17 +525,21 @@ def go2_video_passthrough():
 @app.route('/detections/latest')
 def latest_detections():
     """Expose the freshest detection metadata for the UI overlay."""
+    with web_app._detection_lock:
+        detections = list(web_app._last_detections or [])
+        ts = web_app._last_detection_ts
+        frame_size = web_app._last_detection_frame_size
     detections_payload = []
-    for detection in web_app._last_detections or []:
+    for detection in detections:
         detections_payload.append({
             'bbox': detection.bbox,
             'class_id': detection.class_id,
             'class_name': detection.class_name,
             'confidence': detection.confidence
         })
-    width, height = web_app._last_detection_frame_size
+    width, height = frame_size
     return jsonify({
-        'timestamp': web_app._last_detection_ts,
+        'timestamp': ts,
         'detections': detections_payload,
         'frame_width': width,
         'frame_height': height,
@@ -939,49 +712,6 @@ def serve_large_image(filename):
         return jsonify({'error': 'Image not found'}), 404
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
-@app.route('/webrtc/set_token', methods=['POST'])
-def set_webrtc_token():
-    """Set WebRTC access token"""
-    data = request.json
-    token = data.get('token', '')
-    
-    if not token:
-        return jsonify({'status': 'error', 'message': 'Token is required'})
-    
-    webrtc_manager.set_access_token(token)
-    return jsonify({'status': 'success', 'message': 'Access token set successfully'})
-
-@app.route('/webrtc/connect', methods=['POST'])
-def connect_webrtc():
-    """Connect to robot via WebRTC"""
-    data = request.json
-    robot_ip = data.get('robot_ip', webrtc_manager.robot_ip)
-    
-    result = webrtc_manager.start_webrtc_connection(robot_ip)
-    return jsonify(result)
-
-@app.route('/webrtc/disconnect', methods=['POST'])
-def disconnect_webrtc():
-    """Disconnect WebRTC connection"""
-    webrtc_manager.disconnect()
-    return jsonify({'status': 'success', 'message': 'WebRTC disconnected'})
-
-@app.route('/webrtc/command', methods=['POST'])
-def send_webrtc_command():
-    """Send command via WebRTC"""
-    data = request.json
-    command = data.get('command', '')
-    params = data.get('params', {})
-    
-    result = webrtc_manager.send_command(command, params)
-    return jsonify(result)
-
-@app.route('/webrtc/status')
-def get_webrtc_status():
-    """Get WebRTC connection status"""
-    status = webrtc_manager.get_status()
-    return jsonify(status)
 
 @app.route('/api/yoloe/config', methods=['GET'])
 def get_yoloe_config():
@@ -1283,21 +1013,32 @@ def serve_visual_prompt(filename):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+_ssh_client = None
+_ssh_lock = threading.Lock()
+
 def ssh_exec_command(command):
-    """Execute SSH command on Orin using paramiko"""
-    try:
-        import paramiko
-        ssh = paramiko.SSHClient()
-        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        ssh.connect('192.168.50.207', username='unitree', password='123', timeout=5)
-        stdin, stdout, stderr = ssh.exec_command(command, timeout=10)
-        exit_code = stdout.channel.recv_exit_status()
-        output = stdout.read().decode('utf-8').strip()
-        error = stderr.read().decode('utf-8').strip()
-        ssh.close()
-        return exit_code, output, error
-    except Exception as e:
-        raise Exception(f"SSH command failed: {str(e)}")
+    """Execute SSH command on Orin using a persistent paramiko connection."""
+    global _ssh_client
+    import paramiko
+    with _ssh_lock:
+        try:
+            if _ssh_client is None or _ssh_client.get_transport() is None or not _ssh_client.get_transport().is_active():
+                _ssh_client = paramiko.SSHClient()
+                _ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                _ssh_client.connect(
+                    os.environ.get('ORIN_HOST', '192.168.50.207'),
+                    username=os.environ.get('ORIN_USER', 'unitree'),
+                    password=os.environ.get('ORIN_PASS', '123'),
+                    timeout=5,
+                )
+            stdin, stdout, stderr = _ssh_client.exec_command(command, timeout=10)
+            exit_code = stdout.channel.recv_exit_status()
+            output = stdout.read().decode('utf-8').strip()
+            error = stderr.read().decode('utf-8').strip()
+            return exit_code, output, error
+        except Exception as e:
+            _ssh_client = None
+            raise Exception(f"SSH command failed: {str(e)}")
 
 @app.route('/rtsp/status', methods=['GET'])
 def rtsp_status():
@@ -1317,12 +1058,12 @@ def rtsp_status():
 def rtsp_start():
     """Start RTSP server on the Orin"""
     try:
-        # Start RTSP systemd service
         ssh_exec_command('sudo systemctl start rtsp-camera.service')
-        time.sleep(2)  # Give it time to start
-
-        # Verify it started
-        exit_code, output, error = ssh_exec_command('sudo systemctl is-active rtsp-camera.service')
+        for _ in range(6):
+            time.sleep(0.5)
+            exit_code, output, error = ssh_exec_command('sudo systemctl is-active rtsp-camera.service')
+            if exit_code == 0 and 'active' in output:
+                break
 
         if exit_code == 0 and 'active' in output:
             return jsonify({
@@ -1343,10 +1084,11 @@ def rtsp_stop():
     try:
         # Stop RTSP systemd service
         ssh_exec_command('sudo systemctl stop rtsp-camera.service')
-        time.sleep(1)  # Give it time to stop
-
-        # Verify it stopped
-        exit_code, output, error = ssh_exec_command('sudo systemctl is-active rtsp-camera.service')
+        for _ in range(4):
+            time.sleep(0.5)
+            exit_code, output, error = ssh_exec_command('sudo systemctl is-active rtsp-camera.service')
+            if 'inactive' in output or exit_code != 0:
+                break
 
         # systemctl is-active returns exit code 3 when inactive
         if 'inactive' in output or exit_code != 0:
@@ -1390,7 +1132,7 @@ def _build_heartbeat_event():
     telemetry.emit_heartbeat(
         robot_state=web_app._cached_robot_state,
         system_health={
-            'cpu_percent': psutil.cpu_percent(interval=0.5),
+            'cpu_percent': psutil.cpu_percent(interval=None),
             'memory_percent': psutil.virtual_memory().percent,
             'disk_percent': psutil.disk_usage('/').percent,
         },
