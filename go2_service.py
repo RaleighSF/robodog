@@ -303,7 +303,7 @@ async def robot_loop():
             # 30Hz command processing loop
             while True: 
                 try:
-                    if not motion_mode_queue.empty():
+                    try:
                         mode_name, result_id = motion_mode_queue.get_nowait()
                         try:
                             resp = await set_motion_mode(conn, mode_name)
@@ -322,8 +322,10 @@ async def robot_loop():
                             if result_id is not None:
                                 with motion_mode_lock:
                                     motion_mode_results[result_id] = {'success': False, 'error': str(e)}
+                    except queue.Empty:
+                        pass
 
-                    if not command_queue.empty():
+                    try:
                         cmd_id, cmd_api_id, result_id = command_queue.get_nowait()
                         try:
                             resp = await conn.datachannel.pub_sub.publish_request_new(
@@ -345,9 +347,11 @@ async def robot_loop():
                         except Exception as e:
                             with result_lock:
                                 command_results[result_id] = {'success': False, 'error': str(e)}
+                    except queue.Empty:
+                        pass
                 except Exception as loop_error:
                     print(f"[Loop] Error processing commands: {loop_error}", flush=True)
-                await asyncio.sleep(0.03)  # 30Hz loop
+                await asyncio.sleep(0.03)
         except Exception as connection_error:
             battery_state['connected'] = False
             print(f"[Connect] Connection lost: {connection_error}", flush=True)

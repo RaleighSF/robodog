@@ -36,6 +36,7 @@ class CameraManager:
         # GO2 WebRTC service configuration
         self.go2_service_url = "http://192.168.50.207:5001"
         self.go2_stream_active = False
+        self.http_stream_active = False
         
     def set_camera_source(self, source: str, robot_ip: str = None, rtsp_url: str = None):
         """Set camera source: 'mac', 'unitree', 'rtsp_*', or 'go2_webrtc' with robust cleanup"""
@@ -106,11 +107,7 @@ class CameraManager:
             # Clear current frame
             with self.frame_lock:
                 self.current_frame = None
-                
-            # Force garbage collection
-            import gc
-            gc.collect()
-            
+
         except Exception as e:
             print(f"⚠️ Error during source cleanup: {e}")
                 
@@ -243,18 +240,6 @@ class CameraManager:
             # Set OpenCV environment variable for shorter RTSP timeout (5 seconds instead of 30)
             os.environ['OPENCV_FFMPEG_CAPTURE_OPTIONS'] = 'rtsp_transport;tcp|stimeout;5000000'
 
-            # Build RTSP URL with optimized transport parameters
-            rtsp_options = {
-                "rtsp_transport": "tcp",  # Use TCP for more reliable transport
-                "rtsp_flags": "prefer_tcp",
-                "stimeout": "5000000",  # 5 second socket timeout (in microseconds)
-                "max_delay": "500000",  # 0.5 second max delay
-                "fflags": "nobuffer+flush_packets",  # Minimize buffering
-                "flags": "low_delay",
-                "probesize": "32",  # Smaller probe size for faster startup
-                "analyzeduration": "100000"  # 100ms analyze duration
-            }
-
             # Connect to RTSP stream with retry logic
             print(f"Attempting RTSP connection to: {self.rtsp_url}")
 
@@ -321,42 +306,31 @@ class CameraManager:
             return False
             
     def stop(self):
-        """Stop the camera capture with aggressive cleanup"""
+        """Stop the camera capture with proper cleanup ordering"""
         print("🛑 DEBUG: stop() called")
         self.is_running = False
 
-        # Wait a moment for capture thread to stop reading
-        import time
-        time.sleep(0.2)
-
-        # Force release camera BEFORE waiting for thread
-        if self.cap:
-            print("🛑 DEBUG: Releasing camera capture...")
-            try:
-                # Release the capture
-                self.cap.release()
-                print("🛑 DEBUG: Camera released")
-
-                # Destroy any OpenCV windows (helps release camera on some systems)
-                cv2.destroyAllWindows()
-
-                # Extra delay to ensure camera hardware releases
-                time.sleep(0.3)
-                print("🛑 DEBUG: Camera hardware should be released now")
-            except Exception as e:
-                print(f"⚠️ Error releasing camera: {e}")
-            finally:
-                self.cap = None
-
-        # Give threads time to exit gracefully
+        # Wait for capture thread to exit BEFORE releasing resources
         if self.capture_thread:
             print(f"🛑 DEBUG: Waiting for capture thread to exit (timeout=2s)...")
             self.capture_thread.join(timeout=2.0)
             if self.capture_thread.is_alive():
-                print("⚠️ Warning: Camera thread didn't exit cleanly - forcing cleanup")
+                print("⚠️ Warning: Camera thread didn't exit cleanly")
             else:
                 print("✅ DEBUG: Capture thread exited cleanly")
             self.capture_thread = None
+
+        # Now release camera after thread is done
+        if self.cap:
+            print("🛑 DEBUG: Releasing camera capture...")
+            try:
+                self.cap.release()
+                print("🛑 DEBUG: Camera released")
+                cv2.destroyAllWindows()
+            except Exception as e:
+                print(f"⚠️ Error releasing camera: {e}")
+            finally:
+                self.cap = None
             
         # Clean up Unitree client
         if self.unitree_client:
@@ -412,29 +386,14 @@ class CameraManager:
         """Full cleanup method for application shutdown"""
         print("🧹 Starting camera cleanup...")
         self.stop()
-        
-        # Additional cleanup for semaphores and OpenCV resources
-        import gc
-        import time
-        
-        # Extra time for threads to fully exit
-        time.sleep(0.2)
-        
-        # Force multiple garbage collection cycles
-        for i in range(5):
-            gc.collect()
-            time.sleep(0.1)
-        
+
         # Explicitly destroy OpenCV windows and cleanup
         try:
             cv2.destroyAllWindows()
             cv2.waitKey(1)  # Process any remaining OpenCV events
         except:
             pass
-        
-        # Final garbage collection
-        gc.collect()
-        
+
         print("✅ Camera cleanup completed")
             
     def _mac_capture_loop(self):
@@ -443,7 +402,7 @@ class CameraManager:
             ret, frame = self.cap.read()
             if ret:
                 with self.frame_lock:
-                    self.current_frame = frame.copy()
+                    self.current_frame = frame
             else:
                 time.sleep(0.01)  # Brief pause if frame capture fails
                 
@@ -462,7 +421,7 @@ class CameraManager:
                 frame = self.unitree_client.get_frame()
                 if frame is not None:
                     with self.frame_lock:
-                        self.current_frame = frame.copy()
+                        self.current_frame = frame
                 time.sleep(1/30)  # 30 FPS
         except Exception as e:
             print(f"DEBUG: Frame loop error: {e}")
@@ -472,10 +431,11 @@ class CameraManager:
         video_url = f"{self.go2_service_url}/video_feed"
         consecutive_failures = 0
         max_consecutive_failures = 15
-        bytes_buffer = b''
+        bytes_buffer = bytearray()
         frame_count = 0
 
         print(f"[GO2 Capture] Starting capture from {video_url}")
+        response = None
         try:
             # Open streaming connection with optimized chunk size
             response = requests.get(video_url, stream=True, timeout=(5, None))
@@ -493,7 +453,7 @@ class CameraManager:
                     print(f"[GO2 Capture] Stopping: is_running={self.is_running}, stream_active={self.go2_stream_active}")
                     break
 
-                bytes_buffer += chunk
+                bytes_buffer.extend(chunk)
                 chunk_count += 1
 
                 if chunk_count <= 5 or chunk_count % 100 == 0:
@@ -536,17 +496,17 @@ class CameraManager:
                         break
 
                 # Keep buffer size reasonable to avoid memory growth
-                # Increased buffer size for large JPEG frames (GO2 sends high-res frames)
                 if len(bytes_buffer) > 500000:  # 500KB max buffer
-                    # Only trim if we haven't found a start marker yet
-                    if start == -1:
-                        bytes_buffer = bytes_buffer[-250000:]  # Keep last 250KB
-                    elif chunk_count % 50 == 0:
-                        print(f"[GO2 Capture] Warning: Buffer at {len(bytes_buffer)} bytes, no end marker yet")
+                    bytes_buffer = bytes_buffer[-250000:]  # Keep last 250KB
 
         except Exception as e:
             print(f"[GO2 Capture] Exception in capture loop: {e}")
         finally:
+            if response:
+                try:
+                    response.close()
+                except Exception:
+                    pass
             print(f"[GO2 Capture] Exiting - captured {frame_count} total frames")
             self.go2_stream_active = False
 
@@ -590,7 +550,8 @@ class CameraManager:
         """Capture loop for generic HTTP MJPEG sources."""
         consecutive_failures = 0
         max_consecutive_failures = 20
-        buffer = b""
+        buffer = bytearray()
+        response = None
 
         try:
             response = requests.get(video_url, stream=True, timeout=(5, None))
@@ -603,7 +564,7 @@ class CameraManager:
                 if not self.is_running or not self.http_stream_active:
                     break
 
-                buffer += chunk
+                buffer.extend(chunk)
                 start = buffer.find(b"\xff\xd8")
                 end = buffer.find(b"\xff\xd9")
 
@@ -631,6 +592,11 @@ class CameraManager:
         except requests.exceptions.RequestException as e:
             print(f"HTTP MJPEG request error: {e}")
         finally:
+            if response:
+                try:
+                    response.close()
+                except Exception:
+                    pass
             self.http_stream_active = False
             
     def _rtsp_capture_loop_robust(self):
@@ -663,7 +629,7 @@ class CameraManager:
                     if ret and frame is not None and frame.size > 0:
                         # Successfully got a frame
                         with self.frame_lock:
-                            self.current_frame = frame.copy()
+                            self.current_frame = frame
                         consecutive_failures = 0
                         last_frame_time = time.time()
                         

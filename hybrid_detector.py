@@ -33,11 +33,7 @@ class HybridDetector:
         """Perform detection on frame using YOLO-E"""
         detections = []
 
-        # Use YOLO-E for all detection
-        if self.current_model == "yoloe":
-            detections.extend(self._detect_yoloe(frame))
-        else:
-            detections.extend(self._detect_yoloe(frame))
+        detections.extend(self._detect_yoloe(frame))
 
         return detections
 
