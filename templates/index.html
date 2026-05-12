@@ -311,58 +311,118 @@
             font-weight: 600;
         }
 
-        /* GO2 Robot Action Bar */
-        .go2-action-bar {
+        /* GO2 Robot Control Panel */
+        .go2-control-panel {
             position: absolute;
-            bottom: 0;
-            left: 0;
-            right: 0;
-            background: linear-gradient(to top, rgba(0, 0, 0, 0.95), rgba(0, 0, 0, 0.85));
-            backdrop-filter: blur(10px);
-            padding: 8px 16px;
+            bottom: 16px;
+            right: 16px;
+            background: rgba(0, 0, 0, 0.85);
+            backdrop-filter: blur(12px);
+            border-radius: 12px;
+            border: 1px solid rgba(0, 114, 187, 0.3);
+            padding: 14px;
             display: none;
-            justify-content: center;
-            align-items: center;
-            gap: 10px;
-            border-top: 1px solid rgba(0, 114, 187, 0.3);
+            flex-direction: column;
+            gap: 12px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+            min-width: 180px;
+        }
+        .go2-control-panel.visible { display: flex; }
+
+        .ctrl-panel-label {
+            font-size: 9px;
+            font-weight: 700;
+            color: var(--text-2);
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            margin-bottom: -4px;
         }
 
-        .go2-action-bar.visible {
-            display: flex;
+        .ctrl-actions {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 6px;
         }
 
         .go2-cmd-btn {
-            background: linear-gradient(135deg, var(--brand-500) 0%, var(--brand-600) 100%);
-            color: var(--bg-0);
-            border: none;
-            padding: 8px 16px;
-            border-radius: 6px;
-            font-size: 12px;
+            background: rgba(255, 255, 255, 0.08);
+            color: var(--text-1);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 8px 0;
+            border-radius: 8px;
+            font-size: 11px;
             font-weight: 600;
             cursor: pointer;
-            transition: all 0.2s ease;
+            transition: all 0.15s ease;
             display: flex;
             align-items: center;
-            gap: 6px;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+            justify-content: center;
+            gap: 5px;
         }
-
         .go2-cmd-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 8px rgba(0, 114, 187, 0.4);
-            background: linear-gradient(135deg, var(--brand-600) 0%, var(--brand-700) 100%);
+            background: rgba(0, 114, 187, 0.35);
+            border-color: rgba(0, 114, 187, 0.5);
         }
-
         .go2-cmd-btn:active {
-            transform: translateY(0);
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+            background: var(--brand-500);
+            color: var(--bg-0);
+        }
+        .go2-cmd-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
         }
 
-        .go2-cmd-btn:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-            transform: none;
+        .ctrl-divider {
+            height: 1px;
+            background: rgba(255, 255, 255, 0.08);
+            margin: 0 -2px;
         }
+
+        .dpad {
+            display: grid;
+            grid-template-columns: 44px 44px 44px;
+            grid-template-rows: 44px 44px 44px;
+            gap: 3px;
+            justify-self: center;
+            align-self: center;
+        }
+
+        .dpad-btn {
+            width: 44px;
+            height: 44px;
+            border: none;
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            color: var(--text-1);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.12s ease;
+            -webkit-user-select: none;
+            user-select: none;
+            touch-action: none;
+        }
+        .dpad-btn:hover {
+            background: rgba(0, 114, 187, 0.3);
+            border-color: rgba(0, 114, 187, 0.4);
+        }
+        .dpad-btn:active, .dpad-btn.active {
+            background: var(--brand-500);
+            color: var(--bg-0);
+            border-color: var(--brand-500);
+            box-shadow: 0 0 16px rgba(0, 114, 187, 0.5);
+        }
+        .dpad-btn svg { pointer-events: none; }
+        .dpad-spacer { visibility: hidden; }
+        .dpad-center {
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 50%;
+            border-color: rgba(255, 255, 255, 0.04);
+            cursor: default;
+        }
+        .dpad-center:hover { background: rgba(255, 255, 255, 0.03); }
 
         .status {
             margin: 0;
@@ -1213,35 +1273,52 @@
             <canvas id="detectionOverlay" class="detection-overlay"></canvas>
             <div id="loadingText" class="loading">Waiting for robot patrol unit connection...</div>
 
-            <!-- GO2 Robot Control Action Bar -->
-            <div id="go2ActionBar" class="go2-action-bar">
-                <button class="go2-cmd-btn" onclick="sendGO2Command('crouch')" title="Crouch (lower body)">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M12 19V5M5 12l7 7 7-7"/>
-                    </svg>
-                    Crouch
-                </button>
-                <button class="go2-cmd-btn" onclick="sendGO2Command('stand')" title="Stand up">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M12 5v14M5 12l7-7 7 7"/>
-                    </svg>
-                    Stand
-                </button>
-                <button class="go2-cmd-btn" onclick="sendGO2Command('sit')" title="Sit down">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M3 12h18M3 6h18M3 18h18"/>
-                    </svg>
-                    Sit
-                </button>
-                <button class="go2-cmd-btn" onclick="sendGO2Command('shake')" title="Shake hands">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M9 11l3 3L22 4"/>
-                        <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>
-                    </svg>
-                    Shake
-                </button>
+            <!-- GO2 Robot Control Panel -->
+            <div id="go2ControlPanel" class="go2-control-panel">
+                <span class="ctrl-panel-label">Actions</span>
+                <div class="ctrl-actions">
+                    <button class="go2-cmd-btn" onclick="sendGO2Command('stand')" title="Stand up">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12l7-7 7 7"/></svg>
+                        Stand
+                    </button>
+                    <button class="go2-cmd-btn" onclick="sendGO2Command('crouch')" title="Crouch">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19V5M5 12l7 7 7-7"/></svg>
+                        Crouch
+                    </button>
+                    <button class="go2-cmd-btn" onclick="sendGO2Command('sit')" title="Sit down">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h18M3 6h18M3 18h18"/></svg>
+                        Sit
+                    </button>
+                    <button class="go2-cmd-btn" onclick="sendGO2Command('shake')" title="Shake hands">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+                        Shake
+                    </button>
+                </div>
+                <div class="ctrl-divider"></div>
+                <span class="ctrl-panel-label">Movement</span>
+                <div class="dpad">
+                    <div class="dpad-spacer"></div>
+                    <button class="dpad-btn" data-vx="0.4" data-vy="0" data-vyaw="0" title="Forward">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+                    </button>
+                    <div class="dpad-spacer"></div>
+                    <button class="dpad-btn" data-vx="0" data-vy="0.3" data-vyaw="0" title="Strafe Left">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
+                    </button>
+                    <div class="dpad-btn dpad-center">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" opacity="0.3"><circle cx="12" cy="12" r="3"/></svg>
+                    </div>
+                    <button class="dpad-btn" data-vx="0" data-vy="-0.3" data-vyaw="0" title="Strafe Right">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                    </button>
+                    <div class="dpad-spacer"></div>
+                    <button class="dpad-btn" data-vx="-0.3" data-vy="0" data-vyaw="0" title="Backward">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
+                    </button>
+                    <div class="dpad-spacer"></div>
+                </div>
             </div>
-        </div>        
+        </div>
         <div id="status" class="status info">Color Channel ready - Auto-starting patrol...</div>
         
         <!-- Detection Log Viewer -->
@@ -2800,18 +2877,57 @@
 
         // GO2 Action Bar Management
         function showGO2ActionBar() {
-            const actionBar = document.getElementById('go2ActionBar');
-            if (actionBar) {
-                actionBar.classList.add('visible');
-            }
+            const panel = document.getElementById('go2ControlPanel');
+            if (panel) panel.classList.add('visible');
         }
 
         function hideGO2ActionBar() {
-            const actionBar = document.getElementById('go2ActionBar');
-            if (actionBar) {
-                actionBar.classList.remove('visible');
-            }
+            const panel = document.getElementById('go2ControlPanel');
+            if (panel) panel.classList.remove('visible');
         }
+
+        // D-Pad movement controls
+        (function initDpad() {
+            let _moveInterval = null;
+            const MOVE_RATE_MS = 200;
+
+            function startMove(btn) {
+                stopMove();
+                btn.classList.add('active');
+                const vx = parseFloat(btn.dataset.vx);
+                const vy = parseFloat(btn.dataset.vy);
+                const vyaw = parseFloat(btn.dataset.vyaw);
+                sendMoveCmd(vx, vy, vyaw);
+                _moveInterval = setInterval(() => sendMoveCmd(vx, vy, vyaw), MOVE_RATE_MS);
+            }
+
+            function stopMove() {
+                if (_moveInterval) {
+                    clearInterval(_moveInterval);
+                    _moveInterval = null;
+                }
+                document.querySelectorAll('.dpad-btn.active').forEach(b => b.classList.remove('active'));
+                fetch('/go2/stop', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}' }).catch(() => {});
+            }
+
+            async function sendMoveCmd(vx, vy, vyaw) {
+                try {
+                    await fetch('/go2/move', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ vx, vy, vyaw })
+                    });
+                } catch (e) { /* best-effort */ }
+            }
+
+            document.querySelectorAll('.dpad-btn:not(.dpad-center)').forEach(btn => {
+                btn.addEventListener('mousedown', (e) => { e.preventDefault(); startMove(btn); });
+                btn.addEventListener('touchstart', (e) => { e.preventDefault(); startMove(btn); }, { passive: false });
+            });
+            document.addEventListener('mouseup', stopMove);
+            document.addEventListener('touchend', stopMove);
+            document.addEventListener('touchcancel', stopMove);
+        })();
 
         // Show action bar on page load if GO2 is selected
         if (cameraSelect && cameraSelect.value === 'go2_webrtc') {

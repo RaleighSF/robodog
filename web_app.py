@@ -586,6 +586,35 @@ def go2_command():
         logger.error(f"Failed to send GO2 command: {e}")
         return jsonify({'success': False, 'message': str(e)}), 503
 
+@app.route('/go2/move', methods=['POST'])
+def go2_move():
+    """Proxy endpoint for GO2 velocity movement"""
+    try:
+        data = request.get_json()
+        vx = float(data.get('vx', 0))
+        vy = float(data.get('vy', 0))
+        vyaw = float(data.get('vyaw', 0))
+
+        response = requests.post('http://192.168.50.207:5001/move',
+            json={'vx': vx, 'vy': vy, 'vyaw': vyaw},
+            timeout=3
+        )
+        return jsonify(response.json()), response.status_code
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 503
+
+@app.route('/go2/stop', methods=['POST'])
+def go2_stop():
+    """Proxy endpoint to stop GO2 movement"""
+    try:
+        response = requests.post('http://192.168.50.207:5001/stop',
+            json={},
+            timeout=3
+        )
+        return jsonify(response.json()), response.status_code
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 503
+
 @app.route('/go2/motion_mode', methods=['POST'])
 def go2_motion_mode():
     """Proxy endpoint to adjust the GO2 motion mode (e.g., set to normal)."""

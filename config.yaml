@@ -36,10 +36,10 @@ vision:
   detector: yoloe
   device: auto
   engine_path: ''
-  imgsz: 640
+  imgsz: 1280
   iou: 0.45
   max_det: 100
-  model_path: yolo11s.pt
+  model_path: yolo11m.pt
   nlp_enabled: false
   nlp_prompt: Find all electronics
   openai_api_key: ""

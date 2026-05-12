@@ -73,6 +73,10 @@ encoding_queue = queue.Queue(maxsize=2)
 motion_mode_queue = queue.Queue()
 motion_mode_results = {}
 motion_mode_lock = threading.Lock()
+move_queue = queue.Queue()
+move_results = {}
+move_lock = threading.Lock()
+_move_state = {'balance_ready': False}
 
 COMMAND_MAP = {
     'stand': SPORT_CMD['StandUp'],
@@ -327,6 +331,7 @@ async def robot_loop():
 
                     try:
                         cmd_id, cmd_api_id, result_id = command_queue.get_nowait()
+                        _move_state['balance_ready'] = False
                         try:
                             resp = await conn.datachannel.pub_sub.publish_request_new(
                                 RTC_TOPIC['SPORT_MOD'], {'api_id': cmd_api_id}
@@ -347,6 +352,28 @@ async def robot_loop():
                         except Exception as e:
                             with result_lock:
                                 command_results[result_id] = {'success': False, 'error': str(e)}
+                    except queue.Empty:
+                        pass
+
+                    try:
+                        vx, vy, vyaw, result_id = move_queue.get_nowait()
+                        try:
+                            if not _move_state['balance_ready']:
+                                await conn.datachannel.pub_sub.publish_request_new(
+                                    RTC_TOPIC['SPORT_MOD'], {'api_id': SPORT_CMD['BalanceStand']}
+                                )
+                                _move_state['balance_ready'] = True
+                            resp = await conn.datachannel.pub_sub.publish_request_new(
+                                RTC_TOPIC['SPORT_MOD'],
+                                {'api_id': SPORT_CMD['Move'], 'parameter': {'x': vx, 'y': vy, 'z': vyaw}}
+                            )
+                            status = resp.get('data', {}).get('header', {}).get('status', {})
+                            code = status.get('code', 1)
+                            with move_lock:
+                                move_results[result_id] = {'success': True, 'code': code}
+                        except Exception as e:
+                            with move_lock:
+                                move_results[result_id] = {'success': False, 'error': str(e)}
                     except queue.Empty:
                         pass
                 except Exception as loop_error:
@@ -425,6 +452,39 @@ def handle_command():
         time.sleep(0.05)
     
     return jsonify({'success': False, 'message': 'Timeout'}), 504
+
+@app.route('/move', methods=['POST'])
+def handle_move():
+    data = request.get_json()
+    vx = float(data.get('vx', 0))
+    vy = float(data.get('vy', 0))
+    vyaw = float(data.get('vyaw', 0))
+
+    result_id = f'move_{time.time()}'
+    move_queue.put((vx, vy, vyaw, result_id))
+
+    start_time = time.time()
+    while time.time() - start_time < 3.0:
+        with move_lock:
+            if result_id in move_results:
+                return jsonify(move_results.pop(result_id))
+        time.sleep(0.05)
+
+    return jsonify({'success': False, 'message': 'Timeout'}), 504
+
+@app.route('/stop', methods=['POST'])
+def handle_stop():
+    result_id = f'stop_{time.time()}'
+    move_queue.put((0, 0, 0, result_id))
+
+    start_time = time.time()
+    while time.time() - start_time < 3.0:
+        with move_lock:
+            if result_id in move_results:
+                return jsonify(move_results.pop(result_id))
+        time.sleep(0.05)
+
+    return jsonify({'success': True, 'message': 'Stop sent'})
 
 @app.route('/motion_mode', methods=['POST'])
 def set_motion_mode_route():
