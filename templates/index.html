@@ -7,30 +7,42 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <style>
         :root {
-            /* NTT DATA Brand Colors */
-            --brand-500: #1a8fd1;       /* Brand medium blue */
-            --brand-600: #0072BB;       /* Primary NTT DATA Blue */
-            --brand-700: #005FA0;       /* Hover/pressed state */
-            --brand-50: #E6F2FA;        /* Subtle tints, cards, focus */
+            /* NTT DATA Brand Colors — Deep Navy Blueprint */
+            --brand-500: #3B82C4;       /* Brand medium blue */
+            --brand-600: #0060AE;       /* Primary NTT Endeavour Blue */
+            --brand-700: #004D8C;       /* Hover/pressed state */
+            --brand-50: rgba(0,96,174,0.12); /* Subtle tints */
 
-            /* Ink (Text) Colors */
-            --ink-900: #0B1220;         /* Headlines */
-            --ink-700: #273048;         /* Body text */
-            --ink-400: #64748B;         /* Meta, captions */
+            /* Ink (Text) Colors — inverted for dark theme */
+            --ink-900: #E8EDF3;         /* Headlines */
+            --ink-700: #C1CDD9;         /* Body text */
+            --ink-400: #7B8FA3;         /* Meta, captions */
+            --ink-100: #E8EDF3;         /* Primary text */
+            --ink-600: #4A5568;         /* Borders, subtle */
 
-            /* Background Colors */
-            --bg-0: #FFFFFF;            /* Page background */
-            --bg-50: #F6F8FA;           /* Stripes/alt rows */
+            /* Background Colors — Deep Navy */
+            --bg-0: #0A1628;            /* Page background */
+            --bg-50: #0F1D32;           /* Panel surfaces */
+            --bg-100: #162740;          /* Elevated cards */
 
-            /* Accent Colors (Data viz only) */
-            --accent-teal-500: #00A3A3;
-            --accent-purple-500: #6E60F6;
+            /* Accent Colors — NTT DATA blue family */
+            --accent-teal-500: #6485C1; /* NTT Future Blue (secondary) */
+            --accent-purple-500: #6485C1;
+            --accent-light-blue: #5BA3E6; /* Lighter accent for active states */
+            --accent-sky: #38BDF8;         /* Bright sky for pulse/attention */
 
             /* Semantic Colors */
-            --success: #00A854;
-            --warning: #FA8C16;
-            --error: #F5222D;
+            --success: #10B981;
+            --warning: #D97706;
+            --error: #DC2626;              /* Reserved for e-stop / true errors only */
         }
+
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
 
         * {
             margin: 0;
@@ -40,16 +52,22 @@
 
         body {
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: var(--bg-50);
+            background: var(--bg-0);
             color: var(--ink-700);
             font-size: 16px;
             line-height: 1.6;
-            min-height: 100vh;
+            height: 100vh;
+            overflow: hidden;
+            background-image:
+                linear-gradient(rgba(0,96,174,0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(0,96,174,0.03) 1px, transparent 1px);
+            background-size: 40px 40px;
         }
 
         .header-nav {
-            background: var(--bg-0);
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            background: rgba(10,22,40,0.85);
+            backdrop-filter: blur(20px) saturate(150%);
+            border-bottom: 1px solid rgba(255,255,255,0.05);
             padding: 0;
         }
 
@@ -105,9 +123,9 @@
 
         .header-select {
             padding: 6px 10px;
-            border: 1px solid rgba(255, 255, 255, 0.2);
+            border: 1px solid rgba(255,255,255,0.1);
             border-radius: 4px;
-            background: rgba(255, 255, 255, 0.9);
+            background: rgba(15,29,50,0.9);
             color: var(--ink-900);
             font-size: 13px;
             font-weight: 500;
@@ -118,8 +136,8 @@
 
         .header-select:focus {
             outline: none;
-            border-color: rgba(255, 255, 255, 0.8);
-            background: var(--bg-0);
+            border-color: var(--brand-600);
+            background: var(--bg-100);
         }
 
         .ip-control {
@@ -134,9 +152,9 @@
 
         .header-input {
             padding: 6px 10px;
-            border: 1px solid rgba(255, 255, 255, 0.2);
+            border: 1px solid rgba(255,255,255,0.1);
             border-radius: 4px;
-            background: rgba(255, 255, 255, 0.9);
+            background: rgba(15,29,50,0.9);
             color: var(--ink-900);
             font-size: 13px;
             width: 120px;
@@ -145,8 +163,8 @@
 
         .header-input:focus {
             outline: none;
-            border-color: rgba(255, 255, 255, 0.8);
-            background: var(--bg-0);
+            border-color: var(--brand-600);
+            background: var(--bg-100);
         }
 
         .detection-mode-indicator {
@@ -230,14 +248,14 @@
         }
 
         .btn-header.btn-stop {
-            background: var(--error);
-            color: var(--bg-0);
+            background: rgba(100,133,193,0.25);
+            color: var(--accent-teal-500);
         }
 
         .btn-header.btn-stop:hover {
-            background: var(--brand-700);
+            background: rgba(100,133,193,0.4);
             transform: translateY(-1px);
-            box-shadow: 0 4px 8px rgba(245, 34, 45, 0.3);
+            box-shadow: 0 4px 8px rgba(100,133,193,0.3);
         }
 
         .btn-header.btn-config {
@@ -261,32 +279,61 @@
         }
 
         .container {
-            max-width: 1400px;
-            margin: 20px auto;
-            background: var(--bg-0);
-            border-radius: 12px;
+            display: grid;
+            grid-template-columns: 1fr 320px;
+            grid-template-rows: 1fr minmax(200px, 35vh) auto;
+            grid-template-areas:
+                "video detections"
+                "scene detections"
+                "stats stats";
+            height: calc(100vh - 58px);
+            gap: 0;
             overflow: hidden;
-            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
         }
 
-
         .video-container {
+            grid-area: video;
             position: relative;
             display: flex;
             justify-content: center;
-            align-items: center;
-            min-height: 500px;
-            background: linear-gradient(45deg, #000000 0%, #1a1a1a 100%);
-            border: 2px solid var(--brand-600);
-            margin: 0;
-            border-radius: 8px 8px 0 0;
+            align-items: flex-start;
+            background: linear-gradient(135deg, #060E1A 0%, #0A1628 100%);
+            border-right: 1px solid rgba(255,255,255,0.05);
             overflow: hidden;
+            min-height: 0;
+        }
+        .video-container::before {
+            content: '';
+            position: absolute;
+            inset: 12px;
+            border: 1.5px solid rgba(0,96,174,0.35);
+            border-radius: 4px;
+            pointer-events: none;
+            z-index: 2;
+            clip-path: polygon(
+                0 0, 36px 0, 36px 1.5px, 1.5px 1.5px, 1.5px 36px, 0 36px,
+                100% 0, 100% 36px, calc(100% - 1.5px) 36px, calc(100% - 1.5px) 1.5px, calc(100% - 36px) 1.5px, calc(100% - 36px) 0,
+                100% 100%, calc(100% - 36px) 100%, calc(100% - 36px) calc(100% - 1.5px), calc(100% - 1.5px) calc(100% - 1.5px), calc(100% - 1.5px) calc(100% - 36px), 100% calc(100% - 36px),
+                0 100%, 0 calc(100% - 36px), 1.5px calc(100% - 36px), 1.5px calc(100% - 1.5px), 36px calc(100% - 1.5px), 36px 100%
+            );
+            animation: reticleGlow 3s ease-in-out infinite;
+        }
+        @keyframes reticleGlow {
+            0%, 100% { border-color: rgba(0,96,174,0.25); }
+            50% { border-color: rgba(0,96,174,0.5); }
+        }
+
+        .video-inner {
+            position: relative;
+            display: inline-flex;
+            max-width: 100%;
+            max-height: 100%;
+            z-index: 1;
         }
 
         .video-stream {
             max-width: 100%;
             max-height: 100%;
-            border-radius: 4px;
             display: none;
         }
 
@@ -301,33 +348,98 @@
 
         .patrol-overlay {
             position: absolute;
-            top: 20px;
-            left: 20px;
-            background: rgba(0, 114, 187, 0.9);
-            color: var(--bg-0);
-            padding: 10px 15px;
+            top: 16px;
+            left: 16px;
+            background: rgba(10,22,40,0.75);
+            backdrop-filter: blur(8px);
+            color: var(--ink-900);
+            padding: 8px 14px;
             border-radius: 6px;
-            font-size: 14px;
+            font-size: 13px;
             font-weight: 600;
+            border: 1px solid rgba(255,255,255,0.06);
+            z-index: 3;
         }
 
         /* GO2 Robot Control Panel */
         .go2-control-panel {
             position: absolute;
-            bottom: 16px;
-            right: 16px;
-            background: rgba(0, 0, 0, 0.85);
-            backdrop-filter: blur(12px);
-            border-radius: 12px;
-            border: 1px solid rgba(0, 114, 187, 0.3);
-            padding: 14px;
+            bottom: 12px;
+            left: 52px;
+            background: rgba(10,22,40,0.85);
+            backdrop-filter: blur(16px) saturate(180%);
+            border-radius: 10px;
+            border: 1px solid rgba(255,255,255,0.06);
+            padding: 10px;
             display: none;
             flex-direction: column;
-            gap: 12px;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
-            min-width: 180px;
+            gap: 8px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            min-width: 160px;
+            z-index: 3;
         }
         .go2-control-panel.visible { display: flex; }
+        .go2-control-panel.collapsed { display: none !important; }
+
+        .go2-estop-btn {
+            position: absolute;
+            bottom: 12px;
+            right: 12px;
+            padding: 6px 14px;
+            border-radius: 8px;
+            background: rgba(220,38,38,0.85);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255,100,100,0.3);
+            color: #fff;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 1px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            z-index: 4;
+            transition: all 0.15s;
+            box-shadow: 0 4px 16px rgba(220,38,38,0.3);
+        }
+        .go2-estop-btn:hover {
+            background: rgba(220,38,38,1);
+            transform: scale(1.05);
+            box-shadow: 0 4px 20px rgba(220,38,38,0.5);
+        }
+        .go2-estop-btn:active {
+            transform: scale(0.95);
+        }
+
+        .go2-toggle-btn {
+            position: absolute;
+            bottom: 12px;
+            left: 12px;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: rgba(10,22,40,0.85);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255,255,255,0.1);
+            color: var(--ink-700);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 4;
+            transition: all 0.2s;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+        }
+        .go2-toggle-btn:hover {
+            background: rgba(0,96,174,0.3);
+            border-color: rgba(0,96,174,0.4);
+            color: var(--ink-900);
+        }
+        .go2-toggle-btn.active {
+            background: var(--brand-600);
+            color: var(--bg-0);
+            border-color: var(--brand-600);
+        }
 
         .ctrl-panel-label {
             font-size: 9px;
@@ -348,9 +460,9 @@
             background: rgba(255, 255, 255, 0.08);
             color: var(--text-1);
             border: 1px solid rgba(255, 255, 255, 0.1);
-            padding: 8px 0;
-            border-radius: 8px;
-            font-size: 11px;
+            padding: 5px 0;
+            border-radius: 6px;
+            font-size: 10px;
             font-weight: 600;
             cursor: pointer;
             transition: all 0.15s ease;
@@ -380,16 +492,16 @@
 
         .dpad {
             display: grid;
-            grid-template-columns: 44px 44px 44px;
-            grid-template-rows: 44px 44px 44px;
-            gap: 3px;
+            grid-template-columns: 36px 36px 36px;
+            grid-template-rows: 36px 36px 36px;
+            gap: 2px;
             justify-self: center;
             align-self: center;
         }
 
         .dpad-btn {
-            width: 44px;
-            height: 44px;
+            width: 36px;
+            height: 36px;
             border: none;
             border-radius: 8px;
             background: rgba(255, 255, 255, 0.08);
@@ -425,46 +537,65 @@
         .dpad-center:hover { background: rgba(255, 255, 255, 0.03); }
 
         .status {
+            grid-area: stats;
             margin: 0;
-            padding: 12px 20px;
+            padding: 4px 20px;
             border-radius: 0;
             font-weight: 500;
+            font-size: 11px;
             text-align: center;
-            border-top: 1px solid var(--bg-50);
+            border-top: 1px solid rgba(255,255,255,0.05);
+            background: rgba(10,22,40,0.85);
+            backdrop-filter: blur(12px);
         }
 
         .status.success {
-            background: rgba(0, 168, 84, 0.1);
+            background: rgba(16, 185, 129, 0.08);
             color: var(--success);
-            border: 1px solid var(--success);
+            border-top: 1px solid rgba(16,185,129,0.2);
         }
 
         .status.warning {
-            background: rgba(250, 140, 22, 0.12);
+            background: rgba(232, 106, 42, 0.08);
             color: var(--warning);
-            border: 1px solid var(--warning);
+            border-top: 1px solid rgba(232,106,42,0.2);
         }
 
         .status.error {
-            background: rgba(245, 34, 45, 0.1);
+            background: rgba(232, 106, 42, 0.08);
             color: var(--error);
-            border: 1px solid var(--error);
+            border-top: 1px solid rgba(232,106,42,0.2);
         }
 
         .status.info {
-            background: rgba(0, 114, 187, 0.1);
-            color: var(--brand-600);
-            border: 1px solid var(--brand-600);
+            background: rgba(0, 96, 174, 0.08);
+            color: var(--brand-500);
+            border-top: 1px solid rgba(0,96,174,0.2);
         }
 
         .loading {
             color: var(--ink-400);
-            font-style: italic;
             display: flex;
+            flex-direction: column;
             align-items: center;
             justify-content: center;
-            gap: 10px;
-            font-size: 18px;
+            gap: 14px;
+            font-size: 13px;
+            font-weight: 500;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+        }
+        .loading::before {
+            content: '';
+            width: 32px;
+            height: 32px;
+            border: 2px solid rgba(0,96,174,0.15);
+            border-top-color: var(--brand-600);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
         }
 
         @keyframes pulse {
@@ -473,11 +604,7 @@
         }
 
         .footer {
-            background: var(--ink-900);
-            color: var(--bg-0);
-            text-align: center;
-            padding: 20px;
-            margin-top: 40px;
+            display: none;
         }
 
         .footer p {
@@ -487,51 +614,58 @@
 
         /* Detection Log Styles */
         .log-section {
+            grid-area: detections;
+            grid-row: 1 / 3;  /* span video + scene rows */
             margin: 0;
-            background: var(--bg-0);
+            background: var(--bg-50);
             border-radius: 0;
             box-shadow: none;
-            border-top: 1px solid var(--bg-50);
             overflow: hidden;
+            display: flex;
+            flex-direction: column;
         }
 
         .log-header {
-            background: linear-gradient(135deg, var(--brand-600) 0%, var(--brand-700) 100%);
-            color: var(--bg-0);
-            padding: 15px 20px;
+            background: rgba(15,29,50,0.9);
+            color: var(--ink-900);
+            padding: 12px 16px;
             display: flex;
             justify-content: space-between;
             align-items: center;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
         }
 
         .log-header h2 {
             margin: 0;
-            font-size: 18px;
-            font-weight: 600;
+            font-size: 13px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--ink-400);
         }
 
         .log-controls {
             display: flex;
-            gap: 10px;
+            gap: 6px;
         }
 
         .log-stats {
-            background: var(--bg-50);
-            padding: 15px 30px;
+            background: rgba(15,29,50,0.5);
+            padding: 10px 16px;
             display: flex;
-            gap: 40px;
-            border-bottom: 1px solid var(--bg-50);
+            gap: 20px;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
         }
 
         .stat-item {
             display: flex;
             flex-direction: column;
             align-items: center;
-            gap: 5px;
+            gap: 2px;
         }
 
         .stat-label {
-            font-size: 12px;
+            font-size: 10px;
             color: var(--ink-400);
             font-weight: 600;
             text-transform: uppercase;
@@ -539,71 +673,197 @@
         }
 
         .stat-value {
-            font-size: 18px;
+            font-size: 20px;
             font-weight: 700;
-            color: var(--brand-600);
+            color: var(--accent-orange);
+            font-variant-numeric: tabular-nums;
         }
 
         .log-container {
-            max-height: 400px;
+            flex: 1;
             overflow-y: auto;
-            border-bottom: 1px solid var(--bg-50);
+            border-bottom: none;
         }
 
         .detection-log {
-            padding: 20px;
+            padding: 12px;
         }
+
+        .scene-section {
+            grid-area: scene;
+            border-top: 1px solid rgba(255,255,255,0.05);
+            border-right: 1px solid rgba(255,255,255,0.05);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            min-height: 0;
+        }
+        .scene-section .log-container {
+            flex: 1;
+            overflow-y: auto;
+        }
+
+        .btn {
+            border: none;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+        .btn.btn-primary {
+            background: var(--brand-600);
+            color: #fff;
+            border-radius: 4px;
+        }
+        .btn.btn-primary:hover { background: var(--brand-700); }
+        .btn.btn-stop {
+            background: rgba(100,133,193,0.12);
+            color: var(--accent-teal-500);
+            border-radius: 4px;
+        }
+        .btn.btn-stop:hover { background: rgba(100,133,193,0.25); }
+
+        .scene-log {
+            padding: 12px;
+        }
+        .scene-entry {
+            display: flex;
+            gap: 10px;
+            padding: 10px 12px;
+            margin-bottom: 6px;
+            background: rgba(15,29,50,0.6);
+            border-radius: 8px;
+            border-left: 3px solid var(--accent-teal-500);
+            font-size: 13px;
+            line-height: 1.5;
+            animation: fadeIn 0.3s ease;
+        }
+        .scene-entry .scene-time {
+            color: var(--ink-400);
+            font-size: 11px;
+            white-space: nowrap;
+            min-width: 60px;
+            padding-top: 2px;
+        }
+        .scene-entry .scene-text {
+            color: var(--ink-100);
+        }
+        /* Mode toggle pill */
+        .scene-mode-toggle {
+            display: flex;
+            background: rgba(15,29,50,0.8);
+            border-radius: 6px;
+            border: 1px solid var(--ink-600);
+            overflow: hidden;
+        }
+        .mode-btn {
+            padding: 6px 14px;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.3px;
+            border: none;
+            background: transparent;
+            color: var(--ink-400);
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .mode-btn:hover { color: var(--ink-100); }
+        .mode-btn.active[data-mode="casual"] {
+            background: var(--accent-teal-500);
+            color: var(--bg-0);
+        }
+        .mode-btn.active[data-mode="gesture"] {
+            background: var(--accent-light-blue);
+            color: var(--bg-0);
+        }
+
+        /* Gesture-active banner in scene panel */
+        .gesture-active-banner {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px 20px;
+            background: rgba(56, 189, 248, 0.06);
+            border-left: 3px solid var(--accent-sky);
+            font-size: 13px;
+            color: var(--ink-100);
+        }
+        .gesture-active-banner .pulse-ring {
+            width: 10px; height: 10px;
+            border-radius: 50%;
+            background: var(--accent-sky);
+            animation: pulse 1.5s infinite;
+        }
+        .gesture-active-banner .gesture-stats {
+            margin-left: auto;
+            font-size: 11px;
+            color: var(--ink-400);
+        }
+        .scene-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 0 20px 8px;
+            font-size: 12px;
+            color: var(--ink-400);
+        }
+        .scene-status .dot {
+            width: 8px; height: 8px;
+            border-radius: 50%;
+            background: var(--accent-teal-500);
+            animation: pulse 2s infinite;
+        }
+        .scene-status .dot.offline { background: var(--ink-600); animation: none; }
 
         .log-empty {
             text-align: center;
             color: var(--ink-400);
             font-style: italic;
-            padding: 40px;
+            padding: 30px 16px;
+            font-size: 13px;
         }
 
         .log-entry {
             display: flex;
             align-items: center;
-            gap: 15px;
-            padding: 15px;
-            margin-bottom: 10px;
-            background: var(--bg-50);
+            gap: 10px;
+            padding: 10px;
+            margin-bottom: 6px;
+            background: rgba(15,29,50,0.6);
             border-radius: 8px;
-            border-left: 4px solid var(--error);
-            transition: all 0.3s ease;
+            border-left: 3px solid var(--accent-orange);
+            transition: all 0.2s ease;
+            animation: fadeIn 0.3s ease;
         }
 
         .log-entry:hover {
-            background: var(--brand-50);
-            transform: translateY(-1px);
-            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            background: rgba(22,39,64,0.8);
+            transform: translateX(2px);
         }
 
         .log-thumbnail {
-            width: 60px;
-            height: 45px;
+            width: 48px;
+            height: 36px;
             object-fit: cover;
             border-radius: 4px;
-            border: 2px solid var(--bg-0);
-            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            border: 1px solid rgba(255,255,255,0.06);
         }
 
         .log-content {
             flex: 1;
             display: flex;
             flex-direction: column;
-            gap: 5px;
+            gap: 3px;
         }
 
         .log-message {
             font-weight: 600;
-            color: var(--error);
-            font-size: 14px;
+            color: var(--accent-orange);
+            font-size: 13px;
         }
 
         .log-time {
-            font-size: 12px;
+            font-size: 11px;
             color: var(--ink-400);
+            font-variant-numeric: tabular-nums;
         }
 
         .log-details {
@@ -612,13 +872,13 @@
         }
 
         .log-id {
-            background: var(--brand-600);
-            color: var(--bg-0);
-            font-size: 10px;
-            font-weight: 600;
-            padding: 4px 8px;
-            border-radius: 12px;
-            min-width: 20px;
+            background: var(--accent-orange);
+            color: #fff;
+            font-size: 9px;
+            font-weight: 700;
+            padding: 3px 7px;
+            border-radius: 10px;
+            min-width: 18px;
             text-align: center;
         }
 
@@ -662,19 +922,21 @@
         }
 
         .config-modal-content {
-            background: var(--bg-0);
+            background: var(--bg-50);
+            border: 1px solid rgba(255,255,255,0.08);
             border-radius: 12px;
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            box-shadow: 0 8px 48px rgba(0, 0, 0, 0.5);
             width: 100%;
             max-width: 800px;
             max-height: 90vh;
             overflow-y: auto;
             position: relative;
+            color: var(--ink-700);
         }
 
         .config-modal-header {
-            background: linear-gradient(135deg, var(--brand-600) 0%, var(--brand-700) 100%);
-            color: var(--bg-0);
+            background: rgba(15,29,50,0.95);
+            color: var(--ink-900);
             padding: 20px 30px;
             border-radius: 12px 12px 0 0;
             display: flex;
@@ -690,7 +952,7 @@
 
         .config-modal-close {
             background: transparent;
-            color: var(--bg-0);
+            color: var(--ink-700);
             border: none;
             font-size: 28px;
             cursor: pointer;
@@ -716,7 +978,7 @@
         .config-tabs {
             display: flex;
             gap: 10px;
-            border-bottom: 2px solid var(--bg-50);
+            border-bottom: 2px solid rgba(255,255,255,0.06);
             margin-bottom: 30px;
         }
 
@@ -777,7 +1039,7 @@
         .config-select {
             width: 100%;
             padding: 10px 12px;
-            border: 1px solid var(--bg-50);
+            border: 1px solid rgba(255,255,255,0.1);
             border-radius: 8px;
             font-size: 14px;
             color: var(--ink-900);
@@ -823,7 +1085,7 @@
             flex: 1;
             height: 6px;
             border-radius: 3px;
-            background: var(--bg-50);
+            background: rgba(255,255,255,0.1);
             outline: none;
             -webkit-appearance: none;
         }
@@ -891,13 +1153,14 @@
         }
 
         .config-button-secondary {
-            background: var(--bg-50);
+            background: rgba(255,255,255,0.06);
             color: var(--ink-700);
+            border: 1px solid rgba(255,255,255,0.1);
         }
 
         .config-button-secondary:hover {
-            background: var(--ink-400);
-            color: var(--bg-0);
+            background: rgba(255,255,255,0.12);
+            color: var(--ink-900);
         }
 
         .config-button-danger {
@@ -911,17 +1174,18 @@
         }
 
         .config-file-upload {
-            border: 2px dashed var(--bg-50);
+            border: 2px dashed rgba(255,255,255,0.12);
             border-radius: 8px;
             padding: 20px;
             text-align: center;
             cursor: pointer;
             transition: all 0.2s;
+            color: var(--ink-400);
         }
 
         .config-file-upload:hover {
             border-color: var(--brand-600);
-            background: var(--brand-50);
+            background: rgba(0,96,174,0.08);
         }
 
         .config-file-upload input[type="file"] {
@@ -940,13 +1204,15 @@
             align-items: center;
             gap: 15px;
             padding: 10px 15px;
-            background: var(--bg-50);
+            background: rgba(255,255,255,0.04);
             border-radius: 8px;
+            border: 1px solid rgba(255,255,255,0.06);
             transition: all 0.2s;
         }
 
         .visual-prompt-item:hover {
-            background: var(--brand-50);
+            background: rgba(0,96,174,0.08);
+            border-color: rgba(0,96,174,0.2);
         }
 
         .visual-prompt-thumbnail {
@@ -954,7 +1220,7 @@
             height: 60px;
             object-fit: cover;
             border-radius: 6px;
-            border: 2px solid var(--bg-0);
+            border: 2px solid rgba(255,255,255,0.1);
         }
 
         .visual-prompt-info {
@@ -983,14 +1249,14 @@
         .nlp-test-result {
             margin-top: 15px;
             padding: 15px;
-            background: var(--brand-50);
+            background: rgba(0,96,174,0.08);
             border-radius: 8px;
             border-left: 4px solid var(--brand-600);
         }
 
         .nlp-test-result-title {
             font-weight: 600;
-            color: var(--brand-600);
+            color: var(--brand-500);
             margin-bottom: 10px;
         }
 
@@ -1012,11 +1278,11 @@
 
         .config-modal-footer {
             padding: 20px 30px;
-            border-top: 1px solid var(--bg-50);
+            border-top: 1px solid rgba(255,255,255,0.06);
             display: flex;
             justify-content: flex-end;
             gap: 10px;
-            background: var(--bg-50);
+            background: rgba(15,29,50,0.7);
             border-radius: 0 0 12px 12px;
         }
 
@@ -1144,7 +1410,7 @@
             left: 0;
             right: 0;
             background: rgba(0, 0, 0, 0.7);
-            color: var(--bg-0);
+            color: var(--ink-900);
             padding: 10px 15px;
             border-radius: 4px;
             text-align: center;
@@ -1162,19 +1428,42 @@
             border-color: var(--brand-600);
         }
 
+        @media (max-width: 1200px) {
+            .container {
+                grid-template-columns: 1fr 280px;
+            }
+        }
+
+        @media (max-width: 900px) {
+            .container {
+                grid-template-columns: 1fr;
+                grid-template-rows: auto auto 1fr auto;
+                grid-template-areas:
+                    "video"
+                    "scene"
+                    "detections"
+                    "stats";
+                height: auto;
+                overflow-y: auto;
+            }
+            body { height: auto; overflow: auto; }
+            .scene-section { max-height: 40vh; }
+            .log-section { max-height: 50vh; grid-row: auto; }
+        }
+
         @media (max-width: 768px) {
             .nav-container {
                 flex-direction: column;
                 gap: 15px;
                 padding: 15px 20px;
             }
-            
+
             .header-controls {
                 flex-wrap: wrap;
                 gap: 10px;
                 padding: 6px 10px;
             }
-            
+
             .patrol-buttons {
                 margin-left: 0;
                 padding-left: 0;
@@ -1182,35 +1471,35 @@
                 border-top: 1px solid rgba(255, 255, 255, 0.2);
                 padding-top: 8px;
             }
-            
+
             .modal-content {
                 max-width: 95%;
                 max-height: 80%;
             }
-            
+
             .modal-image {
                 min-width: 280px;
                 min-height: 210px;
             }
-            
+
             .modal-close {
                 top: -35px;
                 width: 28px;
                 height: 28px;
                 font-size: 16px;
             }
-            
+
             .modal-info {
                 bottom: -50px;
                 font-size: 12px;
                 padding: 8px 12px;
             }
-            
+
             .log-stats {
                 flex-direction: column;
                 gap: 15px;
             }
-            
+
             .log-entry {
                 flex-direction: column;
                 text-align: center;
@@ -1269,10 +1558,21 @@
                     <span id="batteryPercent" style="font-weight: 600; font-size: 14px; color: #10b981;">--</span>%
                 </span>
             </div>
-            <img id="videoStream" class="video-stream" src="" alt="Robot patrol video feed will appear here" style="display: none;">
-            <canvas id="detectionOverlay" class="detection-overlay"></canvas>
+            <div class="video-inner">
+                <img id="videoStream" class="video-stream" src="" alt="Robot patrol video feed will appear here" style="display: none;">
+                <canvas id="detectionOverlay" class="detection-overlay"></canvas>
+            </div>
             <div id="loadingText" class="loading">Waiting for robot patrol unit connection...</div>
 
+            <!-- Emergency Stop — always visible when GO2 connected -->
+            <button id="go2EstopBtn" class="go2-estop-btn" onclick="emergencyStop()" style="display:none;" title="Emergency Stop">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><rect x="3" y="3" width="18" height="18" rx="2"/></svg>
+                STOP
+            </button>
+            <!-- GO2 Robot Control Toggle -->
+            <button id="go2ToggleBtn" class="go2-toggle-btn" onclick="toggleGO2Panel()" style="display:none;" title="Robot Controls">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 11h4M8 9v4"/><circle cx="15" cy="10" r="1" fill="currentColor" stroke="none"/><circle cx="17" cy="12" r="1" fill="currentColor" stroke="none"/><rect x="2" y="6" width="20" height="12" rx="4" /><path d="M7 18l-1 2M17 18l1 2"/></svg>
+            </button>
             <!-- GO2 Robot Control Panel -->
             <div id="go2ControlPanel" class="go2-control-panel">
                 <span class="ctrl-panel-label">Actions</span>
@@ -1298,21 +1598,21 @@
                 <span class="ctrl-panel-label">Movement</span>
                 <div class="dpad">
                     <div class="dpad-spacer"></div>
-                    <button class="dpad-btn" data-vx="0.4" data-vy="0" data-vyaw="0" title="Forward">
+                    <button class="dpad-btn" data-vx="0.2" data-vy="0" data-vyaw="0" title="Forward">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
                     </button>
                     <div class="dpad-spacer"></div>
-                    <button class="dpad-btn" data-vx="0" data-vy="0.3" data-vyaw="0" title="Strafe Left">
+                    <button class="dpad-btn" data-vx="0" data-vy="0.15" data-vyaw="0" title="Strafe Left">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
                     </button>
                     <div class="dpad-btn dpad-center">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" opacity="0.3"><circle cx="12" cy="12" r="3"/></svg>
                     </div>
-                    <button class="dpad-btn" data-vx="0" data-vy="-0.3" data-vyaw="0" title="Strafe Right">
+                    <button class="dpad-btn" data-vx="0" data-vy="-0.15" data-vyaw="0" title="Strafe Right">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
                     </button>
                     <div class="dpad-spacer"></div>
-                    <button class="dpad-btn" data-vx="-0.3" data-vy="0" data-vyaw="0" title="Backward">
+                    <button class="dpad-btn" data-vx="-0.15" data-vy="0" data-vyaw="0" title="Backward">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
                     </button>
                     <div class="dpad-spacer"></div>
@@ -1320,8 +1620,40 @@
             </div>
         </div>
         <div id="status" class="status info">Color Channel ready - Auto-starting patrol...</div>
-        
-        <!-- Detection Log Viewer -->
+
+        <!-- Scene Narration Log (below video) -->
+        <div id="sceneSection" class="log-section scene-section" style="display:none;">
+            <div class="log-header">
+                <h2>Scene Awareness</h2>
+                <div class="log-controls">
+                    <div id="sceneModeToggle" class="scene-mode-toggle">
+                        <button id="modeCasualBtn" class="mode-btn active" data-mode="casual" title="Slow, detailed scene observation">Observe</button>
+                        <button id="modeGestureBtn" class="mode-btn" data-mode="gesture" title="Fast gesture scan — triggers shake on outstretched hand">Gesture</button>
+                    </div>
+                    <button id="toggleSceneCtx" class="btn btn-primary" style="padding: 8px 16px; font-size: 12px;">Context</button>
+                    <button id="clearSceneBtn" class="btn btn-stop" style="padding: 8px 16px; font-size: 12px;">Clear</button>
+                </div>
+            </div>
+            <div id="sceneCtxPanel" style="display:none; padding: 12px 20px;">
+                <label style="font-size: 12px; color: var(--ink-400); display: block; margin-bottom: 6px;">Scene context — shapes how the VLM describes what it sees</label>
+                <textarea id="sceneCtxInput" rows="3" style="width:100%; box-sizing:border-box; background:var(--bg-50); color:var(--ink-100); border:1px solid var(--ink-600); border-radius:6px; padding:10px; font-size:13px; resize:vertical; font-family:inherit;"></textarea>
+                <div style="margin-top:8px; display:flex; gap:8px; align-items:center;">
+                    <button id="saveSceneCtx" class="btn btn-primary" style="padding: 6px 16px; font-size: 12px;">Save</button>
+                    <span id="sceneCtxStatus" style="font-size:12px; color:var(--ink-400);"></span>
+                </div>
+            </div>
+            <div class="scene-status">
+                <span id="sceneDot" class="dot offline"></span>
+                <span id="sceneStatusText">Connecting to VLM...</span>
+            </div>
+            <div class="log-container">
+                <div id="sceneLog" class="scene-log">
+                    <div class="log-empty">Waiting for scene narration...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Detection Log Viewer (right column) -->
         <div class="log-section">
             <div class="log-header">
                 <h2>Detection Log</h2>
@@ -1330,7 +1662,7 @@
                     <button id="clearLogBtn" class="btn btn-stop" style="padding: 8px 16px; font-size: 12px;">Clear Log</button>
                 </div>
             </div>
-            
+
             <div class="log-stats">
                 <div class="stat-item">
                     <span class="stat-label">Total Detections:</span>
@@ -1341,7 +1673,7 @@
                     <span id="lastDetection" class="stat-value">None</span>
                 </div>
             </div>
-            
+
             <div class="log-container">
                 <div id="detectionLog" class="detection-log">
                     <div class="log-empty">No detections logged yet</div>
@@ -1350,9 +1682,8 @@
         </div>
     </div>
 
-    <div class="footer">
-        <p>&copy; 2024 NTT DATA Corporation. Project Watch Dog - Advanced Factory Surveillance Solution.</p>
-    </div>
+    <!-- footer hidden for demo real estate -->
+
 
     <!-- Configuration Modal -->
     <div id="configModal" class="config-modal">
@@ -1903,20 +2234,20 @@
                 return;
             }
 
-            const logHtml = logs.reverse().map(log => `
+            const logHtml = logs.reverse().map(log => {
+                const counts = log.class_counts || {};
+                const summary = Object.entries(counts).map(([cls, n]) => `${n} ${cls}`).join(', ');
+                const conf = log.max_confidence ? Math.round(log.max_confidence * 100) + '%' : '';
+                const time = (log.formatted_time || '').split(' ')[1] || log.formatted_time;
+                return `
                 <div class="log-entry">
-                    <div class="log-id">#${log.id}</div>
-                    ${log.thumbnail ? `<img class="log-thumbnail" src="/thumbnail/${log.thumbnail}" alt="Detection thumbnail" onclick="openImageModal('/image/${log.thumbnail}', '${log.message}', '${log.formatted_time}')" />` : ''}
+                    ${log.thumbnail ? `<img class="log-thumbnail" src="/thumbnail/${log.thumbnail}" alt="Detection" onclick="openImageModal('/image/${log.thumbnail}', '${summary}', '${log.formatted_time}')" />` : ''}
                     <div class="log-content">
-                        <div class="log-message">${log.message}</div>
-                        <div class="log-time">${log.formatted_time}</div>
-                        <div class="log-details">
-                            ${log.person_count} person${log.person_count !== 1 ? 's' : ''}${log.orange_count ? `, ${log.orange_count} orange cone${log.orange_count !== 1 ? 's' : ''}` : ''} detected | 
-                            Confidence: ${Math.round(log.max_confidence * 100)}%
-                        </div>
+                        <div class="log-message">${summary || 'Detection'}</div>
+                        <div class="log-details">${conf} · ${time}</div>
                     </div>
-                </div>
-            `).join('');
+                </div>`;
+            }).join('');
 
             detectionLog.innerHTML = logHtml;
         }
@@ -2876,20 +3207,53 @@
         }
 
         // GO2 Action Bar Management
+        let _go2PanelCollapsed = true;
+
+        function toggleGO2Panel() {
+            const panel = document.getElementById('go2ControlPanel');
+            const btn = document.getElementById('go2ToggleBtn');
+            if (!panel) return;
+            _go2PanelCollapsed = !_go2PanelCollapsed;
+            panel.classList.toggle('collapsed', _go2PanelCollapsed);
+            if (btn) btn.classList.toggle('active', !_go2PanelCollapsed);
+        }
+
         function showGO2ActionBar() {
             const panel = document.getElementById('go2ControlPanel');
-            if (panel) panel.classList.add('visible');
+            const btn = document.getElementById('go2ToggleBtn');
+            const estop = document.getElementById('go2EstopBtn');
+            if (panel) {
+                panel.classList.add('visible');
+                panel.classList.add('collapsed');
+                _go2PanelCollapsed = true;
+            }
+            if (btn) {
+                btn.style.display = 'flex';
+                btn.classList.remove('active');
+            }
+            if (estop) estop.style.display = 'flex';
         }
 
         function hideGO2ActionBar() {
             const panel = document.getElementById('go2ControlPanel');
-            if (panel) panel.classList.remove('visible');
+            const btn = document.getElementById('go2ToggleBtn');
+            const estop = document.getElementById('go2EstopBtn');
+            if (panel) {
+                panel.classList.remove('visible');
+                panel.classList.remove('collapsed');
+            }
+            if (btn) {
+                btn.style.display = 'none';
+                btn.classList.remove('active');
+            }
+            if (estop) estop.style.display = 'none';
         }
 
-        // D-Pad movement controls
+        // D-Pad movement controls with safety gating
         (function initDpad() {
             let _moveInterval = null;
-            const MOVE_RATE_MS = 200;
+            let _moveInFlight = false;
+            const MOVE_RATE_MS = 300;
 
             function startMove(btn) {
                 stopMove();
@@ -2906,18 +3270,27 @@
                     clearInterval(_moveInterval);
                     _moveInterval = null;
                 }
+                _moveInFlight = false;
                 document.querySelectorAll('.dpad-btn.active').forEach(b => b.classList.remove('active'));
                 fetch('/go2/stop', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}' }).catch(() => {});
             }
 
             async function sendMoveCmd(vx, vy, vyaw) {
+                if (_moveInFlight) return;
+                _moveInFlight = true;
                 try {
-                    await fetch('/go2/move', {
+                    const resp = await fetch('/go2/move', {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ vx, vy, vyaw })
+                        body: JSON.stringify({ vx, vy, vyaw }),
+                        signal: AbortSignal.timeout(800)
                     });
-                } catch (e) { /* best-effort */ }
+                    if (!resp.ok) stopMove();
+                } catch (e) {
+                    stopMove();
+                } finally {
+                    _moveInFlight = false;
+                }
             }
 
             document.querySelectorAll('.dpad-btn:not(.dpad-center)').forEach(btn => {
@@ -2927,6 +3300,12 @@
             document.addEventListener('mouseup', stopMove);
             document.addEventListener('touchend', stopMove);
             document.addEventListener('touchcancel', stopMove);
+
+            // Auto-stop when tab loses focus or page is hidden
+            document.addEventListener('visibilitychange', () => {
+                if (document.hidden) stopMove();
+            });
+            window.addEventListener('blur', stopMove);
         })();
 
         // Show action bar on page load if GO2 is selected
@@ -2934,33 +3313,51 @@
             showGO2ActionBar();
         }
 
-        // GO2 Robot Command Functions
+        // GO2 Robot Command Functions with cooldown
+        let _cmdCooldown = false;
         async function sendGO2Command(command) {
+            if (_cmdCooldown) {
+                showStatus('Command cooldown — wait a moment', 'warning');
+                return;
+            }
+            _cmdCooldown = true;
+            document.querySelectorAll('.go2-cmd-btn').forEach(b => b.disabled = true);
+            setTimeout(() => {
+                _cmdCooldown = false;
+                document.querySelectorAll('.go2-cmd-btn').forEach(b => b.disabled = false);
+            }, 1500);
 
             try {
                 const response = await fetch('/go2/command', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({ command: command })
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ command: command }),
+                    signal: AbortSignal.timeout(5000)
                 });
 
                 if (response.ok) {
                     const result = await response.json();
-
                     if (result.success) {
-                        showStatus(`GO2 command "${command}" executed successfully`, 'success');
+                        showStatus(`${command} — OK`, 'success');
                     } else {
-                        showStatus(`GO2 command "${command}" failed: ${result.message}`, 'error');
+                        showStatus(`${command} failed: ${result.message}`, 'error');
                     }
+                } else if (response.status === 429) {
+                    showStatus('Command cooldown — wait a moment', 'warning');
                 } else {
-                    showStatus(`Failed to send GO2 command "${command}"`, 'error');
+                    showStatus(`Failed to send "${command}"`, 'error');
                 }
             } catch (error) {
-                console.error(`[GO2 Command] Error sending ${command}:`, error);
-                showStatus(`Error sending GO2 command "${command}"`, 'error');
+                showStatus(`Error sending "${command}"`, 'error');
             }
+        }
+
+        // Emergency stop — always accessible
+        async function emergencyStop() {
+            try {
+                await fetch('/go2/stop', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}' });
+                showStatus('Emergency stop sent', 'warning');
+            } catch(e) {}
         }
 
         function showStatus(message, type) {
@@ -2975,10 +3372,12 @@
             if (!detectionCanvas || !videoStream) {
                 return;
             }
-            const newWidth = videoStream.clientWidth || videoStream.naturalWidth || detectionCanvas.width || 640;
-            const newHeight = videoStream.clientHeight || videoStream.naturalHeight || detectionCanvas.height || 480;
+            const newWidth = videoStream.clientWidth || videoStream.naturalWidth || 640;
+            const newHeight = videoStream.clientHeight || videoStream.naturalHeight || 480;
             detectionCanvas.width = newWidth;
             detectionCanvas.height = newHeight;
+            detectionCanvas.style.width = newWidth + 'px';
+            detectionCanvas.style.height = newHeight + 'px';
         }
 
         window.addEventListener('resize', resizeDetectionCanvas);
@@ -3050,7 +3449,7 @@
 
              // Drop stale detections or mismatched camera sources
             const nowSec = Date.now() / 1000;
-            if ((data.timestamp && nowSec - data.timestamp > 2) ||
+            if ((data.timestamp && nowSec - data.timestamp > 1.0) ||
                 (data.camera_source && cameraSelect && data.camera_source !== cameraSelect.value)) {
                 return;
             }
@@ -3093,6 +3492,179 @@
                 detectionCtx.fillText(label, scaledX + padding, scaledY - labelHeight + padding / 2);
             });
         }
+    </script>
+    <script>
+    (function initSceneNarrator() {
+        const section = document.getElementById('sceneSection');
+        const log = document.getElementById('sceneLog');
+        const dot = document.getElementById('sceneDot');
+        const statusText = document.getElementById('sceneStatusText');
+        const clearBtn = document.getElementById('clearSceneBtn');
+        const modeCasualBtn = document.getElementById('modeCasualBtn');
+        const modeGestureBtn = document.getElementById('modeGestureBtn');
+        let lastTimestamp = null;
+        let active = false;
+        let currentMode = 'casual';
+
+        clearBtn.addEventListener('click', function() {
+            log.innerHTML = '<div class="log-empty">Waiting for scene narration...</div>';
+            lastTimestamp = new Date().toISOString();
+        });
+
+        function formatTime(iso) {
+            const d = new Date(iso);
+            return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+        }
+
+        // ── Mode toggle ────────────────────────────────────────
+        function setModeUI(mode) {
+            currentMode = mode;
+            modeCasualBtn.classList.toggle('active', mode === 'casual');
+            modeGestureBtn.classList.toggle('active', mode === 'gesture');
+
+            const logContainer = log.closest('.log-container');
+            const existingBanner = section.querySelector('.gesture-active-banner');
+
+            if (mode === 'gesture') {
+                dot.classList.remove('offline');
+                statusText.textContent = 'Gesture scan active — watching for outstretched hand';
+                // Hide the log container and show gesture banner
+                if (logContainer) logContainer.style.display = 'none';
+                if (!existingBanner) {
+                    const banner = document.createElement('div');
+                    banner.className = 'gesture-active-banner';
+                    banner.id = 'gestureBanner';
+                    banner.innerHTML =
+                        '<span class="pulse-ring"></span>' +
+                        '<span>Pose detection active &mdash; extend hand to trigger shake</span>' +
+                        '<span class="gesture-stats" id="gestureStats"></span>';
+                    const statusBar = section.querySelector('.scene-status');
+                    if (statusBar) statusBar.after(banner);
+                }
+            } else {
+                statusText.textContent = active ? 'VLM active — observing every ~10s' : 'Connecting to VLM...';
+                if (logContainer) logContainer.style.display = '';
+                if (existingBanner) existingBanner.remove();
+            }
+        }
+
+        function switchMode(mode) {
+            fetch('/api/scene/mode', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({mode: mode})
+            }).then(r => r.json()).then(d => {
+                if (d.success) setModeUI(d.mode);
+            });
+        }
+
+        modeCasualBtn.addEventListener('click', function() { switchMode('casual'); });
+        modeGestureBtn.addEventListener('click', function() { switchMode('gesture'); });
+
+        // ── Poll for narration entries (casual) + mode status ──
+        function poll() {
+            // Always poll mode status
+            fetch('/api/scene/mode').then(r => r.json()).then(modeData => {
+                if (!modeData.enabled) {
+                    section.style.display = 'none';
+                    return;
+                }
+                section.style.display = '';
+                if (modeData.mode !== currentMode) {
+                    setModeUI(modeData.mode);
+                }
+                // Update gesture stats if in gesture mode
+                if (modeData.mode === 'gesture') {
+                    const statsEl = document.getElementById('gestureStats');
+                    if (statsEl) {
+                        const parts = [];
+                        if (modeData.gesture_count > 0) parts.push(modeData.gesture_count + ' shake' + (modeData.gesture_count !== 1 ? 's' : ''));
+                        if (modeData.gesture_cooldown_remaining > 0) parts.push('cooldown ' + modeData.gesture_cooldown_remaining + 's');
+                        if (modeData.gesture_confirmations > 0) parts.push('confirming ' + modeData.gesture_confirmations + '/' + modeData.gesture_required);
+                        statsEl.textContent = parts.join(' | ');
+                    }
+                }
+            }).catch(function() {});
+
+            // Poll for narration entries only in casual mode
+            if (currentMode !== 'casual') return;
+
+            const url = lastTimestamp ? '/api/scene?since=' + encodeURIComponent(lastTimestamp) : '/api/scene';
+            fetch(url).then(r => r.json()).then(data => {
+                if (!data.enabled) return;
+                if (!active) {
+                    active = true;
+                    dot.classList.remove('offline');
+                    statusText.textContent = 'VLM active — observing every ~10s';
+                }
+                if (data.entries && data.entries.length > 0) {
+                    const isEmpty = log.querySelector('.log-empty');
+                    if (isEmpty) log.innerHTML = '';
+                    // Newest on top — prepend in reverse order so batch stays chronological
+                    for (let i = data.entries.length - 1; i >= 0; i--) {
+                        const e = data.entries[i];
+                        const div = document.createElement('div');
+                        div.className = 'scene-entry';
+                        const safeText = e.description.replace(/</g,'&lt;');
+                        div.innerHTML = '<span class="scene-time">' + formatTime(e.timestamp) + '</span><span class="scene-text">' + safeText + '</span>';
+                        log.prepend(div);
+                    }
+                    lastTimestamp = data.entries[data.entries.length - 1].timestamp;
+                    // Scroll to top to show newest
+                    const container = log.closest('.log-container');
+                    if (container) container.scrollTop = 0;
+                }
+            }).catch(function() {
+                if (active) {
+                    dot.classList.add('offline');
+                    statusText.textContent = 'VLM connection lost';
+                    active = false;
+                }
+            });
+        }
+
+        poll();
+        setInterval(poll, 5000);
+
+        // ── Context panel ──────────────────────────────────────
+        const ctxToggle = document.getElementById('toggleSceneCtx');
+        const ctxPanel = document.getElementById('sceneCtxPanel');
+        const ctxInput = document.getElementById('sceneCtxInput');
+        const ctxSave = document.getElementById('saveSceneCtx');
+        const ctxStatus = document.getElementById('sceneCtxStatus');
+
+        ctxToggle.addEventListener('click', function() {
+            const open = ctxPanel.style.display !== 'none';
+            ctxPanel.style.display = open ? 'none' : '';
+            if (!open) {
+                fetch('/api/scene/context').then(r => r.json()).then(d => {
+                    ctxInput.value = d.scene_context || '';
+                });
+            }
+        });
+
+        ctxSave.addEventListener('click', function() {
+            ctxSave.disabled = true;
+            ctxStatus.textContent = 'Saving...';
+            fetch('/api/scene/context', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({scene_context: ctxInput.value})
+            }).then(r => r.json()).then(d => {
+                ctxStatus.textContent = d.success ? 'Saved — takes effect on next narration' : 'Error saving';
+                ctxSave.disabled = false;
+                setTimeout(() => { ctxStatus.textContent = ''; }, 4000);
+            }).catch(() => {
+                ctxStatus.textContent = 'Error saving';
+                ctxSave.disabled = false;
+            });
+        });
+
+        // Sync initial mode from server
+        fetch('/api/scene/mode').then(r => r.json()).then(d => {
+            if (d.mode) setModeUI(d.mode);
+        }).catch(function() {});
+    })();
     </script>
 </body>
 </html>

@@ -28,9 +28,23 @@ telemetry:
   device_id: watchdog-edge-01
   device_type: nvidia_agx_xavier
   local_export_dir: telemetry_export
+scene_narrator:
+  enabled: true
+  ollama_url: http://127.0.0.1:11434
+  model: qwen2.5vl:3b
+  default_mode: casual   # "casual" or "gesture"
+  scene_context: >
+    You are at Snowflake Summit 2026. Remember — YOU are the robot dog,
+    this is YOUR point of view. Any robot parts visible at the edges of
+    the frame are YOUR own body — do not mention them. Focus on the humans
+    and environment around you: are people gathering, reacting to you,
+    crouching to look at you, or is the area empty between sessions?
+  gesture:
+    cooldown_seconds: 10
 vision:
   classes:
   - ball
+  - person
   conf: 0.25
   detection_mode: text
   detector: yoloe

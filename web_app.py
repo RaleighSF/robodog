@@ -10,6 +10,8 @@ from hybrid_detector import HybridDetector
 from camera import CameraManager
 from detection_logger import DetectionLogger
 from telemetry_exporter import TelemetryManager, init_telemetry, get_telemetry
+from scene_narrator import init_narrator, get_narrator
+from gesture_detector import get_gesture_detector
 import asyncio
 import threading
 import json
@@ -65,12 +67,12 @@ class WebApp:
         self._last_detections = []
         self._last_detection_ts = 0.0
         self._detection_interval = 0.25  # seconds between detector invocations (~4 FPS)
-        self._max_detection_width = 960  # downscale before inference to save memory/compute
+        self._max_detection_width = 800  # downscale before inference to save memory/compute
         self._last_start_request = 0.0
         self._last_stop_request = 0.0
         self._throttle_window = 3.0  # seconds between successive start/stop calls
         # Asynchronous detection worker
-        self._detection_queue = queue.Queue(maxsize=2)
+        self._detection_queue = queue.Queue(maxsize=1)
         self._detection_thread = None
         self._detection_stop_event = threading.Event()
         self._last_detection_enqueue_ts = 0.0
@@ -166,6 +168,17 @@ class WebApp:
                 self._detection_queue.task_done()
                 break
 
+            # Drain queue — always process the newest frame to reduce lag
+            while not self._detection_queue.empty():
+                try:
+                    newer = self._detection_queue.get_nowait()
+                    self._detection_queue.task_done()
+                    if newer is None:
+                        break
+                    frame = newer
+                except queue.Empty:
+                    break
+
             try:
                 if not self._config_manager:
                     from config import get_config
@@ -199,6 +212,10 @@ class WebApp:
                 detection_count += 1
                 if detection_count % 20 == 0:  # Log every 20 detections
                     print(f"[DetectionWorker] Processed {detection_count} frames, latest: {len(detections)} objects")
+
+                # Outstretched hand gesture detection (YOLO Pose keypoints)
+                if detections and _gesture_enabled:
+                    _check_outstretched_hand(frame)
 
                 if self._config_manager.is_alert_logging_enabled():
                     target_classes = self._config_manager.get_classes()
@@ -546,9 +563,92 @@ def latest_detections():
         'camera_source': camera_manager.camera_source
     })
 
+# ── Gesture detection via YOLO bbox heuristic ──────────────────────
+# A squatting person has a distinctly different bbox shape than standing:
+#   Standing person:  tall & narrow  (w/h ≈ 0.3-0.5)
+#   Squatting person: wide & short   (w/h ≈ 0.8-1.5)
+#
+# To avoid false positives from distant/partially-visible people we
+# enforce THREE conditions simultaneously:
+#   1. Aspect ratio (w/h) ≥ 0.75  — bbox is squat-shaped
+#   2. Bbox area ≥ 8% of frame    — person must be CLOSE to the robot
+#   3. Bbox bottom edge in lower 40% of frame — person is low/near ground
+#
+# A person walking past at 10+ feet will have a tiny bbox (fails #2).
+# A person standing close will be tall & narrow (fails #1).
+# A person's head/torso cropped at frame edge may have odd aspect but
+# won't be large enough or low enough (fails #2 or #3).
+_GESTURE_COOLDOWN = 10.0   # seconds between shake triggers
+_gesture_last_trigger_ts = 0.0
+_gesture_count = 0
+_gesture_enabled = False    # toggled by scene narrator mode
+
+
+def _check_outstretched_hand(frame):
+    """Run YOLO Pose keypoint detection for outstretched hand and fire shake.
+
+    Uses the lightweight yolo11n-pose model (~6MB) to check shoulder-elbow-wrist
+    geometry.  Runs on the raw detection frame — no extra capture needed.
+    """
+    global _gesture_last_trigger_ts, _gesture_count
+    if not _gesture_enabled:
+        return
+    now = time.time()
+    if (now - _gesture_last_trigger_ts) < _GESTURE_COOLDOWN:
+        return
+
+    gd = get_gesture_detector()
+    result = gd.check_outstretched_hand(frame)
+
+    if result["detected"]:
+        _gesture_last_trigger_ts = now
+        _gesture_count += 1
+        logger.info(
+            f"[GesturePose] Outstretched hand ({result['arm']}) detected! "
+            f"conf={result['confidence']:.2f} persons={result['person_count']} "
+            f"pose_ms={result['inference_ms']:.0f} — "
+            f"firing shake #{_gesture_count}"
+        )
+        _gesture_shake_callback(f"outstretched_hand_{result['arm']}")
+
+
+_go2_last_move_ts = 0.0
+_go2_last_command_ts = 0.0
+_go2_watchdog_thread = None
+_go2_watchdog_running = False
+_GO2_MOVE_TIMEOUT = 0.6
+_GO2_COMMAND_COOLDOWN = 1.5
+_GO2_MAX_VX = 0.25
+_GO2_MAX_VY = 0.2
+_GO2_MAX_VYAW = 0.5
+_GO2_SERVICE_URL = 'http://192.168.50.207:5001'
+
+
+def _go2_watchdog_loop():
+    global _go2_watchdog_running
+    _go2_watchdog_running = True
+    while _go2_watchdog_running:
+        if _go2_last_move_ts > 0 and (time.time() - _go2_last_move_ts) > _GO2_MOVE_TIMEOUT:
+            try:
+                requests.post(f'{_GO2_SERVICE_URL}/stop', json={}, timeout=1)
+                logger.debug("[GO2 Watchdog] Auto-stop — no move command received")
+            except Exception:
+                pass
+        time.sleep(0.2)
+
+
+def _ensure_go2_watchdog():
+    global _go2_watchdog_thread
+    if _go2_watchdog_thread and _go2_watchdog_thread.is_alive():
+        return
+    _go2_watchdog_thread = threading.Thread(target=_go2_watchdog_loop, daemon=True, name="go2-watchdog")
+    _go2_watchdog_thread.start()
+    logger.info("[GO2 Watchdog] Started — auto-stop after %.1fs idle", _GO2_MOVE_TIMEOUT)
+
+
 @app.route('/go2/command', methods=['POST'])
 def go2_command():
-    """Proxy endpoint for sending GO2 robot commands"""
+    global _go2_last_command_ts
     try:
         data = request.get_json()
         command = data.get('command')
@@ -556,10 +656,15 @@ def go2_command():
         if not command:
             return jsonify({'success': False, 'message': 'No command specified'}), 400
 
-        logger.info(f"Sending GO2 command: {command}")
+        now = time.time()
+        if (now - _go2_last_command_ts) < _GO2_COMMAND_COOLDOWN:
+            remaining = _GO2_COMMAND_COOLDOWN - (now - _go2_last_command_ts)
+            return jsonify({'success': False, 'message': f'Cooldown — wait {remaining:.1f}s'}), 429
 
-        # Forward command to GO2 service
-        response = requests.post('http://192.168.50.207:5001/command',
+        logger.info(f"Sending GO2 command: {command}")
+        _go2_last_command_ts = now
+
+        response = requests.post(f'{_GO2_SERVICE_URL}/command',
                                 json={'command': command},
                                 timeout=5)
 
@@ -588,26 +693,30 @@ def go2_command():
 
 @app.route('/go2/move', methods=['POST'])
 def go2_move():
-    """Proxy endpoint for GO2 velocity movement"""
+    global _go2_last_move_ts
+    _ensure_go2_watchdog()
     try:
         data = request.get_json()
-        vx = float(data.get('vx', 0))
-        vy = float(data.get('vy', 0))
-        vyaw = float(data.get('vyaw', 0))
+        vx = max(-_GO2_MAX_VX, min(_GO2_MAX_VX, float(data.get('vx', 0))))
+        vy = max(-_GO2_MAX_VY, min(_GO2_MAX_VY, float(data.get('vy', 0))))
+        vyaw = max(-_GO2_MAX_VYAW, min(_GO2_MAX_VYAW, float(data.get('vyaw', 0))))
 
-        response = requests.post('http://192.168.50.207:5001/move',
+        _go2_last_move_ts = time.time()
+        response = requests.post(f'{_GO2_SERVICE_URL}/move',
             json={'vx': vx, 'vy': vy, 'vyaw': vyaw},
-            timeout=3
+            timeout=1
         )
         return jsonify(response.json()), response.status_code
     except Exception as e:
+        _go2_last_move_ts = 0.0
         return jsonify({'success': False, 'message': str(e)}), 503
 
 @app.route('/go2/stop', methods=['POST'])
 def go2_stop():
-    """Proxy endpoint to stop GO2 movement"""
+    global _go2_last_move_ts
+    _go2_last_move_ts = 0.0
     try:
-        response = requests.post('http://192.168.50.207:5001/stop',
+        response = requests.post(f'{_GO2_SERVICE_URL}/stop',
             json={},
             timeout=3
         )
@@ -711,6 +820,63 @@ def telemetry_stats():
     if not telemetry:
         return jsonify({'enabled': False})
     return jsonify(telemetry.get_stats())
+
+@app.route('/api/scene')
+def scene_narration():
+    narrator = get_narrator()
+    if not narrator or not narrator.enabled:
+        return jsonify({'enabled': False, 'entries': []})
+    since = request.args.get('since')
+    entries = narrator.get_log(since=since)
+    return jsonify({'enabled': True, 'entries': entries})
+
+@app.route('/api/scene/context', methods=['GET'])
+def get_scene_context():
+    narrator = get_narrator()
+    if not narrator:
+        return jsonify({'scene_context': ''})
+    return jsonify({'scene_context': narrator.scene_context or ''})
+
+@app.route('/api/scene/context', methods=['POST'])
+def set_scene_context():
+    narrator = get_narrator()
+    if not narrator:
+        return jsonify({'success': False, 'message': 'Narrator not initialized'}), 503
+    data = request.get_json()
+    narrator.scene_context = data.get('scene_context', '').strip() or None
+    return jsonify({'success': True})
+
+@app.route('/api/scene/mode', methods=['GET'])
+def get_scene_mode():
+    """Return the current narrator mode + gesture detection stats."""
+    narrator = get_narrator()
+    if not narrator:
+        return jsonify({'enabled': False})
+    status = narrator.get_status()
+    # Overlay YOLO Pose gesture stats
+    now = time.time()
+    remaining = max(0, _GESTURE_COOLDOWN - (now - _gesture_last_trigger_ts))
+    status['gesture_count'] = _gesture_count
+    status['gesture_cooldown_remaining'] = round(remaining, 1)
+    status['gesture_cooldown_seconds'] = _GESTURE_COOLDOWN
+    status['gesture_method'] = 'yolo_pose'
+    return jsonify(status)
+
+@app.route('/api/scene/mode', methods=['POST'])
+def set_scene_mode():
+    """Toggle between 'casual' and 'gesture' modes."""
+    narrator = get_narrator()
+    if not narrator:
+        return jsonify({'success': False, 'message': 'Narrator not initialized'}), 503
+    data = request.get_json()
+    mode = data.get('mode', '').strip().lower()
+    if mode not in ('casual', 'gesture'):
+        return jsonify({'success': False, 'message': f'Invalid mode: {mode}'}), 400
+    global _gesture_enabled
+    narrator.set_mode(mode)
+    _gesture_enabled = (mode == 'gesture')
+    logger.info(f"[GesturePose] Outstretched hand detection {'ENABLED' if _gesture_enabled else 'DISABLED'}")
+    return jsonify({'success': True, 'mode': narrator.mode})
 
 @app.route('/thumbnail/<filename>')
 def serve_thumbnail(filename):
@@ -1185,6 +1351,69 @@ def _init_telemetry():
 
 
 _init_telemetry()
+
+
+def _gesture_shake_callback(gesture_text: str):
+    """Called by SceneNarrator when an outstretched-hand gesture is detected.
+
+    Sends the GO2 'shake' command in a fire-and-forget thread so the
+    narrator loop is not blocked.
+    """
+    def _send():
+        try:
+            logger.info(f"[Gesture] Sending GO2 shake — triggered by: '{gesture_text}'")
+            resp = requests.post(
+                f'{_GO2_SERVICE_URL}/command',
+                json={'command': 'shake'},
+                timeout=5,
+            )
+            if resp.status_code == 200:
+                result = resp.json()
+                logger.info(f"[Gesture] GO2 shake result: {result}")
+            else:
+                logger.warning(f"[Gesture] GO2 shake failed: {resp.status_code}")
+        except Exception as e:
+            logger.error(f"[Gesture] GO2 shake request error: {e}")
+    threading.Thread(target=_send, daemon=True, name="gesture-shake").start()
+
+
+def _init_scene_narrator():
+    """Initialize scene narrator if enabled in config."""
+    from config import get_config
+    cfg = get_config()
+    narrator_cfg = cfg.config.get('scene_narrator', {})
+    if not narrator_cfg.get('enabled', False):
+        logger.info("[SceneNarrator] Disabled in config — skipping init")
+        return
+    narrator = init_narrator(
+        ollama_url=narrator_cfg.get('ollama_url'),
+        model=narrator_cfg.get('model'),
+        scene_context=narrator_cfg.get('scene_context'),
+    )
+    narrator.set_frame_source(lambda: camera_manager.get_frame())
+
+    # VLM gesture callback is DISABLED — YOLO Pose keypoints are the sole
+    # shake trigger now (faster, no hallucination false-positives).
+    # The narrator still toggles between casual/gesture modes for its own
+    # scanning loop, but its gesture callback is not wired to the robot.
+    gesture_cfg = narrator_cfg.get('gesture', {})
+    cooldown = gesture_cfg.get('cooldown_seconds', 10)
+    global _GESTURE_COOLDOWN
+    _GESTURE_COOLDOWN = cooldown
+    logger.info(f"[GesturePose] YOLO Pose is sole shake trigger — cooldown {cooldown}s (VLM gesture callback disabled)")
+
+    # Start in the configured default mode
+    global _gesture_enabled
+    default_mode = narrator_cfg.get('default_mode', 'casual')
+    narrator.set_mode(default_mode)
+    _gesture_enabled = (default_mode == 'gesture')
+    logger.info(f"[GesturePose] Outstretched hand detection {'ENABLED' if _gesture_enabled else 'DISABLED'} (default mode: {default_mode})")
+
+    narrator.start()
+    atexit.register(narrator.stop)
+
+
+_init_scene_narrator()
 
 if __name__ == '__main__':
     print("Starting Computer Vision Object Detector Web App")

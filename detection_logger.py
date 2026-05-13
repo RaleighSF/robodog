@@ -129,9 +129,13 @@ class DetectionLogger:
         if target_classes is None:
             target_classes = ["person", "Orange Cone"]
         
-        # Check if any target object was detected
-        objects_detected = any(detection.class_name in target_classes for detection in detections)
-        
+        # Check if any target object was detected (substring match for flexibility)
+        def _class_matches(det_class, targets):
+            det_lower = det_class.lower()
+            return any(t.lower() in det_lower or det_lower in t.lower() for t in targets)
+
+        objects_detected = any(_class_matches(detection.class_name, target_classes) for detection in detections)
+
         if not objects_detected:
             return False
         
@@ -150,11 +154,11 @@ class DetectionLogger:
         # Count objects detected by type
         class_counts = {}
         for detection in detections:
-            if detection.class_name in target_classes:
+            if _class_matches(detection.class_name, target_classes):
                 class_counts[detection.class_name] = class_counts.get(detection.class_name, 0) + 1
-        
+
         # Get highest confidence detection for additional info
-        all_target_detections = [d for d in detections if d.class_name in target_classes]
+        all_target_detections = [d for d in detections if _class_matches(d.class_name, target_classes)]
         max_confidence = max(d.confidence for d in all_target_detections) if all_target_detections else 0
         
         # Create appropriate alert message
