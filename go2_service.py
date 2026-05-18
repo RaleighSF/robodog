@@ -77,6 +77,7 @@ move_queue = queue.Queue()
 move_results = {}
 move_lock = threading.Lock()
 _move_state = {'balance_ready': False}
+standing_heartbeat_queue = queue.Queue()
 
 COMMAND_MAP = {
     'stand': SPORT_CMD['StandUp'],
@@ -91,6 +92,15 @@ KEEPALIVE_COMMANDS = {'sit', 'shake'}
 # Standing commands STOP the keepalive instead (see handle_command).
 KEEPALIVE_STOP_COMMANDS = {'stand', 'crouch'}  # commands that should halt keepalive
 KEEPALIVE_INTERVAL_SECONDS = 30   # increased from 20 — less aggressive pinging
+
+# Standing posture needs a sport-level refresh, not a motion-switcher keepalive.
+# Field logs show the robot can stay up for roughly 10 minutes after StandUp and
+# then enter a red-light fault/fall when no further WebRTC sport traffic is sent.
+# Re-selecting MOTION_SWITCHER "normal" while standing previously caused falls, so
+# this heartbeat intentionally re-sends the posture command on SPORT_MOD instead.
+# Five minutes keeps the refresh well inside the observed firmware timeout while
+# avoiding high-rate command churn.
+STANDING_HEARTBEAT_INTERVAL_SECONDS = 300
 REMOTE_ACTIVITY_TIMEOUT = 5.0  # seconds of silence before assuming remote released control
 REMOTE_AXIS_THRESHOLD = 0.05
 LENIENT_STATUS_CODES = {
@@ -113,6 +123,11 @@ keepalive_lock = threading.Lock()
 keepalive_stop_event = threading.Event()
 keepalive_thread = None
 keepalive_active = False
+
+standing_heartbeat_lock = threading.Lock()
+standing_heartbeat_stop_event = threading.Event()
+standing_heartbeat_thread = None
+standing_heartbeat_active = False
 
 remote_activity_lock = threading.Lock()
 remote_last_active_ts = 0.0
@@ -263,6 +278,70 @@ def stop_motion_keepalive(reason=''):
         return True
 
 
+def standing_sport_heartbeat_worker(trigger_source):
+    global standing_heartbeat_active, standing_heartbeat_thread
+    print(f"[StandHeartbeat] Sport heartbeat started via {trigger_source}", flush=True)
+
+    while True:
+        if standing_heartbeat_stop_event.wait(STANDING_HEARTBEAT_INTERVAL_SECONDS):
+            break
+
+        with _robot_posture_lock:
+            posture = _robot_posture
+        if posture != 'standing':
+            print("[StandHeartbeat] Posture no longer standing; stopping", flush=True)
+            break
+
+        if remote_is_actively_controlling():
+            print("[StandHeartbeat] Remote activity detected; stopping", flush=True)
+            break
+
+        with _robot_busy_lock:
+            if _robot_busy:
+                print("[StandHeartbeat] Robot busy with command — skipping this interval", flush=True)
+                continue
+
+        try:
+            standing_heartbeat_queue.put(('StandUp', SPORT_CMD['StandUp']))
+            print("[StandHeartbeat] Queued SPORT_MOD StandUp refresh", flush=True)
+        except Exception as exc:
+            print(f"[StandHeartbeat] Failed to queue refresh: {exc}", flush=True)
+
+    with standing_heartbeat_lock:
+        standing_heartbeat_active = False
+        standing_heartbeat_thread = None
+        standing_heartbeat_stop_event.clear()
+
+    print("[StandHeartbeat] Sport heartbeat stopped", flush=True)
+
+
+def start_standing_sport_heartbeat(trigger_source):
+    global standing_heartbeat_thread, standing_heartbeat_active
+    with standing_heartbeat_lock:
+        if standing_heartbeat_active:
+            print(f"[StandHeartbeat] Loop already active, skipping trigger {trigger_source}", flush=True)
+            return False
+        standing_heartbeat_stop_event.clear()
+        standing_heartbeat_thread = threading.Thread(
+            target=standing_sport_heartbeat_worker,
+            args=(trigger_source,),
+            daemon=True
+        )
+        standing_heartbeat_active = True
+        print(f"[StandHeartbeat] Spawning sport heartbeat thread via {trigger_source}", flush=True)
+        standing_heartbeat_thread.start()
+        return True
+
+
+def stop_standing_sport_heartbeat(reason=''):
+    with standing_heartbeat_lock:
+        if not standing_heartbeat_active:
+            return False
+        print(f"[StandHeartbeat] Stop requested ({reason})", flush=True)
+        standing_heartbeat_stop_event.set()
+        return True
+
+
 async def set_motion_mode(conn, mode_name='normal'):
     """Ensure the GO2 motion controller is in a desired mode."""
     return await conn.datachannel.pub_sub.publish_request_new(
@@ -332,6 +411,7 @@ async def robot_loop():
             conn.video.add_track_callback(recv_camera_stream)
             
             def lowstate_callback(message):
+                global _robot_posture
                 data = message['data']
                 bms = data['bms_state']
                 battery_state['soc'] = bms['soc']
@@ -341,6 +421,7 @@ async def robot_loop():
                 if remote_data and detect_remote_activity(remote_data):
                     mark_remote_activity()
                     stop_motion_keepalive('remote takeover detected via wireless remote input')
+                    stop_standing_sport_heartbeat('remote takeover detected via wireless remote input')
                     # Remote operator may change posture — clear standing guard
                     with _robot_posture_lock:
                         if _robot_posture == 'standing':
@@ -462,11 +543,43 @@ async def robot_loop():
                                 move_results[result_id] = {'success': False, 'error': str(e)}
                     except queue.Empty:
                         pass
+
+                    try:
+                        heartbeat_name, heartbeat_api_id = standing_heartbeat_queue.get_nowait()
+                        with _robot_posture_lock:
+                            posture = _robot_posture
+                        if posture != 'standing':
+                            print(f"[StandHeartbeat] Dropping {heartbeat_name} — posture is {posture}", flush=True)
+                            continue
+                        with _robot_busy_lock:
+                            if _robot_busy:
+                                print(f"[StandHeartbeat] Dropping {heartbeat_name} — robot busy", flush=True)
+                                continue
+                            _robot_busy = True
+                        try:
+                            resp = await conn.datachannel.pub_sub.publish_request_new(
+                                RTC_TOPIC['SPORT_MOD'], {'api_id': heartbeat_api_id}
+                            )
+                            status = resp.get('data', {}).get('header', {}).get('status', {})
+                            code = status.get('code', 1)
+                            msg = status.get('message') or status.get('msg') or ''
+                            if code == 0:
+                                print(f"[StandHeartbeat] {heartbeat_name} refresh accepted", flush=True)
+                            else:
+                                print(f"[StandHeartbeat] {heartbeat_name} refresh returned code={code} msg='{msg}'", flush=True)
+                        except Exception as heartbeat_error:
+                            print(f"[StandHeartbeat] {heartbeat_name} refresh failed: {heartbeat_error}", flush=True)
+                        finally:
+                            with _robot_busy_lock:
+                                _robot_busy = False
+                    except queue.Empty:
+                        pass
                 except Exception as loop_error:
                     print(f"[Loop] Error processing commands: {loop_error}", flush=True)
                 await asyncio.sleep(0.03)
         except Exception as connection_error:
             battery_state['connected'] = False
+            stop_standing_sport_heartbeat('WebRTC session lost')
             print(f"[Connect] Connection lost: {connection_error}", flush=True)
             await asyncio.sleep(5)
         finally:
@@ -547,6 +660,10 @@ def handle_command():
 
     result_id = f'{cmd_name}_{time.time()}'
     command_queue.put((cmd_name, COMMAND_MAP[cmd_name], result_id))
+    if cmd_name == 'stand':
+        start_standing_sport_heartbeat('stand command issued')
+    else:
+        stop_standing_sport_heartbeat(f'{cmd_name} command issued')
 
     if cmd_name in KEEPALIVE_STOP_COMMANDS:
         stop_motion_keepalive(f'{cmd_name} command issued — suppressing keepalive pings')
@@ -558,9 +675,19 @@ def handle_command():
     while time.time() - start_time < COMMAND_RESULT_TIMEOUT:
         with result_lock:
             if result_id in command_results:
-                return jsonify(command_results.pop(result_id))
+                result = command_results.pop(result_id)
+                if cmd_name == 'stand':
+                    if result.get('success'):
+                        start_standing_sport_heartbeat('stand command accepted')
+                    else:
+                        stop_standing_sport_heartbeat('stand command failed')
+                else:
+                    stop_standing_sport_heartbeat(f'{cmd_name} command issued')
+                return jsonify(result)
         time.sleep(0.05)
 
+    if cmd_name == 'stand':
+        stop_standing_sport_heartbeat('stand command timed out')
     return jsonify({'success': False, 'message': 'Timeout'}), 504
 
 @app.route('/move', methods=['POST'])
@@ -593,9 +720,14 @@ def handle_move():
 def handle_stop():
     # Safety: if robot is standing (posture hold), don't send move commands
     # — the move path sends BalanceStand which conflicts with StandUp posture
+    global _robot_posture
     with _robot_posture_lock:
         posture = _robot_posture
     if posture == 'standing':
+        stop_standing_sport_heartbeat('stop command issued')
+        with _robot_posture_lock:
+            _robot_posture = 'idle'
+            print("[Posture] → idle (stop)", flush=True)
         print("[Stop] Ignored — robot is in standing posture hold", flush=True)
         return jsonify({'success': True, 'message': 'No-op — robot is standing'})
 
