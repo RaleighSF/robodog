@@ -341,6 +341,11 @@ async def robot_loop():
                 if remote_data and detect_remote_activity(remote_data):
                     mark_remote_activity()
                     stop_motion_keepalive('remote takeover detected via wireless remote input')
+                    # Remote operator may change posture — clear standing guard
+                    with _robot_posture_lock:
+                        if _robot_posture == 'standing':
+                            _robot_posture = 'idle'
+                            print("[Posture] → idle (remote takeover)", flush=True)
             
             conn.datachannel.pub_sub.subscribe(RTC_TOPIC['LOW_STATE'], lowstate_callback)
             
@@ -534,7 +539,9 @@ def handle_command():
         if cmd_name == 'stand':
             _robot_posture = 'standing'
             print(f"[Posture] → standing", flush=True)
-        elif cmd_name in ('crouch', 'sit'):
+        else:
+            # Any non-stand command (crouch, sit, shake) means the robot
+            # is transitioning out of standing posture — safe to allow pings again
             _robot_posture = 'idle'
             print(f"[Posture] → idle ({cmd_name})", flush=True)
 
