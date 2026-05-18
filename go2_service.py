@@ -565,6 +565,13 @@ def handle_command():
 
 @app.route('/move', methods=['POST'])
 def handle_move():
+    # Safety: reject move commands while robot is in standing posture hold
+    # — move path sends BalanceStand which conflicts with StandUp
+    with _robot_posture_lock:
+        posture = _robot_posture
+    if posture == 'standing':
+        return jsonify({'success': False, 'message': 'Cannot move — robot is in standing posture. Send crouch first.'}), 409
+
     data = request.get_json()
     vx = float(data.get('vx', 0))
     vy = float(data.get('vy', 0))
@@ -584,6 +591,14 @@ def handle_move():
 
 @app.route('/stop', methods=['POST'])
 def handle_stop():
+    # Safety: if robot is standing (posture hold), don't send move commands
+    # — the move path sends BalanceStand which conflicts with StandUp posture
+    with _robot_posture_lock:
+        posture = _robot_posture
+    if posture == 'standing':
+        print("[Stop] Ignored — robot is in standing posture hold", flush=True)
+        return jsonify({'success': True, 'message': 'No-op — robot is standing'})
+
     result_id = f'stop_{time.time()}'
     move_queue.put((0, 0, 0, result_id))
 

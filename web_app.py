@@ -668,6 +668,10 @@ def go2_command():
         logger.info(f"Sending GO2 command: {command}")
         _go2_last_command_ts = now
 
+        # Kill the move watchdog when issuing posture commands — the watchdog
+        # sends /stop repeatedly which triggers BalanceStand on a standing robot
+        _go2_last_move_ts = 0.0
+
         response = requests.post(f'{_GO2_SERVICE_URL}/command',
                                 json={'command': command},
                                 timeout=5)
