@@ -72,38 +72,63 @@
         }
 
         .nav-container {
-            max-width: 1400px;
-            margin: 0 auto;
-            display: flex;
+            width: 100%;
+            display: grid;
+            grid-template-columns: minmax(200px, 1fr) auto minmax(200px, 1fr);
             align-items: center;
-            justify-content: space-between;
-            padding: 15px 30px;
+            padding: 10px 24px;
+            gap: 16px;
         }
 
         .logo-section {
             display: flex;
             align-items: center;
-            gap: 20px;
+            gap: 14px;
+            justify-self: start;
         }
 
-        .ntt-logo {
-            font-size: 28px;
-            font-weight: 700;
-            color: var(--brand-600);
-            text-decoration: none;
+        .ntt-logo-img {
+            height: 24px;
+            width: auto;
+            display: block;
         }
 
         .project-title {
-            font-size: 18px;
+            font-size: 15px;
             font-weight: 500;
             color: var(--ink-400);
-            border-left: 2px solid var(--bg-50);
-            padding-left: 20px;
+            border-left: 2px solid rgba(255,255,255,0.1);
+            padding-left: 14px;
+            white-space: nowrap;
+        }
+
+        .partner-section {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            justify-self: end;
+        }
+
+        .partner-label {
+            font-size: 11px;
+            font-weight: 400;
+            color: var(--ink-400);
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            white-space: nowrap;
+            line-height: 1;
+        }
+
+        .snowflake-logo-img {
+            height: 28px;
+            width: auto;
+            display: block;
         }
 
         .nav-controls {
             display: flex;
             align-items: center;
+            justify-self: center;
         }
 
         .header-controls {
@@ -444,7 +469,7 @@
         .ctrl-panel-label {
             font-size: 9px;
             font-weight: 700;
-            color: var(--text-2);
+            color: var(--ink-700);
             text-transform: uppercase;
             letter-spacing: 1.5px;
             margin-bottom: -4px;
@@ -458,7 +483,7 @@
 
         .go2-cmd-btn {
             background: rgba(255, 255, 255, 0.08);
-            color: var(--text-1);
+            color: var(--ink-900);
             border: 1px solid rgba(255, 255, 255, 0.1);
             padding: 5px 0;
             border-radius: 6px;
@@ -506,7 +531,7 @@
             border-radius: 8px;
             background: rgba(255, 255, 255, 0.08);
             border: 1px solid rgba(255, 255, 255, 0.06);
-            color: var(--text-1);
+            color: var(--ink-900);
             cursor: pointer;
             display: flex;
             align-items: center;
@@ -598,11 +623,6 @@
             to { transform: rotate(360deg); }
         }
 
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
-        }
-
         .footer {
             display: none;
         }
@@ -628,25 +648,53 @@
         .log-header {
             background: rgba(15,29,50,0.9);
             color: var(--ink-900);
-            padding: 12px 16px;
+            padding: 10px 14px;
             display: flex;
             justify-content: space-between;
             align-items: center;
             border-bottom: 1px solid rgba(255,255,255,0.05);
+            gap: 8px;
         }
 
         .log-header h2 {
             margin: 0;
-            font-size: 13px;
+            font-size: 12px;
             font-weight: 700;
             text-transform: uppercase;
             letter-spacing: 1px;
             color: var(--ink-400);
+            white-space: nowrap;
         }
 
         .log-controls {
             display: flex;
-            gap: 6px;
+            gap: 4px;
+            align-items: center;
+        }
+
+        .icon-btn {
+            width: 28px;
+            height: 28px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 6px;
+            border: 1px solid rgba(255,255,255,0.1);
+            background: rgba(255,255,255,0.05);
+            color: var(--ink-400);
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s;
+            padding: 0;
+            line-height: 1;
+        }
+        .icon-btn:hover {
+            background: rgba(255,255,255,0.1);
+            color: var(--ink-900);
+        }
+        .icon-btn.danger:hover {
+            background: rgba(220,38,38,0.15);
+            color: #f87171;
         }
 
         .log-stats {
@@ -673,10 +721,11 @@
         }
 
         .stat-value {
-            font-size: 20px;
+            font-size: 16px;
             font-weight: 700;
-            color: var(--accent-orange);
+            color: var(--accent-light-blue);
             font-variant-numeric: tabular-nums;
+            white-space: nowrap;
         }
 
         .log-container {
@@ -746,16 +795,38 @@
         .scene-entry .scene-text {
             color: var(--ink-100);
         }
-        /* Mode toggle pill */
-        .scene-mode-toggle {
+        /* Tab toggle pill */
+        /* Awareness header — two-row layout */
+        .awareness-header {
+            flex-direction: column !important;
+            gap: 6px;
+            padding: 8px 14px !important;
+        }
+        .awareness-header .panel-title-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            width: 100%;
+        }
+        .awareness-header .panel-tools-row {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            width: 100%;
+        }
+        .awareness-header .panel-tools-row .spacer {
+            flex: 1;
+        }
+
+        .awareness-tab-toggle, .scene-mode-toggle {
             display: flex;
             background: rgba(15,29,50,0.8);
             border-radius: 6px;
             border: 1px solid var(--ink-600);
             overflow: hidden;
         }
-        .mode-btn {
-            padding: 6px 14px;
+        .tab-btn, .mode-btn {
+            padding: 5px 12px;
             font-size: 11px;
             font-weight: 600;
             letter-spacing: 0.3px;
@@ -765,7 +836,11 @@
             cursor: pointer;
             transition: all 0.2s;
         }
-        .mode-btn:hover { color: var(--ink-100); }
+        .tab-btn:hover, .mode-btn:hover { color: var(--ink-100); }
+        .tab-btn.active {
+            background: var(--brand-600);
+            color: var(--bg-0);
+        }
         .mode-btn.active[data-mode="casual"] {
             background: var(--accent-teal-500);
             color: var(--bg-0);
@@ -773,6 +848,27 @@
         .mode-btn.active[data-mode="gesture"] {
             background: var(--accent-light-blue);
             color: var(--bg-0);
+        }
+        /* Pause buttons */
+        .pause-btn {
+            padding: 4px 10px;
+            font-size: 11px;
+            font-weight: 600;
+            border: 1px solid var(--ink-600);
+            border-radius: 4px;
+            background: transparent;
+            color: var(--ink-400);
+            cursor: pointer;
+            transition: all 0.15s;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .pause-btn:hover { color: var(--ink-100); border-color: var(--ink-400); }
+        .pause-btn.paused {
+            background: rgba(217,119,6,0.15);
+            color: var(--warning);
+            border-color: rgba(217,119,6,0.3);
         }
 
         /* Gesture-active banner in scene panel */
@@ -812,6 +908,24 @@
             animation: pulse 2s infinite;
         }
         .scene-status .dot.offline { background: var(--ink-600); animation: none; }
+        /* Scene summary tab */
+        .scene-summary-block {
+            padding: 16px 20px;
+            font-size: 14px;
+            line-height: 1.7;
+            color: var(--ink-100);
+        }
+        .scene-summary-block .summary-text {
+            background: rgba(15,29,50,0.6);
+            border-radius: 8px;
+            border-left: 3px solid var(--brand-600);
+            padding: 14px 16px;
+            margin-bottom: 8px;
+        }
+        .scene-summary-block .summary-meta {
+            font-size: 11px;
+            color: var(--ink-400);
+        }
 
         .log-empty {
             text-align: center;
@@ -829,7 +943,7 @@
             margin-bottom: 6px;
             background: rgba(15,29,50,0.6);
             border-radius: 8px;
-            border-left: 3px solid var(--accent-orange);
+            border-left: 3px solid var(--accent-light-blue);
             transition: all 0.2s ease;
             animation: fadeIn 0.3s ease;
         }
@@ -856,7 +970,7 @@
 
         .log-message {
             font-weight: 600;
-            color: var(--accent-orange);
+            color: var(--accent-light-blue);
             font-size: 13px;
         }
 
@@ -872,7 +986,7 @@
         }
 
         .log-id {
-            background: var(--accent-orange);
+            background: var(--accent-light-blue);
             color: #fff;
             font-size: 9px;
             font-weight: 700;
@@ -1356,11 +1470,6 @@
             animation: fadeIn 0.3s ease;
         }
 
-        @keyframes fadeIn {
-            from { opacity: 0; }
-            to { opacity: 1; }
-        }
-
         .modal-content {
             position: relative;
             max-width: 90%;
@@ -1453,10 +1562,17 @@
 
         @media (max-width: 768px) {
             .nav-container {
+                display: flex;
                 flex-direction: column;
-                gap: 15px;
-                padding: 15px 20px;
+                gap: 10px;
+                padding: 12px 16px;
             }
+
+            .logo-section { gap: 10px; }
+            .project-title { font-size: 14px; padding-left: 10px; }
+            .partner-section { gap: 6px; }
+            .partner-label { font-size: 10px; }
+            .snowflake-logo-img { height: 20px; }
 
             .header-controls {
                 flex-wrap: wrap;
@@ -1512,7 +1628,8 @@
     <nav class="header-nav">
         <div class="nav-container">
             <div class="logo-section">
-                <a href="#" class="ntt-logo">NTT DATA</a>
+                <!-- NTT DATA wordmark — clean text rendering, brand blue -->
+                <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-weight:700;font-size:22px;color:#0072BC;letter-spacing:1.5px;white-space:nowrap;">NTT DATA</span>
                 <div class="project-title">Project Watch Dog</div>
             </div>
             <div class="nav-controls">
@@ -1525,7 +1642,7 @@
                             <option value="rtsp_depth">Depth Channel</option>
                             <option value="mac">Mac Camera (Backup)</option>
                         </select>
-                    </div>                    
+                    </div>
                     <div id="robotIpGroup" class="ip-control hidden">
                         <input type="text" id="robotIpInput" class="header-input" value="192.168.123.161" placeholder="Robot IP">
                     </div>
@@ -1541,6 +1658,13 @@
                         <button id="stopBtn" class="btn-header btn-stop">Stop</button>
                     </div>
                 </div>
+            </div>
+            <div class="partner-section">
+                <span class="partner-label">In partnership with</span>
+                <!-- Snowflake icon — official brand paths from snowflake.com SVG -->
+                <svg class="snowflake-logo-img" viewBox="25 34 65 65" xmlns="http://www.w3.org/2000/svg">
+                  <path fill-rule="evenodd" clip-rule="evenodd" fill="#29B5E8" d="M47.77 67.83a5.4 5.4 0 0 0 .17-1.2c-.01-.3-.05-.59-.13-.88-.25-.9-.84-1.71-1.72-2.22L33.54 56.29c-1.77-1.02-4.03-.41-5.04 1.36-1.03 1.77-.42 4.02 1.35 5.04l7.01 4.05-7.01 4.05c-1.77 1.02-2.37 3.28-1.35 5.05 1.02 1.76 3.27 2.37 5.04 1.35l12.55-7.25c.84-.49 1.42-1.25 1.68-2.11zM51.18 74.62c-.72-.06-1.47.1-2.15.49L36.48 82.34c-1.77 1.02-2.37 3.29-1.35 5.06 1.02 1.76 3.28 2.37 5.04 1.37l7.03-4.06v8.1c0 2.04 1.65 3.7 3.7 3.7 2.03 0 3.69-1.65 3.69-3.7V78.3c0-1.95-1.51-3.54-3.42-3.68zM64.03 58.87c.72.06 1.47-.09 2.14-.48l12.55-7.25c1.77-1.02 2.37-3.28 1.35-5.05-1.02-1.77-3.28-2.37-5.04-1.35l-7.03 4.06v-8.11c0-2.04-1.65-3.69-3.7-3.69-2.04 0-3.69 1.65-3.69 3.69v14.49c0 1.94 1.5 3.54 3.42 3.69zM36.48 51.14l12.55 7.25c.67.39 1.42.54 2.15.48 1.91-.14 3.42-1.74 3.42-3.69V40.69c0-2.04-1.66-3.69-3.69-3.69-2.05 0-3.7 1.65-3.7 3.69v8.11l-7.03-4.06c-1.76-1.02-4.02-.41-5.04 1.35-1.02 1.77-.42 4.03 1.35 5.05zM60.07 66.71c0-.21-.13-.5-.28-.66l-1.51-1.5c-.15-.15-.44-.27-.65-.27h-.06c-.21 0-.5.12-.65.27l-1.51 1.5c-.15.16-.27.45-.27.66v.06c0 .21.12.5.27.65l1.51 1.51c.15.15.44.27.65.27h.06c.21 0 .5-.12.65-.27l1.51-1.51c.15-.15.28-.44.28-.65v-.06zM64.24 68.16l-5.22 5.21c-.15.15-.44.28-.65.28h-.38-.77-.39c-.21 0-.5-.13-.65-.28l-5.21-5.21c-.15-.15-.27-.44-.27-.65v-.39-.77-.38c0-.21.12-.51.27-.66l5.21-5.21c.15-.15.44-.27.65-.27h.39.77.38c.21 0 .5.12.65.27l5.22 5.21c.15.15.27.44.27.66v.38.77.39c0 .21-.12.5-.27.65zM78.72 82.34l-12.55-7.24c-.67-.39-1.42-.54-2.14-.48-1.91.14-3.42 1.74-3.42 3.68v14.49c0 2.04 1.65 3.7 3.7 3.7 2.04 0 3.7-1.66 3.7-3.7v-8.11l7.03 4.06c1.77 1.03 4.03.41 5.04-1.35 1.02-1.77.42-4.03-1.35-5.05zM85.36 62.69l-7.01 4.06 7.01 4.04c1.77 1.02 2.37 3.28 1.35 5.05-1.02 1.76-3.28 2.37-5.04 1.35l-12.55-7.25c-.84-.49-1.42-1.25-1.68-2.11a5.4 5.4 0 0 1-.17-1.2c.01-.29.04-.58.13-.87.25-.9.84-1.71 1.72-2.22l12.55-7.24c1.76-1.02 4.03-.41 5.04 1.35 1.03 1.77.42 4.02-1.35 5.04z"/>
+                </svg>
             </div>
         </div>
     </nav>
@@ -1621,17 +1745,27 @@
         </div>
         <div id="status" class="status info">Color Channel ready - Auto-starting patrol...</div>
 
-        <!-- Scene Narration Log (below video) -->
+        <!-- Awareness Panel (below video) — tabbed: Frame | Scene -->
         <div id="sceneSection" class="log-section scene-section" style="display:none;">
-            <div class="log-header">
-                <h2>Scene Awareness</h2>
-                <div class="log-controls">
-                    <div id="sceneModeToggle" class="scene-mode-toggle">
+            <div class="log-header awareness-header">
+                <div class="panel-title-row">
+                    <h2>Awareness</h2>
+                    <div class="awareness-tab-toggle">
+                        <button id="tabFrameBtn" class="tab-btn active" data-tab="frame" title="Per-frame VLM observations">Frame</button>
+                        <button id="tabSceneBtn" class="tab-btn" data-tab="scene" title="Aggregated situational narrative">Scene</button>
+                    </div>
+                </div>
+                <div class="panel-tools-row">
+                    <div id="frameModeToggle" class="scene-mode-toggle">
                         <button id="modeCasualBtn" class="mode-btn active" data-mode="casual" title="Slow, detailed scene observation">Observe</button>
                         <button id="modeGestureBtn" class="mode-btn" data-mode="gesture" title="Fast gesture scan — triggers shake on outstretched hand">Gesture</button>
                     </div>
-                    <button id="toggleSceneCtx" class="btn btn-primary" style="padding: 8px 16px; font-size: 12px;">Context</button>
-                    <button id="clearSceneBtn" class="btn btn-stop" style="padding: 8px 16px; font-size: 12px;">Clear</button>
+                    <button id="pauseVlmBtn" class="pause-btn" title="Pause/resume VLM observations">
+                        <span id="pauseVlmIcon">&#9646;&#9646;</span> Model
+                    </button>
+                    <span class="spacer"></span>
+                    <button id="toggleSceneCtx" class="icon-btn" title="Scene context prompt" aria-label="Context">&#x2699;</button>
+                    <button id="clearActiveTab" class="icon-btn danger" title="Clear current tab" aria-label="Clear">&#x2715;</button>
                 </div>
             </div>
             <div id="sceneCtxPanel" style="display:none; padding: 12px 20px;">
@@ -1646,9 +1780,19 @@
                 <span id="sceneDot" class="dot offline"></span>
                 <span id="sceneStatusText">Connecting to VLM...</span>
             </div>
-            <div class="log-container">
+            <!-- Frame tab content -->
+            <div id="frameTabContent" class="log-container">
                 <div id="sceneLog" class="scene-log">
-                    <div class="log-empty">Waiting for scene narration...</div>
+                    <div class="log-empty">Waiting for frame observations...</div>
+                </div>
+            </div>
+            <!-- Scene tab content -->
+            <div id="sceneTabContent" class="log-container" style="display:none;">
+                <div class="scene-summary-block">
+                    <div id="sceneSummaryText" class="summary-text" style="color: var(--ink-400); font-style: italic;">
+                        Building situational awareness... Summary will appear after a few frame observations.
+                    </div>
+                    <div id="sceneSummaryMeta" class="summary-meta"></div>
                 </div>
             </div>
         </div>
@@ -1658,8 +1802,11 @@
             <div class="log-header">
                 <h2>Detection Log</h2>
                 <div class="log-controls">
-                    <button id="refreshLogBtn" class="btn btn-primary" style="padding: 8px 16px; font-size: 12px;">Refresh</button>
-                    <button id="clearLogBtn" class="btn btn-stop" style="padding: 8px 16px; font-size: 12px;">Clear Log</button>
+                    <button id="pauseDetBtn" class="pause-btn" title="Pause/resume YOLO detections">
+                        <span id="pauseDetIcon">&#9646;&#9646;</span> Detections
+                    </button>
+                    <button id="refreshLogBtn" class="icon-btn" title="Refresh log" aria-label="Refresh">&#x21bb;</button>
+                    <button id="clearLogBtn" class="icon-btn danger" title="Clear log" aria-label="Clear log">&#x2715;</button>
                 </div>
             </div>
 
@@ -3414,16 +3561,25 @@
         }
 
         let _detectionFetchInFlight = false;
+        let _lastDrawnDetectionTs = 0;
+        const _DETECTION_PERSIST_MS = 2000; // keep boxes on screen for 2s even if no new detections
         async function fetchDetections() {
             if (_detectionFetchInFlight) return;
             _detectionFetchInFlight = true;
             try {
                 const response = await fetch(`/detections/latest?ts=${Date.now()}`, { cache: 'no-store' });
-                if (!response.ok) {
-                    return;
-                }
+                if (!response.ok) return;
                 const data = await response.json();
-                drawDetections(data);
+                const serverTs = (data.timestamp || 0) * 1000; // convert to ms
+                // Only redraw if we got newer detections
+                if (serverTs > _lastDrawnDetectionTs) {
+                    _lastDrawnDetectionTs = serverTs;
+                    drawDetections(data);
+                } else if (Date.now() - _lastDrawnDetectionTs > _DETECTION_PERSIST_MS) {
+                    // Stale — clear overlay after persist window
+                    clearDetectionOverlay();
+                }
+                // Otherwise: keep showing previous boxes (persist)
             } catch (error) {
                 // Occasional network hiccups are fine; keep polling
             } finally {
@@ -3494,42 +3650,97 @@
         }
     </script>
     <script>
-    (function initSceneNarrator() {
+    (function initAwarenessPanel() {
         const section = document.getElementById('sceneSection');
-        const log = document.getElementById('sceneLog');
+        const frameLog = document.getElementById('sceneLog');
         const dot = document.getElementById('sceneDot');
         const statusText = document.getElementById('sceneStatusText');
-        const clearBtn = document.getElementById('clearSceneBtn');
+        const clearBtn = document.getElementById('clearActiveTab');
         const modeCasualBtn = document.getElementById('modeCasualBtn');
         const modeGestureBtn = document.getElementById('modeGestureBtn');
+        const tabFrameBtn = document.getElementById('tabFrameBtn');
+        const tabSceneBtn = document.getElementById('tabSceneBtn');
+        const frameTabContent = document.getElementById('frameTabContent');
+        const sceneTabContent = document.getElementById('sceneTabContent');
+        const frameModeToggle = document.getElementById('frameModeToggle');
+        const summaryText = document.getElementById('sceneSummaryText');
+        const summaryMeta = document.getElementById('sceneSummaryMeta');
+        const pauseVlmBtn = document.getElementById('pauseVlmBtn');
         let lastTimestamp = null;
         let active = false;
         let currentMode = 'casual';
-
-        clearBtn.addEventListener('click', function() {
-            log.innerHTML = '<div class="log-empty">Waiting for scene narration...</div>';
-            lastTimestamp = new Date().toISOString();
-        });
+        let currentTab = 'frame';
+        let vlmPaused = false;
 
         function formatTime(iso) {
             const d = new Date(iso);
             return d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'});
         }
 
-        // ── Mode toggle ────────────────────────────────────────
+        // ── Tab switching ──────────────────────────────────────
+        function switchTab(tab) {
+            currentTab = tab;
+            tabFrameBtn.classList.toggle('active', tab === 'frame');
+            tabSceneBtn.classList.toggle('active', tab === 'scene');
+            frameTabContent.style.display = tab === 'frame' ? '' : 'none';
+            sceneTabContent.style.display = tab === 'scene' ? '' : 'none';
+            // Mode toggle only shows in frame tab
+            frameModeToggle.style.display = tab === 'frame' ? 'flex' : 'none';
+        }
+        tabFrameBtn.addEventListener('click', function() { switchTab('frame'); });
+        tabSceneBtn.addEventListener('click', function() { switchTab('scene'); });
+
+        // ── Clear button — context-aware ───────────────────────
+        clearBtn.addEventListener('click', function() {
+            if (currentTab === 'frame') {
+                frameLog.innerHTML = '<div class="log-empty">Waiting for frame observations...</div>';
+                lastTimestamp = new Date().toISOString();
+                fetch('/api/scene/frame/clear', {method:'POST'});
+            } else {
+                summaryText.textContent = 'Summary cleared — building fresh awareness...';
+                summaryText.style.color = 'var(--ink-400)';
+                summaryText.style.fontStyle = 'italic';
+                summaryMeta.textContent = '';
+                fetch('/api/scene/summary/clear', {method:'POST'});
+            }
+        });
+
+        // ── Pause toggles ──────────────────────────────────────
+        function updatePauseBtn(btn, iconEl, paused) {
+            btn.classList.toggle('paused', paused);
+            iconEl.innerHTML = paused ? '&#9654;' : '&#9646;&#9646;';
+        }
+
+        pauseVlmBtn.addEventListener('click', function() {
+            fetch('/api/vlm/pause', {
+                method:'POST',
+                headers:{'Content-Type':'application/json'},
+                body: JSON.stringify({paused: !vlmPaused})
+            }).then(r => r.json()).then(d => {
+                vlmPaused = d.paused;
+                updatePauseBtn(pauseVlmBtn, document.getElementById('pauseVlmIcon'), vlmPaused);
+                if (vlmPaused) {
+                    statusText.textContent = 'VLM paused';
+                    dot.classList.add('offline');
+                } else {
+                    statusText.textContent = 'VLM active — observing every ~10s';
+                    dot.classList.remove('offline');
+                }
+            });
+        });
+
+        // ── Mode toggle (frame tab only) ───────────────────────
         function setModeUI(mode) {
             currentMode = mode;
             modeCasualBtn.classList.toggle('active', mode === 'casual');
             modeGestureBtn.classList.toggle('active', mode === 'gesture');
 
-            const logContainer = log.closest('.log-container');
             const existingBanner = section.querySelector('.gesture-active-banner');
 
             if (mode === 'gesture') {
                 dot.classList.remove('offline');
                 statusText.textContent = 'Gesture scan active — watching for outstretched hand';
-                // Hide the log container and show gesture banner
-                if (logContainer) logContainer.style.display = 'none';
+                if (currentTab === 'frame') frameTabContent.style.display = 'none';
                 if (!existingBanner) {
                     const banner = document.createElement('div');
                     banner.className = 'gesture-active-banner';
@@ -3542,8 +3753,10 @@
                     if (statusBar) statusBar.after(banner);
                 }
             } else {
-                statusText.textContent = active ? 'VLM active — observing every ~10s' : 'Connecting to VLM...';
-                if (logContainer) logContainer.style.display = '';
+                if (!vlmPaused) {
+                    statusText.textContent = active ? 'VLM active — observing every ~10s' : 'Connecting to VLM...';
+                }
+                if (currentTab === 'frame') frameTabContent.style.display = '';
                 if (existingBanner) existingBanner.remove();
             }
         }
@@ -3561,66 +3774,73 @@
         modeCasualBtn.addEventListener('click', function() { switchMode('casual'); });
         modeGestureBtn.addEventListener('click', function() { switchMode('gesture'); });
 
-        // ── Poll for narration entries (casual) + mode status ──
+        // ── Polling ────────────────────────────────────────────
         function poll() {
-            // Always poll mode status
+            // Mode + pause status
             fetch('/api/scene/mode').then(r => r.json()).then(modeData => {
-                if (!modeData.enabled) {
-                    section.style.display = 'none';
-                    return;
-                }
+                if (!modeData.enabled) { section.style.display = 'none'; return; }
                 section.style.display = '';
-                if (modeData.mode !== currentMode) {
-                    setModeUI(modeData.mode);
+                if (modeData.mode !== currentMode) setModeUI(modeData.mode);
+                if (modeData.paused !== undefined && modeData.paused !== vlmPaused) {
+                    vlmPaused = modeData.paused;
+                    updatePauseBtn(pauseVlmBtn, document.getElementById('pauseVlmIcon'), vlmPaused);
                 }
-                // Update gesture stats if in gesture mode
+                // Gesture stats
                 if (modeData.mode === 'gesture') {
                     const statsEl = document.getElementById('gestureStats');
                     if (statsEl) {
                         const parts = [];
                         if (modeData.gesture_count > 0) parts.push(modeData.gesture_count + ' shake' + (modeData.gesture_count !== 1 ? 's' : ''));
                         if (modeData.gesture_cooldown_remaining > 0) parts.push('cooldown ' + modeData.gesture_cooldown_remaining + 's');
-                        if (modeData.gesture_confirmations > 0) parts.push('confirming ' + modeData.gesture_confirmations + '/' + modeData.gesture_required);
                         statsEl.textContent = parts.join(' | ');
                     }
                 }
             }).catch(function() {});
 
-            // Poll for narration entries only in casual mode
-            if (currentMode !== 'casual') return;
-
-            const url = lastTimestamp ? '/api/scene?since=' + encodeURIComponent(lastTimestamp) : '/api/scene';
-            fetch(url).then(r => r.json()).then(data => {
-                if (!data.enabled) return;
-                if (!active) {
-                    active = true;
-                    dot.classList.remove('offline');
-                    statusText.textContent = 'VLM active — observing every ~10s';
-                }
-                if (data.entries && data.entries.length > 0) {
-                    const isEmpty = log.querySelector('.log-empty');
-                    if (isEmpty) log.innerHTML = '';
-                    // Newest on top — prepend in reverse order so batch stays chronological
-                    for (let i = data.entries.length - 1; i >= 0; i--) {
-                        const e = data.entries[i];
-                        const div = document.createElement('div');
-                        div.className = 'scene-entry';
-                        const safeText = e.description.replace(/</g,'&lt;');
-                        div.innerHTML = '<span class="scene-time">' + formatTime(e.timestamp) + '</span><span class="scene-text">' + safeText + '</span>';
-                        log.prepend(div);
+            // Frame observations (casual mode, frame tab)
+            if (currentMode === 'casual') {
+                const url = lastTimestamp ? '/api/scene?since=' + encodeURIComponent(lastTimestamp) : '/api/scene';
+                fetch(url).then(r => r.json()).then(data => {
+                    if (!data.enabled) return;
+                    if (!active) {
+                        active = true;
+                        if (!vlmPaused) {
+                            dot.classList.remove('offline');
+                            statusText.textContent = 'VLM active — observing every ~10s';
+                        }
                     }
-                    lastTimestamp = data.entries[data.entries.length - 1].timestamp;
-                    // Scroll to top to show newest
-                    const container = log.closest('.log-container');
-                    if (container) container.scrollTop = 0;
+                    if (data.entries && data.entries.length > 0) {
+                        const isEmpty = frameLog.querySelector('.log-empty');
+                        if (isEmpty) frameLog.innerHTML = '';
+                        for (let i = data.entries.length - 1; i >= 0; i--) {
+                            const e = data.entries[i];
+                            const div = document.createElement('div');
+                            div.className = 'scene-entry';
+                            const safeText = e.description.replace(/</g,'&lt;');
+                            div.innerHTML = '<span class="scene-time">' + formatTime(e.timestamp) + '</span><span class="scene-text">' + safeText + '</span>';
+                            frameLog.prepend(div);
+                        }
+                        lastTimestamp = data.entries[data.entries.length - 1].timestamp;
+                        frameTabContent.scrollTop = 0;
+                    }
+                }).catch(function() {
+                    if (active) { dot.classList.add('offline'); statusText.textContent = 'VLM connection lost'; active = false; }
+                });
+            }
+
+            // Scene summary (always poll, shown in scene tab)
+            fetch('/api/scene/summary').then(r => r.json()).then(data => {
+                if (!data.enabled) return;
+                if (data.summary) {
+                    summaryText.textContent = data.summary;
+                    summaryText.style.color = '';
+                    summaryText.style.fontStyle = '';
+                    const parts = [];
+                    if (data.updated_at) parts.push('Updated ' + formatTime(data.updated_at));
+                    if (data.observation_count) parts.push(data.observation_count + ' observations');
+                    summaryMeta.textContent = parts.join(' • ');
                 }
-            }).catch(function() {
-                if (active) {
-                    dot.classList.add('offline');
-                    statusText.textContent = 'VLM connection lost';
-                    active = false;
-                }
-            });
+            }).catch(function() {});
         }
 
         poll();
@@ -3660,9 +3880,47 @@
             });
         });
 
-        // Sync initial mode from server
+        // Sync initial state from server
         fetch('/api/scene/mode').then(r => r.json()).then(d => {
             if (d.mode) setModeUI(d.mode);
+            if (d.paused) {
+                vlmPaused = true;
+                updatePauseBtn(pauseVlmBtn, document.getElementById('pauseVlmIcon'), true);
+                statusText.textContent = 'VLM paused';
+                dot.classList.add('offline');
+            }
+        }).catch(function() {});
+    })();
+    </script>
+    <script>
+    // ── Detection Pause (in Detection Log pane) ──────────────
+    (function initDetectionPause() {
+        const pauseDetBtn = document.getElementById('pauseDetBtn');
+        const pauseDetIcon = document.getElementById('pauseDetIcon');
+        let detPaused = false;
+
+        function updateBtn(paused) {
+            pauseDetBtn.classList.toggle('paused', paused);
+            pauseDetIcon.innerHTML = paused ? '&#9654;' : '&#9646;&#9646;';
+        }
+
+        pauseDetBtn.addEventListener('click', function() {
+            fetch('/api/detections/pause', {
+                method:'POST',
+                headers:{'Content-Type':'application/json'},
+                body: JSON.stringify({paused: !detPaused})
+            }).then(r => r.json()).then(d => {
+                detPaused = d.paused;
+                updateBtn(detPaused);
+            });
+        });
+
+        // Sync initial state
+        fetch('/api/pause/status').then(r => r.json()).then(d => {
+            if (d.detection_paused) {
+                detPaused = true;
+                updateBtn(true);
+            }
         }).catch(function() {});
     })();
     </script>

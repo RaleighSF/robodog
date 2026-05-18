@@ -86,7 +86,7 @@ COMMAND_MAP = {
 }
 
 KEEPALIVE_COMMANDS = {'stand', 'sit', 'shake'}
-KEEPALIVE_INTERVAL_SECONDS = 20
+KEEPALIVE_INTERVAL_SECONDS = 30   # increased from 20 — less aggressive pinging
 REMOTE_ACTIVITY_TIMEOUT = 5.0  # seconds of silence before assuming remote released control
 REMOTE_AXIS_THRESHOLD = 0.05
 LENIENT_STATUS_CODES = {
@@ -94,6 +94,12 @@ LENIENT_STATUS_CODES = {
     'shake': {-1},
 }
 COMMAND_RESULT_TIMEOUT = 8.0
+
+# --- Robot safety state ---
+_robot_busy_lock = threading.Lock()
+_robot_busy = False          # True while a sport command is in-flight
+_robot_last_cmd_ts = 0.0     # timestamp of last sport command sent
+_ROBOT_CMD_MIN_GAP = 2.0     # minimum seconds between sport commands
 JPEG_QUALITY = int(os.environ.get('GO2_JPEG_QUALITY', '80'))
 JPEG_ENCODE_PARAMS = [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY]
 
@@ -127,7 +133,17 @@ threading.Thread(target=frame_encoder_worker, daemon=True).start()
 
 
 def enqueue_motion_mode_ping(source='keepalive'):
-    """Queue a motion mode ping without requiring a response."""
+    """Queue a motion mode ping without requiring a response.
+    Skips if robot recently executed a sport command to avoid state conflicts.
+    """
+    with _robot_busy_lock:
+        if _robot_busy:
+            print(f"[KeepAlive] Skipping ping ({source}) — robot busy", flush=True)
+            return
+        gap = time.time() - _robot_last_cmd_ts
+        if gap < _ROBOT_CMD_MIN_GAP:
+            print(f"[KeepAlive] Skipping ping ({source}) — too soon after command ({gap:.1f}s)", flush=True)
+            return
     try:
         motion_mode_queue.put(('normal', None))
         print(f"[KeepAlive] Queued 'normal' ping ({source})", flush=True)
@@ -184,6 +200,7 @@ def detect_remote_activity(remote_data):
 def motion_keepalive_worker(trigger_source):
     global keepalive_active, keepalive_thread
     print(f"[KeepAlive] Motion keepalive started via {trigger_source}", flush=True)
+    # Send one initial mode ping to ensure we're in 'normal'
     enqueue_motion_mode_ping(f"start:{trigger_source}")
 
     while True:
@@ -192,6 +209,12 @@ def motion_keepalive_worker(trigger_source):
         if remote_is_actively_controlling():
             print("[KeepAlive] Remote activity detected; stopping keepalive loop", flush=True)
             break
+        # Safety: skip mode ping if a sport command is currently in-flight
+        with _robot_busy_lock:
+            busy = _robot_busy
+        if busy:
+            print("[KeepAlive] Robot busy with command — skipping mode ping", flush=True)
+            continue
         enqueue_motion_mode_ping('interval')
 
     with keepalive_lock:
@@ -274,7 +297,7 @@ async def establish_connection_with_retry():
             await asyncio.sleep(wait_time)
 
 async def robot_loop():
-    global battery_state, command_results
+    global battery_state, command_results, _robot_busy, _robot_last_cmd_ts
 
     while True:
         conn = await establish_connection_with_retry()
@@ -332,7 +355,25 @@ async def robot_loop():
                     try:
                         cmd_id, cmd_api_id, result_id = command_queue.get_nowait()
                         _move_state['balance_ready'] = False
+
+                        # --- Safety: mark robot busy and enforce minimum gap ---
+                        with _robot_busy_lock:
+                            _robot_busy = True
                         try:
+                            # Verify motion mode is 'normal' before sending sport cmd
+                            try:
+                                mode_resp = await set_motion_mode(conn, 'normal')
+                                mode_status = mode_resp.get('data', {}).get('header', {}).get('status', {})
+                                mode_code = mode_status.get('code', 1)
+                                if mode_code != 0:
+                                    msg = mode_status.get('message') or mode_status.get('msg') or ''
+                                    print(f"[Command] Mode check returned code {mode_code}: {msg} — proceeding cautiously", flush=True)
+                            except Exception as mode_err:
+                                print(f"[Command] Mode verify failed: {mode_err} — proceeding anyway", flush=True)
+
+                            # Small pause to let mode settle before sport command
+                            await asyncio.sleep(0.1)
+
                             resp = await conn.datachannel.pub_sub.publish_request_new(
                                 RTC_TOPIC['SPORT_MOD'], {'api_id': cmd_api_id}
                             )
@@ -342,6 +383,18 @@ async def robot_loop():
                             if code in LENIENT_STATUS_CODES.get(cmd_id, set()) and code != 0:
                                 print(f"[Command] {cmd_id} returned tolerated code {code}", flush=True)
                             message = status.get('message') or status.get('msg') or ''
+
+                            # If sport command failed with an unexpected code, attempt recovery
+                            if not success and code not in LENIENT_STATUS_CODES.get(cmd_id, set()):
+                                print(f"[Command] {cmd_id} FAILED code={code} msg='{message}' — attempting RecoveryStand", flush=True)
+                                try:
+                                    await conn.datachannel.pub_sub.publish_request_new(
+                                        RTC_TOPIC['SPORT_MOD'], {'api_id': SPORT_CMD.get('RecoveryStand', SPORT_CMD.get('StandUp'))}
+                                    )
+                                    print(f"[Command] RecoveryStand sent after {cmd_id} failure", flush=True)
+                                except Exception as recovery_err:
+                                    print(f"[Command] RecoveryStand also failed: {recovery_err}", flush=True)
+
                             with result_lock:
                                 command_results[result_id] = {
                                     'success': success,
@@ -352,6 +405,10 @@ async def robot_loop():
                         except Exception as e:
                             with result_lock:
                                 command_results[result_id] = {'success': False, 'error': str(e)}
+                        finally:
+                            with _robot_busy_lock:
+                                _robot_busy = False
+                                _robot_last_cmd_ts = time.time()
                     except queue.Empty:
                         pass
 
@@ -431,10 +488,22 @@ def status():
 def handle_command():
     data = request.get_json()
     cmd_name = data.get('command')
-    
+
     if not cmd_name or cmd_name not in COMMAND_MAP:
         return jsonify({'success': False, 'message': 'Invalid command'}), 400
-    
+
+    # --- Safety: reject if robot is already executing a command ---
+    with _robot_busy_lock:
+        if _robot_busy:
+            print(f"[Command] REJECTED '{cmd_name}' — robot busy with another command", flush=True)
+            return jsonify({'success': False, 'message': 'Robot busy — wait for current command to finish'}), 429
+        # Also enforce minimum gap between commands
+        gap = time.time() - _robot_last_cmd_ts
+        if gap < _ROBOT_CMD_MIN_GAP:
+            remaining = _ROBOT_CMD_MIN_GAP - gap
+            print(f"[Command] REJECTED '{cmd_name}' — too soon after last command ({gap:.1f}s < {_ROBOT_CMD_MIN_GAP}s)", flush=True)
+            return jsonify({'success': False, 'message': f'Command cooldown — wait {remaining:.1f}s'}), 429
+
     result_id = f'{cmd_name}_{time.time()}'
     command_queue.put((cmd_name, COMMAND_MAP[cmd_name], result_id))
 
@@ -442,7 +511,7 @@ def handle_command():
         start_motion_keepalive_if_needed(cmd_name)
     elif cmd_name == 'crouch':
         stop_motion_keepalive('crouch command issued')
-    
+
     # Wait for result with timeout
     start_time = time.time()
     while time.time() - start_time < COMMAND_RESULT_TIMEOUT:
@@ -450,7 +519,7 @@ def handle_command():
             if result_id in command_results:
                 return jsonify(command_results.pop(result_id))
         time.sleep(0.05)
-    
+
     return jsonify({'success': False, 'message': 'Timeout'}), 504
 
 @app.route('/move', methods=['POST'])

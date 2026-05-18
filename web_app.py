@@ -82,6 +82,11 @@ class WebApp:
         # Stream exit signaling
         self._stream_exited = threading.Event()
         self._stream_exited.set()
+        # Detection pause
+        self._detection_paused = False
+        # Alert log cooldown — suppress duplicate log entries for 10 seconds
+        self._last_alert_log_ts = 0.0
+        self._alert_log_cooldown = 10.0  # seconds
         # Cached battery/robot state for telemetry (refreshed by heartbeat)
         self._cached_robot_state = {
             'soc': None, 'voltage': None,
@@ -180,6 +185,11 @@ class WebApp:
                     break
 
             try:
+                # Skip detection when paused (queue is still drained above)
+                if self._detection_paused:
+                    self._detection_queue.task_done()
+                    continue
+
                 if not self._config_manager:
                     from config import get_config
                     self._config_manager = get_config()
@@ -218,14 +228,18 @@ class WebApp:
                     _check_outstretched_hand(frame)
 
                 if self._config_manager.is_alert_logging_enabled():
-                    target_classes = self._config_manager.get_classes()
-                    if not target_classes:
-                        target_classes = list(
-                            set(d['class_name'] if isinstance(d, dict) else d.class_name for d in detections)
-                        )
-                    logged = detection_logger.log_detections(frame, detections, target_classes)
-                    if logged and detection_logger.detection_logs:
-                        detection_logger.detection_logs[-1]['camera_source'] = camera_manager.camera_source
+                    now = time.time()
+                    if now - self._last_alert_log_ts >= self._alert_log_cooldown:
+                        target_classes = self._config_manager.get_classes()
+                        if not target_classes:
+                            target_classes = list(
+                                set(d['class_name'] if isinstance(d, dict) else d.class_name for d in detections)
+                            )
+                        logged = detection_logger.log_detections(frame, detections, target_classes)
+                        if logged:
+                            self._last_alert_log_ts = now
+                            if detection_logger.detection_logs:
+                                detection_logger.detection_logs[-1]['camera_source'] = camera_manager.camera_source
 
                 # Emit telemetry for every detection frame (TelemetryManager handles its own throttling)
                 telemetry = get_telemetry()
@@ -563,17 +577,7 @@ def latest_detections():
         'camera_source': camera_manager.camera_source
     })
 
-# ── Gesture detection via YOLO bbox heuristic ──────────────────────
-# A squatting person has a distinctly different bbox shape than standing:
-#   Standing person:  tall & narrow  (w/h ≈ 0.3-0.5)
-#   Squatting person: wide & short   (w/h ≈ 0.8-1.5)
-#
-# To avoid false positives from distant/partially-visible people we
-# enforce THREE conditions simultaneously:
-#   1. Aspect ratio (w/h) ≥ 0.75  — bbox is squat-shaped
-#   2. Bbox area ≥ 8% of frame    — person must be CLOSE to the robot
-#   3. Bbox bottom edge in lower 40% of frame — person is low/near ground
-#
+# ── Gesture detection (YOLO Pose outstretched hand) ─────────────────
 # A person walking past at 10+ feet will have a tiny bbox (fails #2).
 # A person standing close will be tall & narrow (fails #1).
 # A person's head/torso cropped at frame edge may have odd aspect but
@@ -877,6 +881,67 @@ def set_scene_mode():
     _gesture_enabled = (mode == 'gesture')
     logger.info(f"[GesturePose] Outstretched hand detection {'ENABLED' if _gesture_enabled else 'DISABLED'}")
     return jsonify({'success': True, 'mode': narrator.mode})
+
+@app.route('/api/scene/summary')
+def get_scene_summary():
+    """Return the aggregated scene awareness summary."""
+    narrator = get_narrator()
+    if not narrator or not narrator.enabled:
+        return jsonify({'enabled': False, 'summary': None})
+    data = narrator.get_scene_summary()
+    data['enabled'] = True
+    return jsonify(data)
+
+@app.route('/api/scene/summary/clear', methods=['POST'])
+def clear_scene_summary():
+    """Clear scene summary and observation history (fresh shift)."""
+    narrator = get_narrator()
+    if not narrator:
+        return jsonify({'success': False, 'message': 'Narrator not initialized'}), 503
+    narrator.clear_scene()
+    return jsonify({'success': True})
+
+@app.route('/api/scene/frame/clear', methods=['POST'])
+def clear_frame_log():
+    """Clear frame observation log."""
+    narrator = get_narrator()
+    if not narrator:
+        return jsonify({'success': False, 'message': 'Narrator not initialized'}), 503
+    narrator.clear_frame_log()
+    return jsonify({'success': True})
+
+@app.route('/api/vlm/pause', methods=['POST'])
+def toggle_vlm_pause():
+    """Pause or resume VLM processing (frame observations + scene summary)."""
+    narrator = get_narrator()
+    if not narrator:
+        return jsonify({'success': False, 'message': 'Narrator not initialized'}), 503
+    data = request.get_json() or {}
+    should_pause = data.get('paused', not narrator.paused)  # toggle if not specified
+    if should_pause:
+        narrator.pause()
+    else:
+        narrator.resume()
+    return jsonify({'success': True, 'paused': narrator.paused})
+
+@app.route('/api/detections/pause', methods=['POST'])
+def toggle_detection_pause():
+    """Pause or resume YOLO detection processing."""
+    data = request.get_json() or {}
+    should_pause = data.get('paused', not web_app._detection_paused)  # toggle
+    web_app._detection_paused = should_pause
+    logger.info(f"[Detections] {'PAUSED' if should_pause else 'RESUMED'}")
+    return jsonify({'success': True, 'paused': web_app._detection_paused})
+
+@app.route('/api/pause/status')
+def pause_status():
+    """Return pause state for both VLM and detections."""
+    narrator = get_narrator()
+    vlm_paused = narrator.paused if narrator else False
+    return jsonify({
+        'vlm_paused': vlm_paused,
+        'detection_paused': web_app._detection_paused,
+    })
 
 @app.route('/thumbnail/<filename>')
 def serve_thumbnail(filename):
@@ -1354,10 +1419,11 @@ _init_telemetry()
 
 
 def _gesture_shake_callback(gesture_text: str):
-    """Called by SceneNarrator when an outstretched-hand gesture is detected.
+    """Called when an outstretched-hand gesture is detected.
 
     Sends the GO2 'shake' command in a fire-and-forget thread so the
-    narrator loop is not blocked.
+    detection loop is not blocked. The go2_service busy-guard will reject
+    the command if the robot is already executing something.
     """
     def _send():
         try:
@@ -1365,11 +1431,13 @@ def _gesture_shake_callback(gesture_text: str):
             resp = requests.post(
                 f'{_GO2_SERVICE_URL}/command',
                 json={'command': 'shake'},
-                timeout=5,
+                timeout=8,
             )
             if resp.status_code == 200:
                 result = resp.json()
                 logger.info(f"[Gesture] GO2 shake result: {result}")
+            elif resp.status_code == 429:
+                logger.info(f"[Gesture] GO2 shake rejected (robot busy/cooldown) — safe to ignore")
             else:
                 logger.warning(f"[Gesture] GO2 shake failed: {resp.status_code}")
         except Exception as e:

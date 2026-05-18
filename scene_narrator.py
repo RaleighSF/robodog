@@ -2,16 +2,20 @@
 """
 Scene Narrator — VLM-powered situational awareness for Watch Dog.
 
-Two mutually-exclusive modes, toggled at runtime:
+Three concerns, all driven from a single background thread:
 
-  **casual**  — Slow (every ~10 s), rich scene descriptions logged to the
-                dashboard.  Conference-booth context.  No gesture detection.
+  **Frame observations** (casual mode) — Per-frame VLM descriptions every ~10s.
+      Logged to the "Frame Awareness" tab on the dashboard.
 
-  **gesture** — Fast (every ~3 s), binary yes/no scan for a person
-                squatting in front of the robot.  NOT logged to the UI.
-                Requires 2 consecutive positive frames before firing the
-                callback (eliminates VLM hallucination false-positives).
-                10 s cooldown between triggers.
+  **Scene summary** (aggregation) — Every ~45s, synthesizes recent frame
+      observations + current frame + previous summary into a living narrative.
+      Shown on the "Scene Awareness" tab.  Serialized with frame calls so
+      the VLM is never double-booked.
+
+  **Gesture scanning** — Fast binary yes/no scan (VLM path, largely
+      superseded by YOLO Pose in the detection pipeline).
+
+Pause support: VLM can be paused independently of YOLO detections.
 """
 import re
 import threading
@@ -21,7 +25,7 @@ import logging
 import requests
 import cv2
 from collections import deque
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Callable, Optional
 
 logger = logging.getLogger(__name__)
@@ -29,25 +33,53 @@ logger = logging.getLogger(__name__)
 DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434"
 DEFAULT_MODEL = "qwen2.5vl:3b"
 MAX_LOG_ENTRIES = 50
-FRAME_MAX_DIM = 960       # resize frames before sending to VLM (casual mode)
-GESTURE_FRAME_DIM = 480   # smaller frames for fast gesture scanning
+MAX_SCENE_OBSERVATIONS = 20   # how many frame observations feed into scene summary
+FRAME_MAX_DIM = 960           # resize frames before sending to VLM (casual mode)
+GESTURE_FRAME_DIM = 480       # smaller frames for fast gesture scanning
 
-# ── Casual mode defaults ────────────────────────────────────────────
+# ── Frame observation defaults ─────────────────────────────────────
 CASUAL_INTERVAL = 10  # seconds
 CASUAL_SYSTEM_PROMPT = (
     "You ARE a Unitree GO2 robot dog. This camera is YOUR eyes — you are "
     "seeing the world from your own perspective at ground level. Never refer "
     "to yourself in the third person or mention seeing a robot. Describe the "
-    "scene around you in first person: what is happening at the booth, are "
+    "scene around you in first person: what is happening around you, are "
     "people approaching you, watching you, ignoring you? Is the area busy "
     "or quiet? Note reactions — are people excited, curious, taking photos, "
-    "or is it a lull between sessions? Keep it to one or two sentences, "
-    "like a brief status report from the field."
+    "or is it a lull between sessions?\n\n"
+    "IMPORTANT: Be precise and factual. Only describe what you can clearly "
+    "see in this image. If no people are visible, say the area is empty. "
+    "Never assume or hallucinate the presence of people, objects, or activity "
+    "that you cannot clearly see. If the scene is quiet and unchanged, say so "
+    "briefly. Keep it to one or two sentences."
 )
 
-# ── Gesture mode defaults ───────────────────────────────────────────
-GESTURE_INTERVAL = 1  # seconds — target gap between scans (actual pace limited by inference)
-GESTURE_COOLDOWN = 10.0  # seconds between shake triggers
+# ── Scene summary defaults ─────────────────────────────────────────
+SCENE_SUMMARY_INTERVAL = 45  # seconds
+SCENE_SUMMARY_SYSTEM_PROMPT = (
+    "You are a situational awareness analyst reviewing observations from a "
+    "robot patrol dog's camera over a period of time. You will receive:\n"
+    "1. A current camera image showing what is visible RIGHT NOW\n"
+    "2. A series of recent frame-by-frame observations with timestamps\n"
+    "3. Your previous situational summary (if any)\n\n"
+    "Produce an updated situational report (2-4 sentences) that covers:\n"
+    "- Current state of the scene (based on the image you can see)\n"
+    "- What has changed since the last report\n"
+    "- Any patterns or trends (e.g., foot traffic increasing, area emptying out)\n\n"
+    "RULES:\n"
+    "- Be factual. Base your report ONLY on the image you can see and the "
+    "observations provided. Never infer or hallucinate people, objects, or "
+    "activity not explicitly described.\n"
+    "- If frame observations mention people but your current image shows an "
+    "empty scene, note that the area has cleared.\n"
+    "- If the scene has been consistently empty, say so plainly.\n"
+    "- Use past tense for things no longer visible, present tense for current state.\n"
+    "- Do NOT repeat individual observations verbatim. Synthesize."
+)
+
+# ── Gesture mode defaults ──────────────────────────────────────────
+GESTURE_INTERVAL = 1
+GESTURE_COOLDOWN = 10.0
 GESTURE_SYSTEM_PROMPT = (
     "You are a gesture detector. Your ONLY job is to decide whether a person "
     "in this image is squatting, crouching, or kneeling close to the ground "
@@ -60,18 +92,17 @@ GESTURE_SYSTEM_PROMPT = (
     "- Do NOT explain. Do NOT describe the scene. Just YES or NO."
 )
 
-# Match the gesture scanner's YES response
 _GESTURE_YES = re.compile(r"^\s*YES\s*$", re.IGNORECASE | re.MULTILINE)
 
 
 class SceneNarrator:
-    """Dual-mode VLM scene awareness engine."""
+    """VLM-powered frame observation + scene aggregation engine."""
 
     def __init__(self, ollama_url=None, model=None, scene_context=None):
         self.ollama_url = ollama_url or DEFAULT_OLLAMA_URL
         self.model = model or DEFAULT_MODEL
-        self.scene_context = scene_context  # extra context appended in casual mode
-        self._log: deque = deque(maxlen=MAX_LOG_ENTRIES)
+        self.scene_context = scene_context
+        self._frame_log: deque = deque(maxlen=MAX_LOG_ENTRIES)
         self._lock = threading.Lock()
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
@@ -79,17 +110,31 @@ class SceneNarrator:
         self.enabled = False
         self._model_available: Optional[bool] = None
 
+        # VLM serialization lock — ensures only one VLM call at a time
+        self._vlm_lock = threading.Lock()
+
         # Mode: "casual" or "gesture"
         self._mode = "casual"
         self._mode_lock = threading.Lock()
+
+        # Pause state
+        self._paused = False
+        self._pause_lock = threading.Lock()
+
+        # Scene aggregation state
+        self._scene_observations: deque = deque(maxlen=MAX_SCENE_OBSERVATIONS)
+        self._scene_summary: Optional[str] = None
+        self._scene_summary_ts: Optional[str] = None
+        self._scene_lock = threading.Lock()
+        self._last_scene_tick_ts = 0.0
 
         # Gesture state
         self._gesture_callback: Optional[Callable[[str], None]] = None
         self._gesture_cooldown = GESTURE_COOLDOWN
         self._last_gesture_ts = 0.0
         self._gesture_count = 0
-        self._consecutive_positives = 0  # confirmation counter
-        self._required_confirmations = 1  # fire on first YES (binary classifier is reliable)
+        self._consecutive_positives = 0
+        self._required_confirmations = 1
 
     # ── Public API ──────────────────────────────────────────────────
 
@@ -97,6 +142,23 @@ class SceneNarrator:
     def mode(self) -> str:
         with self._mode_lock:
             return self._mode
+
+    @property
+    def paused(self) -> bool:
+        with self._pause_lock:
+            return self._paused
+
+    def pause(self):
+        """Pause VLM processing (frame observations + scene summary)."""
+        with self._pause_lock:
+            self._paused = True
+        logger.info("[SceneNarrator] VLM paused")
+
+    def resume(self):
+        """Resume VLM processing."""
+        with self._pause_lock:
+            self._paused = False
+        logger.info("[SceneNarrator] VLM resumed")
 
     def set_mode(self, mode: str):
         """Switch between 'casual' and 'gesture'. Safe to call while running."""
@@ -107,7 +169,6 @@ class SceneNarrator:
             old = self._mode
             self._mode = mode
         if old != mode:
-            # Reset gesture confirmation state on mode switch
             self._consecutive_positives = 0
             logger.info(f"[SceneNarrator] Mode switched: {old} -> {mode}")
 
@@ -119,8 +180,7 @@ class SceneNarrator:
         """Register the callback fired when a confirmed gesture is detected."""
         self._gesture_callback = fn
         self._gesture_cooldown = cooldown
-        logger.info(f"[SceneNarrator] Gesture callback registered — cooldown {cooldown}s, "
-                     f"requires {self._required_confirmations} consecutive frames")
+        logger.info(f"[SceneNarrator] Gesture callback registered — cooldown {cooldown}s")
 
     def get_status(self) -> dict:
         """Combined status for dashboard."""
@@ -129,6 +189,7 @@ class SceneNarrator:
         return {
             "mode": self.mode,
             "enabled": self.enabled,
+            "paused": self.paused,
             "gesture_cooldown_seconds": self._gesture_cooldown,
             "gesture_cooldown_remaining": round(cooldown_remaining, 1),
             "gesture_count": self._gesture_count,
@@ -136,13 +197,41 @@ class SceneNarrator:
             "gesture_required": self._required_confirmations,
         }
 
-    def get_log(self, since=None):
-        """Return narration entries (casual mode only), optionally filtered."""
+    def get_frame_log(self, since=None):
+        """Return frame observation entries, optionally filtered by timestamp."""
         with self._lock:
-            entries = list(self._log)
+            entries = list(self._frame_log)
         if since:
             entries = [e for e in entries if e["timestamp"] > since]
         return entries
+
+    # Back-compat alias
+    def get_log(self, since=None):
+        return self.get_frame_log(since=since)
+
+    def get_scene_summary(self) -> dict:
+        """Return the current scene summary."""
+        with self._scene_lock:
+            return {
+                "summary": self._scene_summary,
+                "updated_at": self._scene_summary_ts,
+                "observation_count": len(self._scene_observations),
+            }
+
+    def clear_scene(self):
+        """Reset scene summary and observation history (fresh shift)."""
+        with self._scene_lock:
+            self._scene_observations.clear()
+            self._scene_summary = None
+            self._scene_summary_ts = None
+        self._last_scene_tick_ts = 0.0
+        logger.info("[SceneNarrator] Scene summary cleared — fresh shift")
+
+    def clear_frame_log(self):
+        """Clear frame observation log."""
+        with self._lock:
+            self._frame_log.clear()
+        logger.info("[SceneNarrator] Frame log cleared")
 
     # ── Lifecycle ───────────────────────────────────────────────────
 
@@ -180,17 +269,25 @@ class SceneNarrator:
 
     def _loop(self):
         while not self._stop_event.is_set():
+            # Check pause
+            if self.paused:
+                self._stop_event.wait(timeout=0.5)
+                continue
+
             mode = self.mode
             tick_start = time.time()
             try:
                 if mode == "casual":
                     self._casual_tick()
+                    # Check if scene summary is due (piggyback on casual loop)
+                    if (tick_start - self._last_scene_tick_ts) >= SCENE_SUMMARY_INTERVAL:
+                        self._scene_tick()
+                        self._last_scene_tick_ts = time.time()
                 else:
                     self._gesture_tick()
             except Exception as e:
                 logger.error(f"[SceneNarrator] Error in {mode} tick: {e}")
 
-            # Subtract inference time from wait so we hit target cadence
             target = CASUAL_INTERVAL if mode == "casual" else GESTURE_INTERVAL
             elapsed = time.time() - tick_start
             remaining = max(0.1, target - elapsed)
@@ -212,31 +309,32 @@ class SceneNarrator:
 
     def _vlm_query(self, system_prompt: str, user_prompt: str, image_b64: str,
                    max_tokens: int = 150, temperature: float = 0.3) -> Optional[str]:
-        """Send a single image+text query to Ollama and return the response text."""
-        try:
-            resp = requests.post(
-                f"{self.ollama_url}/api/chat",
-                json={
-                    "model": self.model,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt, "images": [image_b64]},
-                    ],
-                    "stream": False,
-                    "options": {"num_predict": max_tokens, "temperature": temperature},
-                },
-                timeout=30,
-            )
-            if resp.status_code == 200:
-                return resp.json().get("message", {}).get("content", "").strip()
-            logger.warning(f"[SceneNarrator] Ollama returned {resp.status_code}")
-        except requests.exceptions.Timeout:
-            logger.warning("[SceneNarrator] Ollama request timed out")
-        except Exception as e:
-            logger.error(f"[SceneNarrator] Request failed: {e}")
+        """Send a single image+text query to Ollama. Serialized via _vlm_lock."""
+        with self._vlm_lock:
+            try:
+                resp = requests.post(
+                    f"{self.ollama_url}/api/chat",
+                    json={
+                        "model": self.model,
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt, "images": [image_b64]},
+                        ],
+                        "stream": False,
+                        "options": {"num_predict": max_tokens, "temperature": temperature},
+                    },
+                    timeout=30,
+                )
+                if resp.status_code == 200:
+                    return resp.json().get("message", {}).get("content", "").strip()
+                logger.warning(f"[SceneNarrator] Ollama returned {resp.status_code}")
+            except requests.exceptions.Timeout:
+                logger.warning("[SceneNarrator] Ollama request timed out")
+            except Exception as e:
+                logger.error(f"[SceneNarrator] Request failed: {e}")
         return None
 
-    # ── Casual mode ─────────────────────────────────────────────────
+    # ── Frame observations (casual mode) ───────────────────────────
 
     def _build_casual_prompt(self) -> str:
         prompt = CASUAL_SYSTEM_PROMPT
@@ -250,25 +348,78 @@ class SceneNarrator:
             return
         description = self._vlm_query(
             self._build_casual_prompt(),
-            "What do you see?",
+            "What do you see right now? Be factual — describe only what is clearly visible.",
             image_b64,
             max_tokens=150,
             temperature=0.3,
         )
         if description:
+            ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
             entry = {
-                "timestamp": datetime.utcnow().isoformat() + "Z",
+                "timestamp": ts,
                 "description": description,
                 "model": self.model,
             }
             with self._lock:
-                self._log.append(entry)
-            logger.info(f"[SceneNarrator:casual] {description[:80]}...")
+                self._frame_log.append(entry)
+            # Also feed into scene aggregation buffer
+            with self._scene_lock:
+                self._scene_observations.append({"timestamp": ts, "text": description})
+            logger.info(f"[SceneNarrator:frame] {description[:80]}...")
 
-    # ── Gesture mode ────────────────────────────────────────────────
+    # ── Scene summary (aggregation) ────────────────────────────────
+
+    def _scene_tick(self):
+        """Produce an updated scene summary from recent frame observations."""
+        with self._scene_lock:
+            observations = list(self._scene_observations)
+            prev_summary = self._scene_summary
+
+        if not observations:
+            logger.debug("[SceneNarrator:scene] No observations yet — skipping summary")
+            return
+
+        # Build the observation context text
+        obs_lines = []
+        for obs in observations:
+            obs_lines.append(f"[{obs['timestamp']}] {obs['text']}")
+        obs_text = "\n".join(obs_lines)
+
+        # Build the user prompt
+        parts = [f"RECENT FRAME OBSERVATIONS ({len(observations)} entries):\n{obs_text}"]
+        if prev_summary:
+            parts.append(f"\nPREVIOUS SITUATIONAL SUMMARY:\n{prev_summary}")
+        else:
+            parts.append("\nThis is your FIRST report — no previous summary exists.")
+        parts.append("\nUpdate the situational report based on the current image and the observations above.")
+        user_prompt = "\n".join(parts)
+
+        # Get current frame for visual grounding
+        image_b64 = self._encode_frame()
+        if not image_b64:
+            return
+
+        system_prompt = SCENE_SUMMARY_SYSTEM_PROMPT
+        if self.scene_context:
+            system_prompt += "\n\nDeployment context: " + self.scene_context
+
+        summary = self._vlm_query(
+            system_prompt,
+            user_prompt,
+            image_b64,
+            max_tokens=300,
+            temperature=0.3,
+        )
+        if summary:
+            ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            with self._scene_lock:
+                self._scene_summary = summary
+                self._scene_summary_ts = ts
+            logger.info(f"[SceneNarrator:scene] Summary updated: {summary[:80]}...")
+
+    # ── Gesture mode ───────────────────────────────────────────────
 
     def _gesture_tick(self):
-        # Use smaller frame + lower quality for speed
         image_b64 = self._encode_frame(max_dim=GESTURE_FRAME_DIM, quality=70)
         if not image_b64:
             return
@@ -277,8 +428,8 @@ class SceneNarrator:
             GESTURE_SYSTEM_PROMPT,
             "Is a person squatting or crouching in this image?",
             image_b64,
-            max_tokens=3,       # only need YES/NO
-            temperature=0.1,    # deterministic
+            max_tokens=3,
+            temperature=0.1,
         )
         if not answer:
             return
@@ -298,11 +449,9 @@ class SceneNarrator:
             self._consecutive_positives = 0
             return
 
-        # Only fire after N consecutive positives
         if self._consecutive_positives < self._required_confirmations:
             return
 
-        # Confirmed — check cooldown
         now = time.time()
         if (now - self._last_gesture_ts) < self._gesture_cooldown:
             logger.info(
@@ -312,7 +461,6 @@ class SceneNarrator:
             self._consecutive_positives = 0
             return
 
-        # Fire!
         self._last_gesture_ts = now
         self._gesture_count += 1
         self._consecutive_positives = 0
