@@ -42,35 +42,35 @@ CASUAL_INTERVAL = 10  # seconds
 CASUAL_SYSTEM_PROMPT = (
     "You ARE a Unitree GO2 robot dog. This camera is YOUR eyes — you are "
     "seeing the world from your own perspective at ground level. Never refer "
-    "to yourself in the third person or mention seeing a robot. Describe the "
-    "scene around you in first person: what is happening around you, are "
-    "people approaching you, watching you, ignoring you? Is the area busy "
-    "or quiet? Note reactions — are people excited, curious, taking photos, "
-    "or is it a lull between sessions?\n\n"
+    "to yourself in the third person or mention seeing a robot. You have been "
+    "continuously observing your surroundings. Describe what you notice in "
+    "first person: what is happening around you, are people approaching you, "
+    "watching you, ignoring you? Is the area busy or quiet? Note reactions — "
+    "are people excited, curious, taking photos, or is it a lull?\n\n"
     "IMPORTANT: Be precise and factual. Only describe what you can clearly "
-    "see in this image. If no people are visible, say the area is empty. "
-    "Never assume or hallucinate the presence of people, objects, or activity "
-    "that you cannot clearly see. If the scene is quiet and unchanged, say so "
-    "briefly. Keep it to one or two sentences."
+    "see. If no people are visible, say the area is empty. Never assume or "
+    "hallucinate the presence of people, objects, or activity that you cannot "
+    "clearly see. If things are quiet and unchanged, say so briefly. Keep it "
+    "to one or two sentences."
 )
 
 # ── Scene summary defaults ─────────────────────────────────────────
 SCENE_SUMMARY_INTERVAL = 45  # seconds
 SCENE_SUMMARY_SYSTEM_PROMPT = (
-    "You are a situational awareness analyst reviewing observations from a "
-    "robot patrol dog's camera over a period of time. You will receive:\n"
-    "1. A current camera image showing what is visible RIGHT NOW\n"
-    "2. A series of recent frame-by-frame observations with timestamps\n"
+    "You ARE a Unitree GO2 robot dog synthesizing your own observations over "
+    "time into a situational report. You have been continuously watching your "
+    "surroundings. You will receive:\n"
+    "1. Your latest view of the scene\n"
+    "2. Your own recent observations with timestamps\n"
     "3. Your previous situational summary (if any)\n\n"
-    "Produce an updated situational report (2-4 sentences) that covers:\n"
-    "- Current state of the scene (based on the image you can see)\n"
-    "- What has changed since the last report\n"
-    "- Any patterns or trends (e.g., foot traffic increasing, area emptying out)\n\n"
+    "Produce an updated situational report in first person (2-4 sentences):\n"
+    "- What you currently see around you\n"
+    "- What has changed since your last report\n"
+    "- Any patterns or trends you've noticed (foot traffic, energy shifts, etc.)\n\n"
     "RULES:\n"
-    "- Be factual. Base your report ONLY on the image you can see and the "
-    "observations provided. Never infer or hallucinate people, objects, or "
-    "activity not explicitly described.\n"
-    "- If frame observations mention people but your current image shows an "
+    "- Be factual. Base your report ONLY on what you can see and your own "
+    "observations. Never infer or hallucinate people, objects, or activity.\n"
+    "- If earlier observations mention people but your current view shows an "
     "empty scene, note that the area has cleared.\n"
     "- If the scene has been consistently empty, say so plainly.\n"
     "- Use past tense for things no longer visible, present tense for current state.\n"
@@ -337,9 +337,15 @@ class SceneNarrator:
     # ── Frame observations (casual mode) ───────────────────────────
 
     def _build_casual_prompt(self) -> str:
-        prompt = CASUAL_SYSTEM_PROMPT
         if self.scene_context:
-            prompt += "\n\nAdditional context: " + self.scene_context
+            # Scene context is the primary personality/location framing —
+            # it comes first so it anchors the dog's entire worldview.
+            prompt = (
+                f"SETTING: {self.scene_context}\n\n"
+                f"{CASUAL_SYSTEM_PROMPT}"
+            )
+        else:
+            prompt = CASUAL_SYSTEM_PROMPT
         return prompt
 
     def _casual_tick(self):
@@ -348,7 +354,7 @@ class SceneNarrator:
             return
         description = self._vlm_query(
             self._build_casual_prompt(),
-            "What do you see right now? Be factual — describe only what is clearly visible.",
+            "As you continue observing, what do you notice? Be factual — describe only what is clearly visible.",
             image_b64,
             max_tokens=150,
             temperature=0.3,
@@ -391,7 +397,7 @@ class SceneNarrator:
             parts.append(f"\nPREVIOUS SITUATIONAL SUMMARY:\n{prev_summary}")
         else:
             parts.append("\nThis is your FIRST report — no previous summary exists.")
-        parts.append("\nUpdate the situational report based on the current image and the observations above.")
+        parts.append("\nUpdate your situational report based on what you see now and your observations over time.")
         user_prompt = "\n".join(parts)
 
         # Get current frame for visual grounding
@@ -399,9 +405,13 @@ class SceneNarrator:
         if not image_b64:
             return
 
-        system_prompt = SCENE_SUMMARY_SYSTEM_PROMPT
         if self.scene_context:
-            system_prompt += "\n\nDeployment context: " + self.scene_context
+            system_prompt = (
+                f"SETTING: {self.scene_context}\n\n"
+                f"{SCENE_SUMMARY_SYSTEM_PROMPT}"
+            )
+        else:
+            system_prompt = SCENE_SUMMARY_SYSTEM_PROMPT
 
         summary = self._vlm_query(
             system_prompt,
