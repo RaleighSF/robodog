@@ -85,7 +85,11 @@ COMMAND_MAP = {
     'shake': SPORT_CMD['Hello']
 }
 
-KEEPALIVE_COMMANDS = {'stand', 'sit', 'shake'}
+KEEPALIVE_COMMANDS = {'sit', 'shake'}
+# 'stand' intentionally excluded — keepalive pings send set_motion_mode('normal')
+# which conflicts with BalanceStand posture and causes the robot to fall over.
+# Standing commands STOP the keepalive instead (see handle_command).
+KEEPALIVE_STOP_COMMANDS = {'stand', 'crouch'}  # commands that should halt keepalive
 KEEPALIVE_INTERVAL_SECONDS = 30   # increased from 20 — less aggressive pinging
 REMOTE_ACTIVITY_TIMEOUT = 5.0  # seconds of silence before assuming remote released control
 REMOTE_AXIS_THRESHOLD = 0.05
@@ -100,6 +104,8 @@ _robot_busy_lock = threading.Lock()
 _robot_busy = False          # True while a sport command is in-flight
 _robot_last_cmd_ts = 0.0     # timestamp of last sport command sent
 _ROBOT_CMD_MIN_GAP = 2.0     # minimum seconds between sport commands
+_robot_posture = 'idle'      # tracks current posture: 'idle', 'standing', 'sitting'
+_robot_posture_lock = threading.Lock()
 JPEG_QUALITY = int(os.environ.get('GO2_JPEG_QUALITY', '80'))
 JPEG_ENCODE_PARAMS = [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY]
 
@@ -134,8 +140,13 @@ threading.Thread(target=frame_encoder_worker, daemon=True).start()
 
 def enqueue_motion_mode_ping(source='keepalive'):
     """Queue a motion mode ping without requiring a response.
-    Skips if robot recently executed a sport command to avoid state conflicts.
+    Skips if robot is standing, busy, or recently executed a sport command.
     """
+    with _robot_posture_lock:
+        posture = _robot_posture
+    if posture == 'standing':
+        print(f"[KeepAlive] Skipping ping ({source}) — robot is standing", flush=True)
+        return
     with _robot_busy_lock:
         if _robot_busy:
             print(f"[KeepAlive] Skipping ping ({source}) — robot busy", flush=True)
@@ -302,14 +313,20 @@ async def robot_loop():
     while True:
         conn = await establish_connection_with_retry()
         try:
-            # Ensure motion mode is set to 'normal' so sport commands are accepted
-            try:
-                resp = await set_motion_mode(conn, 'normal')
-                status = resp.get('data', {}).get('header', {}).get('status', {})
-                msg = status.get('message') or status.get('msg') or ''
-                print(f"Motion mode set response: code={status.get('code')} msg='{msg}'")
-            except Exception as motion_error:
-                print(f"Failed to set motion mode: {motion_error}")
+            # Ensure motion mode is set to 'normal' — but NOT if robot is standing
+            # (sending mode change while standing causes safety fault / red light)
+            with _robot_posture_lock:
+                posture = _robot_posture
+            if posture == 'standing':
+                print(f"[Connect] Skipping initial set_motion_mode — robot is standing", flush=True)
+            else:
+                try:
+                    resp = await set_motion_mode(conn, 'normal')
+                    status = resp.get('data', {}).get('header', {}).get('status', {})
+                    msg = status.get('message') or status.get('msg') or ''
+                    print(f"Motion mode set response: code={status.get('code')} msg='{msg}'")
+                except Exception as motion_error:
+                    print(f"Failed to set motion mode: {motion_error}")
             
             conn.video.switchVideoChannel(True)
             conn.video.add_track_callback(recv_camera_stream)
@@ -332,6 +349,13 @@ async def robot_loop():
                 try:
                     try:
                         mode_name, result_id = motion_mode_queue.get_nowait()
+                        # Final safety gate: drop keepalive pings if robot is standing
+                        with _robot_posture_lock:
+                            posture = _robot_posture
+                        if posture == 'standing' and result_id is None:
+                            # result_id is None → this is a keepalive ping, not an explicit API call
+                            print(f"[Safety] Dropping mode ping '{mode_name}' — robot is standing", flush=True)
+                            raise queue.Empty  # skip to next iteration
                         try:
                             resp = await set_motion_mode(conn, mode_name)
                             status = resp.get('data', {}).get('header', {}).get('status', {})
@@ -504,13 +528,23 @@ def handle_command():
             print(f"[Command] REJECTED '{cmd_name}' — too soon after last command ({gap:.1f}s < {_ROBOT_CMD_MIN_GAP}s)", flush=True)
             return jsonify({'success': False, 'message': f'Command cooldown — wait {remaining:.1f}s'}), 429
 
+    # Track posture so we can guard against disruptive mode changes
+    global _robot_posture
+    with _robot_posture_lock:
+        if cmd_name == 'stand':
+            _robot_posture = 'standing'
+            print(f"[Posture] → standing", flush=True)
+        elif cmd_name in ('crouch', 'sit'):
+            _robot_posture = 'idle'
+            print(f"[Posture] → idle ({cmd_name})", flush=True)
+
     result_id = f'{cmd_name}_{time.time()}'
     command_queue.put((cmd_name, COMMAND_MAP[cmd_name], result_id))
 
-    if cmd_name in KEEPALIVE_COMMANDS:
+    if cmd_name in KEEPALIVE_STOP_COMMANDS:
+        stop_motion_keepalive(f'{cmd_name} command issued — suppressing keepalive pings')
+    elif cmd_name in KEEPALIVE_COMMANDS:
         start_motion_keepalive_if_needed(cmd_name)
-    elif cmd_name == 'crouch':
-        stop_motion_keepalive('crouch command issued')
 
     # Wait for result with timeout
     start_time = time.time()
