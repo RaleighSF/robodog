@@ -82,6 +82,11 @@ class WebApp:
         # Stream exit signaling
         self._stream_exited = threading.Event()
         self._stream_exited.set()
+        # Telemetry health counters (read by heartbeat)
+        self._frames_processed = 0
+        self._detection_fps = 0.0
+        self._det_fps_ts = time.time()
+        self._det_fps_count = 0
         # Detection pause
         self._detection_paused = False
         # Alert log cooldown — suppress duplicate log entries for 10 seconds
@@ -220,6 +225,16 @@ class WebApp:
                     self._last_detection_ts = time.time()
                     self._last_detection_frame_size = (frame.shape[1], frame.shape[0])
                 detection_count += 1
+                self._frames_processed += 1
+                # Update rolling FPS (recalc every 10 frames)
+                self._det_fps_count += 1
+                if self._det_fps_count >= 10:
+                    now = time.time()
+                    elapsed = now - self._det_fps_ts
+                    if elapsed > 0:
+                        self._detection_fps = round(self._det_fps_count / elapsed, 1)
+                    self._det_fps_ts = now
+                    self._det_fps_count = 0
                 if detection_count % 20 == 0:  # Log every 20 detections
                     print(f"[DetectionWorker] Processed {detection_count} frames, latest: {len(detections)} objects")
 
@@ -1393,12 +1408,26 @@ def _build_heartbeat_event():
     telemetry = get_telemetry()
     if not telemetry or not telemetry.enabled:
         return None
+    # Check if go2_service is reachable
+    go2_reachable = False
+    try:
+        r = requests.get('http://192.168.50.207:5001/status', timeout=2)
+        go2_reachable = r.status_code == 200
+    except Exception:
+        pass
+
     telemetry.emit_heartbeat(
         robot_state=web_app._cached_robot_state,
         system_health={
-            'cpu_percent': psutil.cpu_percent(interval=None),
-            'memory_percent': psutil.virtual_memory().percent,
-            'disk_percent': psutil.disk_usage('/').percent,
+            'stream_active': web_app.stream_active,
+            'detection_worker_alive': (
+                web_app._detection_thread is not None
+                and web_app._detection_thread.is_alive()
+            ),
+            'detection_fps': web_app._detection_fps,
+            'frames_processed': web_app._frames_processed,
+            'go2_service_reachable': go2_reachable,
+            'rtsp_server_running': None,  # unknown from AGX side
         },
         vision_config=cfg.get_vision_config(),
     )
