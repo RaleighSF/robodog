@@ -218,6 +218,7 @@ class CameraManager:
                     return False
             except requests.exceptions.RequestException as e:
                 print(f"Failed to connect to GO2 service: {e}")
+                robot_host.report_failure()   # venue change looks like a connect failure
                 return False
 
             # Start capture thread

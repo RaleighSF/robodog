@@ -91,7 +91,10 @@ class RobotHost:
             for h in order:
                 if self._alive(h):
                     if h != self._host:
-                        logger.info("[RobotHost] robot service resolved at %s", h)
+                        # A change of host means we moved networks - worth a WARNING
+                        # so it stands out in the journal on demo day.
+                        logger.warning("[RobotHost] robot service resolved at %s%s", h,
+                                       f" (was {self._host})" if self._host else "")
                     self._host, self._checked = h, now
                     return h
             fallback = self._host or order[0]

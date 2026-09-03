@@ -619,6 +619,7 @@ def go2_battery():
         else:
             return jsonify({'connected': False, 'soc': None}), response.status_code
     except Exception as e:
+        robot_host.report_failure()
         logger.error(f"Failed to fetch GO2 battery: {e}")
         return jsonify({'connected': False, 'soc': None, 'error': str(e)}), 503
 
