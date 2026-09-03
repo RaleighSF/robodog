@@ -18,7 +18,10 @@ def _atomic_imwrite(path: str, img) -> None:
     so they get served as 0 bytes and render as broken images forever. Writing to a
     temp file and renaming makes a partial file impossible to observe.
     """
-    tmp = path + ".tmp"
+    # cv2.imwrite selects the encoder from the file EXTENSION, so the temp
+    # name must keep the real ".jpg" - a ".tmp" suffix fails every write.
+    root, ext = os.path.splitext(path)
+    tmp = "%s.__tmp__%s" % (root, ext)
     if not cv2.imwrite(tmp, img):
         try: os.remove(tmp)
         except OSError: pass
