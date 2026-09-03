@@ -88,7 +88,10 @@
         }
 
         .ntt-logo-img {
-            height: 24px;
+            /* Official wordmark SVG (viewBox ~6.9:1, transparent, fill #6485c1 =
+               --accent-teal-500). 28px tall renders ~170px wide, a touch heavier
+               than the 22px text it replaced. */
+            height: 28px;
             width: auto;
             display: block;
         }
@@ -1670,8 +1673,7 @@
     <nav class="header-nav">
         <div class="nav-container">
             <div class="logo-section">
-                <!-- NTT DATA wordmark — clean text rendering, brand blue -->
-                <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-weight:700;font-size:22px;color:#0072BC;letter-spacing:1.5px;white-space:nowrap;">NTT DATA</span>
+                <img class="ntt-logo-img" src="/static/nttdata-logo.svg" alt="NTT DATA">
                 <div class="project-title">Project Watch Dog</div>
             </div>
             <div class="nav-controls">
