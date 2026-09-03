@@ -670,7 +670,7 @@ def latest_detections():
 # A person standing close will be tall & narrow (fails #1).
 # A person's head/torso cropped at frame edge may have odd aspect but
 # won't be large enough or low enough (fails #2 or #3).
-_GESTURE_COOLDOWN = 10.0   # seconds between shake triggers
+_GESTURE_COOLDOWN = 5.0    # seconds between shake triggers
 _gesture_last_trigger_ts = 0.0
 _gesture_count = 0
 _gesture_enabled = False    # toggled by scene narrator mode

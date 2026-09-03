@@ -23,7 +23,7 @@ scene_narrator:
   default_mode: casual
   enabled: true
   gesture:
-    cooldown_seconds: 10
+    cooldown_seconds: 5
   model: qwen2.5vl:3b
   ollama_url: http://127.0.0.1:11434
   scene_context: 'You are on the floor of a technology conference / convention. Expect
