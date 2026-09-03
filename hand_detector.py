@@ -32,9 +32,11 @@ _FRAME_DIM = 640
 
 # Tunable at runtime via POST /api/gesture
 DEFAULTS = {
-    "min_area_frac": 0.045,   # hand bbox as fraction of frame area
+    "min_area_frac": 0.020,   # hand bbox fraction. Measured: a hand at a natural
+                              # greeting distance ~1-2 ft is ~3%; 2% leaves margin.
     "center_band": 0.90,      # hand centre must be within this central fraction
-    "min_conf": 0.20,         # detection confidence floor
+    "min_conf": 0.35,         # a real presented hand measures 0.4-0.6; a background
+                              # false positive sits near 0.35, so this is the divider.
     "require_open": False,    # if True, also require the finger heuristic to pass
     "min_fingers": 3,         # extended-finger count when require_open is on
 }
@@ -49,6 +51,11 @@ class HandDetector:
         self._device = "cpu"
         self.cfg = dict(DEFAULTS)
         self.last = {"reason": "never_run"}
+        # Smooth flicker: fire when >=2 of the last 3 frames qualify. YOLO-World
+        # hand confidence bounces frame-to-frame, so a raw single-frame gate
+        # drops in and out even with a hand held steady.
+        from collections import deque
+        self._recent = deque(maxlen=3)
 
     @property
     def device(self):
@@ -134,6 +141,7 @@ class HandDetector:
         out["inference_ms"] = (time.time() - t0) * 1000
 
         if res.boxes is None or len(res.boxes) == 0:
+            self._recent.append(False)
             out["reason"] = "no_hand_seen"
             self.last = out
             return out
@@ -175,11 +183,16 @@ class HandDetector:
             self.last = out
             return out
 
-        out["detected"] = True
-        out["reason"] = "open_hand_near_camera"
+        # This frame passed every gate; record a vote and fire on a 2-of-3 majority.
+        self._recent.append(True)
+        if sum(self._recent) >= 2:
+            out["detected"] = True
+            out["reason"] = "open_hand_near_camera"
+            logger.info("[HandDetector] HAND area=%.1f%% conf=%.2f fingers=%s -> trigger",
+                        area * 100, conf, out["fingers"])
+        else:
+            out["reason"] = "confirming(%d/3)" % sum(self._recent)
         self.last = out
-        logger.info("[HandDetector] HAND area=%.1f%% conf=%.2f fingers=%s -> trigger",
-                    area * 100, conf, out["fingers"])
         return out
 
 
