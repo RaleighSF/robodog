@@ -683,6 +683,7 @@ _gesture_enabled = False    # toggled by scene narrator mode
 _ppe_enabled = False
 _ppe_last_result = None
 _ppe_lock = threading.Lock()
+_mode_switch_lock = threading.Lock()  # serialize /api/detection/mode
 _ppe_thread = None
 
 
@@ -1723,48 +1724,51 @@ def set_detection_mode():
     if mode not in ('yolo', 'ppe'):
         return jsonify({'status': 'error', 'message': "mode must be 'yolo' or 'ppe'"}), 400
 
-    if mode == 'ppe':
-        # ORDER MATTERS. Start PPE first, then stop YOLO. generate_frames() serves
-        # while (is_running or _ppe_enabled); if both are false for even one tick
-        # the stream loop exits and the video goes blank until the browser
-        # reconnects. Overlapping them by a few milliseconds keeps it seamless.
-        if not _ppe_enabled:
-            pd = get_ppe_detector()
-            try:
-                import torch
-                pd.set_device('cuda' if torch.cuda.is_available() else 'cpu')
-            except Exception:
-                pd.set_device('cpu')
-            _ppe_enabled = True
-            _ppe_thread = threading.Thread(target=_ppe_worker_loop, daemon=True, name='ppe-worker')
-            _ppe_thread.start()
+    # Serialize concurrent/double-clicked mode switches so two requests
+    # cannot both start a PPE worker or overlap YOLO+PPE on the GPU.
+    with _mode_switch_lock:
+        if mode == 'ppe':
+            # ORDER MATTERS. Start PPE first, then stop YOLO. generate_frames() serves
+            # while (is_running or _ppe_enabled); if both are false for even one tick
+            # the stream loop exits and the video goes blank until the browser
+            # reconnects. Overlapping them by a few milliseconds keeps it seamless.
+            if not _ppe_enabled:
+                pd = get_ppe_detector()
+                try:
+                    import torch
+                    pd.set_device('cuda' if torch.cuda.is_available() else 'cpu')
+                except Exception:
+                    pd.set_device('cpu')
+                _ppe_enabled = True
+                _ppe_thread = threading.Thread(target=_ppe_worker_loop, daemon=True, name='ppe-worker')
+                _ppe_thread.start()
 
-        # Now it is safe to tear YOLO down; the camera stays running throughout.
-        web_app.is_running = False
-        try:
-            web_app._stop_detection_feeder()
-            # Stop the WORKER too, not just the feeder. Frames already queued keep
-            # being processed after is_running flips, and the worker writes its
-            # result back into _last_detections AFTER we clear it - so YOLO boxes
-            # reappear on top of the PPE overlay. Shutting the worker down first
-            # makes the clear below final. The queue is drained on next start.
-            web_app.shutdown_detection_worker()
-        except Exception as e:
-            logger.warning("[Mode] detection shutdown: %s", e)
-        with web_app._detection_lock:
-            web_app._last_detections = []
-        logger.info("[Mode] -> PPE")
-    else:
-        # Same ordering rule in reverse: bring YOLO up before dropping PPE so
-        # has_activity never goes false and the stream never breaks.
-        if not web_app.is_running:
-            web_app.is_running = True
-            web_app._ensure_detection_worker()
-            web_app._start_detection_feeder()
-        _ppe_enabled = False
-        with _ppe_lock:
-            _ppe_last_result = None
-        logger.info("[Mode] -> YOLO")
+            # Now it is safe to tear YOLO down; the camera stays running throughout.
+            web_app.is_running = False
+            try:
+                web_app._stop_detection_feeder()
+                # Stop the WORKER too, not just the feeder. Frames already queued keep
+                # being processed after is_running flips, and the worker writes its
+                # result back into _last_detections AFTER we clear it - so YOLO boxes
+                # reappear on top of the PPE overlay. Shutting the worker down first
+                # makes the clear below final. The queue is drained on next start.
+                web_app.shutdown_detection_worker()
+            except Exception as e:
+                logger.warning("[Mode] detection shutdown: %s", e)
+            with web_app._detection_lock:
+                web_app._last_detections = []
+            logger.info("[Mode] -> PPE")
+        else:
+            # Same ordering rule in reverse: bring YOLO up before dropping PPE so
+            # has_activity never goes false and the stream never breaks.
+            if not web_app.is_running:
+                web_app.is_running = True
+                web_app._ensure_detection_worker()
+                web_app._start_detection_feeder()
+            _ppe_enabled = False
+            with _ppe_lock:
+                _ppe_last_result = None
+            logger.info("[Mode] -> YOLO")
 
     return jsonify({'status': 'success', 'mode': mode,
                     'device': get_ppe_detector().device})

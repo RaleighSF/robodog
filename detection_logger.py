@@ -46,6 +46,16 @@ class DetectionLogger:
         os.makedirs(os.path.join(self.log_dir, "thumbnails"), exist_ok=True)
         os.makedirs(os.path.join(self.log_dir, "images"), exist_ok=True)
 
+        # Sweep any leftover atomic-write temp files from a prior crash (a crash
+        # between imwrite and os.replace can strand a .__tmp__ file).
+        import glob
+        for sub in ("thumbnails", "images"):
+            for junk in glob.glob(os.path.join(self.log_dir, sub, "*.__tmp__*")):
+                try:
+                    os.remove(junk)
+                except OSError:
+                    pass
+
         # Load existing logs
         self._load_logs()
 
@@ -235,6 +245,8 @@ class DetectionLogger:
         thumb_dir = os.path.join(self.log_dir, "thumbnails")
         usable = []
         for entry in self.detection_logs:
+            if not isinstance(entry, dict):
+                continue
             name = entry.get("thumbnail")
             if not name:
                 continue

@@ -79,29 +79,34 @@ class RobotHost:
             return False
 
     def resolve(self, force=False):
+        # Snapshot state under the lock, then probe WITHOUT holding it. Probing can
+        # take (candidates x timeout) seconds when addresses are dead; holding the
+        # lock across that would serialize every Flask request behind the resolver.
         with self._lock:
             now = time.time()
             if (not force and self._host
                     and now - self._checked < _RECHECK_SECONDS):
                 return self._host
-            # Prefer re-confirming the current host; only scan if it fails.
-            order = self.candidates()
-            if self._host in order:
-                order = [self._host] + [h for h in order if h != self._host]
-            for h in order:
-                if self._alive(h):
-                    if h != self._host:
-                        # A change of host means we moved networks - worth a WARNING
-                        # so it stands out in the journal on demo day.
-                        logger.warning("[RobotHost] robot service resolved at %s%s", h,
-                                       f" (was {self._host})" if self._host else "")
-                    self._host, self._checked = h, now
-                    return h
-            fallback = self._host or order[0]
-            if not self._host:
-                logger.warning("[RobotHost] no candidate answered; using %s", fallback)
-            self._checked = now
-            return fallback
+            prev = self._host
+        order = self.candidates()
+        if prev in order:
+            order = [prev] + [h for h in order if h != prev]
+        winner = None
+        for h in order:
+            if self._alive(h):
+                winner = h
+                break
+        with self._lock:
+            if winner:
+                if winner != self._host:
+                    logger.warning("[RobotHost] robot service resolved at %s%s", winner,
+                                   f" (was {self._host})" if self._host else "")
+                self._host = winner
+            elif not self._host:
+                self._host = order[0]
+                logger.warning("[RobotHost] no candidate answered; using %s", self._host)
+            self._checked = time.time()
+            return self._host
 
     def report_failure(self):
         """Callers hit a connection error - force a re-probe on next resolve()."""

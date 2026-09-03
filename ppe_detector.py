@@ -64,7 +64,9 @@ class _TrackedPerson:
 
     @property
     def stable_compliant(self):
-        if len(self.votes) < 2:
+        # Until the vote window fills, trust the latest observation so a newly
+        # seen compliant person is not flashed red for the first few frames.
+        if len(self.votes) < _VOTE_WINDOW:
             return self.votes[-1]
         return sum(self.votes) >= _VOTE_THRESHOLD
 

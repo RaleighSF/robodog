@@ -160,6 +160,7 @@ class HandDetector:
 
         if conf < self.cfg["min_conf"]:
             out["reason"] = f"low_conf({conf:.2f})"
+            self._recent.append(False)  # decay stale vote
             self.last = out
             return out
 
@@ -167,12 +168,14 @@ class HandDetector:
         half = self.cfg["center_band"] / 2.0
         if abs(cx - 0.5) > half:
             out["reason"] = "off_centre"
+            self._recent.append(False)  # decay stale vote
             self.last = out
             return out
 
         # THE gate: is the hand a large part of the frame (i.e. near the camera)?
         if area < self.cfg["min_area_frac"]:
             out["reason"] = f"too_small({area*100:.1f}%<{self.cfg['min_area_frac']*100:.1f}%)"
+            self._recent.append(False)  # decay stale vote
             self.last = out
             return out
 
@@ -180,6 +183,7 @@ class HandDetector:
         out["fingers"] = self.count_extended_fingers(crop)
         if self.cfg["require_open"] and 0 <= out["fingers"] < self.cfg["min_fingers"]:
             out["reason"] = f"not_open({out['fingers']} fingers)"
+            self._recent.append(False)  # decay stale vote
             self.last = out
             return out
 
