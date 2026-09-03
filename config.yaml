@@ -6,6 +6,12 @@ detection:
   save_thumbnails: false
 go2:
   enabled: true
+  # Robot host is resolved at runtime by probing these in order (robot_host.py).
+  # service_url below is a legacy default kept for tools that still read it.
+  host_candidates:
+  - 192.168.50.207   # Cradlepoint 'Smart Robotics Lan' (static)
+  - 10.0.0.57        # home 'SmartRoboticsLan' (DHCP)
+  - 192.168.193.111  # ZeroTier (network-independent fallback)
   robot_ip: 192.168.123.161
   service_url: http://10.0.0.57:5001
 rtsp:
