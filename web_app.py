@@ -1056,13 +1056,15 @@ def set_scene_mode():
         return jsonify({'success': False, 'message': f'Invalid mode: {mode}'}), 400
     global _gesture_enabled
     narrator.set_mode(mode)
-    # Selecting narrator 'gesture' mode arms it as a convenience, but switching
-    # back to 'casual' no longer disarms: gesture firing is a PHYSICAL robot
-    # action and must not be toggled as a side effect of a narration setting.
-    # Use POST /api/gesture {"enabled": false} to disarm explicitly.
-    if mode == 'gesture' and not _gesture_enabled:
-        _gesture_enabled = True
-        logger.info("[GesturePose] armed via narrator mode")
+    # The slider is the gesture on/off control: 'gesture' arms, any other mode
+    # disarms. Firing a shake is a physical action, so the transition is always
+    # logged (never silent) and the operator can still override via
+    # POST /api/gesture {"enabled": ...}.
+    want = (mode == 'gesture')
+    if want != _gesture_enabled:
+        _gesture_enabled = want
+        logger.info("[GesturePose] %s via narrator slider (mode=%s)",
+                    'ARMED' if want else 'DISARMED', mode)
     return jsonify({'success': True, 'mode': narrator.mode})
 
 @app.route('/api/scene/summary')
