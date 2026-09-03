@@ -88,29 +88,24 @@
         }
 
         .ntt-logo-img {
-            height: 24px;
+            /* Official wordmark SVG (viewBox ~6.9:1, transparent, fill #6485c1 =
+               --accent-teal-500). 28px tall renders ~170px wide, a touch heavier
+               than the 22px text it replaced. */
+            height: 28px;
             width: auto;
             display: block;
         }
 
-        .project-title {
-            font-size: 15px;
-            font-weight: 500;
-            color: var(--ink-400);
-            border-left: 2px solid rgba(255,255,255,0.1);
-            padding-left: 14px;
-            white-space: nowrap;
-        }
 
         .partner-section {
             display: flex;
             align-items: center;
-            gap: 10px;
+            gap: 14px;
             justify-self: end;
         }
 
         .partner-label {
-            font-size: 11px;
+            font-size: 14px;
             font-weight: 400;
             color: var(--ink-400);
             text-transform: uppercase;
@@ -120,8 +115,14 @@
         }
 
         .partner-logo-img {
-            height: 30px;
+            /* The mark's black body vanishes against the dark nav, so mount it on a
+               white tile. border-box keeps the tile a fixed 34px with 4px padding. */
+            height: 44px;
             width: auto;
+            padding: 5px;
+            box-sizing: border-box;
+            background: #fff;
+            border-radius: 6px;
             display: block;
         }
 
@@ -1569,10 +1570,9 @@
             }
 
             .logo-section { gap: 10px; }
-            .project-title { font-size: 14px; padding-left: 10px; }
             .partner-section { gap: 6px; }
             .partner-label { font-size: 10px; }
-            .partner-logo-img { height: 22px; }
+            .partner-logo-img { height: 34px; padding: 4px; }
 
             .header-controls {
                 flex-wrap: wrap;
@@ -1664,9 +1664,7 @@
     <nav class="header-nav">
         <div class="nav-container">
             <div class="logo-section">
-                <!-- NTT DATA wordmark — clean text rendering, brand blue -->
-                <span style="font-family:'Inter',Arial,Helvetica,sans-serif;font-weight:700;font-size:22px;color:#0072BC;letter-spacing:1.5px;white-space:nowrap;">NTT DATA</span>
-                <div class="project-title">Project Watch Dog</div>
+                <img class="ntt-logo-img" src="/static/nttdata-logo.svg" alt="NTT DATA">
             </div>
             <div class="nav-controls">
                 <div class="header-controls">
@@ -3808,7 +3806,7 @@
                     statusText.textContent = 'VLM paused';
                     dot.classList.add('offline');
                 } else {
-                    statusText.textContent = 'VLM active — observing every ~10s';
+                    statusText.textContent = 'VLM active — observing every ~20s';
                     dot.classList.remove('offline');
                 }
             });
@@ -3839,7 +3837,7 @@
                 }
             } else {
                 if (!vlmPaused) {
-                    statusText.textContent = active ? 'VLM active — observing every ~10s' : 'Connecting to VLM...';
+                    statusText.textContent = active ? 'VLM active — observing every ~20s' : 'Connecting to VLM...';
                 }
                 if (currentTab === 'frame') frameTabContent.style.display = '';
                 if (existingBanner) existingBanner.remove();
@@ -3891,7 +3889,7 @@
                         active = true;
                         if (!vlmPaused) {
                             dot.classList.remove('offline');
-                            statusText.textContent = 'VLM active — observing every ~10s';
+                            statusText.textContent = 'VLM active — observing every ~20s';
                         }
                     }
                     if (data.entries && data.entries.length > 0) {

@@ -1,4 +1,5 @@
 import cv2
+from robot_host import robot_host
 import threading
 import time
 import asyncio
@@ -24,20 +25,22 @@ class CameraManager:
         self.unitree_client = None
         self.robot_ip = "192.168.87.25"
 
-        # RTSP channel URLs with TCP transport for better reliability
-        self.rtsp_channels = {
-            "rtsp_color": "rtsp://192.168.50.207:8554/color",
-            "rtsp_ir": "rtsp://192.168.50.207:8554/ir",
-            "rtsp_depth": "rtsp://192.168.50.207:8554/depth",
-            "rtsp_test": "rtsp://192.168.50.207:8554/test"  # Keep for backward compatibility
-        }
+        # RTSP URLs derive from the resolved robot host (rtsp_channels property).
         self.rtsp_url = self.rtsp_channels["rtsp_color"]  # Default to color
 
-        # GO2 WebRTC service configuration
-        self.go2_service_url = "http://192.168.50.207:5001"
+        # go2_service_url is a property resolved per access.
         self.go2_stream_active = False
         self.http_stream_active = False
         
+    # ---- robot address, resolved at access time -------------------------------
+    @property
+    def rtsp_channels(self):
+        return {f"rtsp_{c}": robot_host.rtsp_url(c) for c in ("color", "ir", "depth", "test")}
+
+    @property
+    def go2_service_url(self):
+        return robot_host.service_url()
+
     def set_camera_source(self, source: str, robot_ip: str = None, rtsp_url: str = None):
         """Set camera source: 'mac', 'unitree', 'rtsp_*', or 'go2_webrtc' with robust cleanup"""
         valid_sources = ["mac", "unitree", "go2_webrtc"] + list(self.rtsp_channels.keys())
@@ -215,6 +218,7 @@ class CameraManager:
                     return False
             except requests.exceptions.RequestException as e:
                 print(f"Failed to connect to GO2 service: {e}")
+                robot_host.report_failure()   # venue change looks like a connect failure
                 return False
 
             # Start capture thread
@@ -232,6 +236,8 @@ class CameraManager:
     def _start_rtsp_camera(self) -> bool:
         """Start RTSP camera capture from Jetson with robust connection handling"""
         try:
+            if self.camera_source in self.rtsp_channels:
+                self.rtsp_url = self.rtsp_channels[self.camera_source]   # re-resolve host
             print(f"Starting RTSP camera from {self.rtsp_url}...")
 
             if self.rtsp_url.startswith(('http://', 'https://')):

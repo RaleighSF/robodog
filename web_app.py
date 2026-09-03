@@ -20,6 +20,7 @@ import json
 import logging
 from datetime import datetime
 import requests
+from robot_host import robot_host
 
 # Enable more detailed logging for WebRTC debugging
 logging.basicConfig(level=logging.INFO)
@@ -612,12 +613,13 @@ def get_status():
 def go2_battery():
     """Proxy endpoint for GO2 battery data to avoid CORS issues"""
     try:
-        response = requests.get('http://10.0.0.57:5001/battery', timeout=2)
+        response = requests.get(f'{robot_host.service_url()}/battery', timeout=2)
         if response.status_code == 200:
             return jsonify(response.json())
         else:
             return jsonify({'connected': False, 'soc': None}), response.status_code
     except Exception as e:
+        robot_host.report_failure()
         logger.error(f"Failed to fetch GO2 battery: {e}")
         return jsonify({'connected': False, 'soc': None, 'error': str(e)}), 503
 
@@ -626,7 +628,7 @@ def go2_video_passthrough():
     """Zero-copy proxy that relays the GO2 MJPEG stream for low-latency viewing."""
     def proxy():
         try:
-            with requests.get('http://10.0.0.57:5001/video_feed', stream=True, timeout=(3, 30)) as resp:
+            with requests.get(f'{robot_host.service_url()}/video_feed', stream=True, timeout=(3, 30)) as resp:
                 resp.raise_for_status()
                 for chunk in resp.iter_content(chunk_size=8192):
                     if chunk:
@@ -784,7 +786,7 @@ _GO2_COMMAND_COOLDOWN = 1.5
 _GO2_MAX_VX = 0.25
 _GO2_MAX_VY = 0.2
 _GO2_MAX_VYAW = 0.5
-_GO2_SERVICE_URL = 'http://10.0.0.57:5001'
+# Robot address is resolved at call time by robot_host (see robot_host.py).
 
 
 def _go2_watchdog_loop():
@@ -795,7 +797,7 @@ def _go2_watchdog_loop():
             _inflight = _go2_move_inflight
         if (not _inflight) and _go2_last_move_ts > 0 and (time.time() - _go2_last_move_ts) > _GO2_MOVE_TIMEOUT:
             try:
-                requests.post(f'{_GO2_SERVICE_URL}/stop', json={}, timeout=1)
+                requests.post(f'{robot_host.service_url()}/stop', json={}, timeout=1)
                 logger.debug("[GO2 Watchdog] Auto-stop — no move command received")
             except Exception:
                 pass
@@ -833,7 +835,7 @@ def go2_command():
         # sends /stop repeatedly which triggers BalanceStand on a standing robot
         _go2_last_move_ts = 0.0
 
-        response = requests.post(f'{_GO2_SERVICE_URL}/command',
+        response = requests.post(f'{robot_host.service_url()}/command',
                                 json={'command': command},
                                 timeout=5)
 
@@ -877,7 +879,7 @@ def go2_move():
         try:
             # Must exceed the Orin's own 3.0s move-result timeout, or this proxy
             # gives up before the robot can answer.
-            response = requests.post(f'{_GO2_SERVICE_URL}/move',
+            response = requests.post(f'{robot_host.service_url()}/move',
                 json={'vx': vx, 'vy': vy, 'vyaw': vyaw},
                 timeout=4
             )
@@ -888,6 +890,7 @@ def go2_move():
         return jsonify(response.json()), response.status_code
     except Exception as e:
         _go2_last_move_ts = 0.0
+        robot_host.report_failure()   # a venue change looks like a connection error
         return jsonify({'success': False, 'message': str(e)}), 503
 
 @app.route('/go2/stop', methods=['POST'])
@@ -895,7 +898,7 @@ def go2_stop():
     global _go2_last_move_ts
     _go2_last_move_ts = 0.0
     try:
-        response = requests.post(f'{_GO2_SERVICE_URL}/stop',
+        response = requests.post(f'{robot_host.service_url()}/stop',
             json={},
             timeout=3
         )
@@ -912,7 +915,7 @@ def go2_motion_mode():
 
         logger.info(f"Setting GO2 motion mode to: {mode}")
 
-        response = requests.post('http://10.0.0.57:5001/motion_mode',
+        response = requests.post(f'{robot_host.service_url()}/motion_mode',
                                  json={'mode': mode},
                                  timeout=5)
 
@@ -1468,7 +1471,7 @@ def ssh_exec_command(command):
                 _ssh_client = paramiko.SSHClient()
                 _ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
                 _ssh_client.connect(
-                    os.environ.get('ORIN_HOST', '10.0.0.57'),
+                    os.environ.get('ORIN_HOST') or robot_host.host(),
                     username=os.environ.get('ORIN_USER', 'unitree'),
                     # No default: this repository is public. Set ORIN_PASS in the
                     # systemd unit or the environment. RTSP control is disabled by
@@ -1552,7 +1555,7 @@ def rtsp_stop():
 def _refresh_robot_state():
     """Fetch battery/status from go2_service and cache for telemetry."""
     try:
-        resp = requests.get('http://10.0.0.57:5001/battery', timeout=2)
+        resp = requests.get(f'{robot_host.service_url()}/battery', timeout=2)
         if resp.status_code == 200:
             data = resp.json()
             web_app._cached_robot_state.update({
@@ -1577,7 +1580,7 @@ def _build_heartbeat_event():
     # Check if go2_service is reachable
     go2_reachable = False
     try:
-        r = requests.get('http://10.0.0.57:5001/status', timeout=2)
+        r = requests.get(f'{robot_host.service_url()}/status', timeout=2)
         go2_reachable = r.status_code == 200
     except Exception:
         pass
@@ -1628,7 +1631,7 @@ def _gesture_shake_callback(gesture_text: str):
         try:
             logger.info(f"[Gesture] Sending GO2 shake — triggered by: '{gesture_text}'")
             resp = requests.post(
-                f'{_GO2_SERVICE_URL}/command',
+                f'{robot_host.service_url()}/command',
                 json={'command': 'shake'},
                 timeout=8,
             )
