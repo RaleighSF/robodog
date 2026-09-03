@@ -32,3 +32,8 @@ WEBRTC_DETECTION_TEST.md
 RTSP_QUICK_REFERENCE.md
 CONTEXT_SUMMARY.md
 RTSP_CONTROL_GUIDE.md
+
+# Local pre-edit backups
+.resolver_backup/
+.movefix_backup/
+.ipfix_backup/
