@@ -3806,7 +3806,7 @@
                     statusText.textContent = 'VLM paused';
                     dot.classList.add('offline');
                 } else {
-                    statusText.textContent = 'VLM active — observing every ~10s';
+                    statusText.textContent = 'VLM active — observing every ~20s';
                     dot.classList.remove('offline');
                 }
             });
@@ -3837,7 +3837,7 @@
                 }
             } else {
                 if (!vlmPaused) {
-                    statusText.textContent = active ? 'VLM active — observing every ~10s' : 'Connecting to VLM...';
+                    statusText.textContent = active ? 'VLM active — observing every ~20s' : 'Connecting to VLM...';
                 }
                 if (currentTab === 'frame') frameTabContent.style.display = '';
                 if (existingBanner) existingBanner.remove();
@@ -3889,7 +3889,7 @@
                         active = true;
                         if (!vlmPaused) {
                             dot.classList.remove('offline');
-                            statusText.textContent = 'VLM active — observing every ~10s';
+                            statusText.textContent = 'VLM active — observing every ~20s';
                         }
                     }
                     if (data.entries && data.entries.length > 0) {
