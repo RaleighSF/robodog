@@ -7,9 +7,28 @@ venv_311/
 __pycache__/
 .vscode/
 
+# Operational reference — contains plaintext device credentials
+CONNECTIONS.md
+
 # Logs & artifacts
 *.log
 web_app.py.agx_backup
 visual_prompts/
 unitree_sdk2_python/
 path/to/yolov4.weights
+
+# Model weights - large binaries, fetched/managed outside git
+*.pt
+*.weights
+
+# Runtime capture output
+detection_logs/
+
+# Operational runbooks - contain device passwords and the WiFi PSK.
+# This repository is PUBLIC; keep these local alongside CONNECTIONS.md.
+DEMO_RUNBOOK.md
+SETUP_GUIDE.md
+WEBRTC_DETECTION_TEST.md
+RTSP_QUICK_REFERENCE.md
+CONTEXT_SUMMARY.md
+RTSP_CONTROL_GUIDE.md

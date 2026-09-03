@@ -1,0 +1,16 @@
+[Unit]
+Description=Unitree GO2 service (WebRTC + API)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=unitree
+WorkingDirectory=/home/unitree
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 /home/unitree/go2_service.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

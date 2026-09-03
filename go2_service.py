@@ -471,15 +471,22 @@ async def robot_loop():
                             _robot_busy = True
                         try:
                             # Verify motion mode is 'normal' before sending sport cmd
-                            try:
-                                mode_resp = await set_motion_mode(conn, 'normal')
-                                mode_status = mode_resp.get('data', {}).get('header', {}).get('status', {})
-                                mode_code = mode_status.get('code', 1)
-                                if mode_code != 0:
-                                    msg = mode_status.get('message') or mode_status.get('msg') or ''
-                                    print(f"[Command] Mode check returned code {mode_code}: {msg} — proceeding cautiously", flush=True)
-                            except Exception as mode_err:
-                                print(f"[Command] Mode verify failed: {mode_err} — proceeding anyway", flush=True)
+                            # BUT skip if robot is standing — set_motion_mode('normal')
+                            # via MOTION_SWITCHER causes safety fault while standing
+                            with _robot_posture_lock:
+                                posture = _robot_posture
+                            if posture != 'standing':
+                                try:
+                                    mode_resp = await set_motion_mode(conn, 'normal')
+                                    mode_status = mode_resp.get('data', {}).get('header', {}).get('status', {})
+                                    mode_code = mode_status.get('code', 1)
+                                    if mode_code != 0:
+                                        msg = mode_status.get('message') or mode_status.get('msg') or ''
+                                        print(f"[Command] Mode check returned code {mode_code}: {msg} — proceeding cautiously", flush=True)
+                                except Exception as mode_err:
+                                    print(f"[Command] Mode verify failed: {mode_err} — proceeding anyway", flush=True)
+                            else:
+                                print(f"[Command] Skipping set_motion_mode — robot is standing", flush=True)
 
                             # Small pause to let mode settle before sport command
                             await asyncio.sleep(0.1)
@@ -550,28 +557,27 @@ async def robot_loop():
                             posture = _robot_posture
                         if posture != 'standing':
                             print(f"[StandHeartbeat] Dropping {heartbeat_name} — posture is {posture}", flush=True)
-                            continue
-                        with _robot_busy_lock:
-                            if _robot_busy:
-                                print(f"[StandHeartbeat] Dropping {heartbeat_name} — robot busy", flush=True)
-                                continue
-                            _robot_busy = True
-                        try:
-                            resp = await conn.datachannel.pub_sub.publish_request_new(
-                                RTC_TOPIC['SPORT_MOD'], {'api_id': heartbeat_api_id}
-                            )
-                            status = resp.get('data', {}).get('header', {}).get('status', {})
-                            code = status.get('code', 1)
-                            msg = status.get('message') or status.get('msg') or ''
-                            if code == 0:
-                                print(f"[StandHeartbeat] {heartbeat_name} refresh accepted", flush=True)
-                            else:
-                                print(f"[StandHeartbeat] {heartbeat_name} refresh returned code={code} msg='{msg}'", flush=True)
-                        except Exception as heartbeat_error:
-                            print(f"[StandHeartbeat] {heartbeat_name} refresh failed: {heartbeat_error}", flush=True)
-                        finally:
+                        elif _robot_busy:
+                            print(f"[StandHeartbeat] Dropping {heartbeat_name} — robot busy", flush=True)
+                        else:
                             with _robot_busy_lock:
-                                _robot_busy = False
+                                _robot_busy = True
+                            try:
+                                resp = await conn.datachannel.pub_sub.publish_request_new(
+                                    RTC_TOPIC['SPORT_MOD'], {'api_id': heartbeat_api_id}
+                                )
+                                status = resp.get('data', {}).get('header', {}).get('status', {})
+                                code = status.get('code', 1)
+                                msg = status.get('message') or status.get('msg') or ''
+                                if code == 0:
+                                    print(f"[StandHeartbeat] {heartbeat_name} refresh accepted", flush=True)
+                                else:
+                                    print(f"[StandHeartbeat] {heartbeat_name} refresh returned code={code} msg='{msg}'", flush=True)
+                            except Exception as heartbeat_error:
+                                print(f"[StandHeartbeat] {heartbeat_name} refresh failed: {heartbeat_error}", flush=True)
+                            finally:
+                                with _robot_busy_lock:
+                                    _robot_busy = False
                     except queue.Empty:
                         pass
                 except Exception as loop_error:
@@ -680,6 +686,8 @@ def handle_command():
                     if result.get('success'):
                         start_standing_sport_heartbeat('stand command accepted')
                     else:
+                        with _robot_posture_lock:
+                            _robot_posture = 'idle'
                         stop_standing_sport_heartbeat('stand command failed')
                 else:
                     stop_standing_sport_heartbeat(f'{cmd_name} command issued')
@@ -687,6 +695,8 @@ def handle_command():
         time.sleep(0.05)
 
     if cmd_name == 'stand':
+        with _robot_posture_lock:
+            _robot_posture = 'idle'
         stop_standing_sport_heartbeat('stand command timed out')
     return jsonify({'success': False, 'message': 'Timeout'}), 504
 

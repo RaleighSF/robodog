@@ -1622,7 +1622,43 @@
                 gap: 10px;
             }
         }
-    </style>
+    
+        /* Detection mode slider (YOLO <-> PPE). Only one detector runs at a time. */
+        .det-mode-toggle { display:inline-flex; align-items:center; gap:8px; margin-left:12px;
+            padding:4px 10px; border:1px solid rgba(255,255,255,.14); border-radius:999px;
+            background:rgba(255,255,255,.04); user-select:none; cursor:pointer; vertical-align:middle; }
+        .det-mode-label { font-size:11px; font-weight:600; letter-spacing:.06em;
+            color:rgba(255,255,255,.42); transition:color .12s ease; }
+        .det-mode-toggle[data-mode="yolo"] #modeLabelYolo { color:#4da3ff; }
+        .det-mode-toggle[data-mode="ppe"]  #modeLabelPpe  { color:#3fd68c; }
+        .det-mode-switch { position:relative; width:36px; height:18px; border-radius:999px;
+            background:rgba(255,255,255,.16); transition:background .16s ease; flex:none; }
+        .det-mode-toggle[data-mode="yolo"] .det-mode-switch { background:rgba(77,163,255,.35); }
+        .det-mode-toggle[data-mode="ppe"]  .det-mode-switch { background:rgba(63,214,140,.35); }
+        .det-mode-knob { position:absolute; top:2px; left:2px; width:14px; height:14px;
+            border-radius:50%; background:#fff; transition:transform .16s cubic-bezier(.2,0,0,1); }
+        .det-mode-toggle[data-mode="ppe"] .det-mode-knob { transform:translateX(18px); }
+        .det-mode-toggle.busy { opacity:.55; pointer-events:none; }
+
+        /* Start/Stop reflect real pipeline state: the actionable button is lit,
+           the one that would be a no-op is dimmed and disabled. */
+        .btn-header.is-dim {
+            background: rgba(255, 255, 255, 0.07) !important;
+            color: rgba(255, 255, 255, 0.38) !important;
+            cursor: default !important;
+            box-shadow: none !important;
+        }
+        .btn-header.is-dim:hover { transform: none !important; box-shadow: none !important; }
+        .btn-header.btn-stop.is-armed {
+            background: #E5484D !important;
+            color: #fff !important;
+        }
+        .btn-header.btn-stop.is-armed:hover {
+            filter: brightness(1.1);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 8px rgba(229, 72, 77, 0.35);
+        }
+</style>
 </head>
 <body>
     <nav class="header-nav">
@@ -1656,6 +1692,11 @@
                         <button id="configBtn" class="btn-header btn-config">Configure</button>
                         <button id="startBtn" class="btn-header btn-start">Start</button>
                         <button id="stopBtn" class="btn-header btn-stop">Stop</button>
+                        <div id="detModeToggle" class="det-mode-toggle" data-mode="yolo" title="Switch detector">
+                            <span class="det-mode-label" id="modeLabelYolo">YOLO</span>
+                            <span class="det-mode-switch" id="detModeSwitch"><span class="det-mode-knob"></span></span>
+                            <span class="det-mode-label" id="modeLabelPpe">PPE</span>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1726,13 +1767,13 @@
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
                     </button>
                     <div class="dpad-spacer"></div>
-                    <button class="dpad-btn" data-vx="0" data-vy="0.15" data-vyaw="0" title="Strafe Left">
+                    <button class="dpad-btn" data-vx="0" data-vy="0" data-vyaw="0.5" title="Turn Left">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
                     </button>
                     <div class="dpad-btn dpad-center">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" opacity="0.3"><circle cx="12" cy="12" r="3"/></svg>
                     </div>
-                    <button class="dpad-btn" data-vx="0" data-vy="-0.15" data-vyaw="0" title="Strafe Right">
+                    <button class="dpad-btn" data-vx="0" data-vy="0" data-vyaw="-0.5" title="Turn Right">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
                     </button>
                     <div class="dpad-spacer"></div>
@@ -2097,7 +2138,10 @@
 
         function showVideo() {
             const selectedCamera = cameraSelect ? cameraSelect.value : '';
-            const baseSrc = selectedCamera === 'go2_webrtc' ? '/go2/video_passthrough' : '/video_feed';
+            // ALWAYS use /video_feed. /go2/video_passthrough is a raw proxy of the
+            // robot's MJPEG with NO overlays, so pointing at it hides every
+            // server-rendered box - YOLO detections and PPE compliance alike.
+            const baseSrc = '/video_feed';
             // Only set src if it's empty or doesn't match the current base path
             // Avoids tearing down an active MJPEG stream on every status poll
             if (!videoStream.src || !videoStream.src.includes(baseSrc)) {
@@ -2132,6 +2176,7 @@
             }
 
             temporarilyDisable(stopBtn);
+            setRunStateUI(false);
             updateStatus('Stopping patrol monitoring...', 'info');
 
             // Immediately hide video and clear source to stop stream
@@ -2333,6 +2378,19 @@
             }
         });
 
+        // Reflect real pipeline state on the Start/Stop pair.
+        function setRunStateUI(running) {
+            if (!startBtn || !stopBtn) return;
+            startBtn.classList.toggle('is-dim', running);
+            stopBtn.classList.toggle('is-dim', !running);
+            stopBtn.classList.toggle('is-armed', running);
+            startBtn.disabled = !!running;
+            stopBtn.disabled = !running;
+            startBtn.title = running ? 'Patrol is already running' : 'Start patrol';
+            stopBtn.title  = running ? 'Stop patrol' : 'Patrol is not running';
+        }
+        window.setRunStateUI = setRunStateUI;
+
         // Check status periodically (optimized interval for better performance)
         function statusPollFn() {
             (async () => {
@@ -2340,11 +2398,17 @@
                     const response = await fetch('/status');
                     const statusData = await response.json();
 
-                    if (statusData.is_running && statusData.camera_available) {
+                    // PPE mode keeps the stream alive while is_running is false,
+                    // so treat either detector as "active" - otherwise this poll
+                    // hides the video a few seconds after switching to PPE.
+                    const active = !!statusData.is_running || !!window._ppeModeActive;
+                    setRunStateUI(active);
+
+                    if (active && statusData.camera_available) {
                         if (videoStream.style.display !== 'block') {
                             showVideo();
                         }
-                    } else if (!statusData.is_running) {
+                    } else if (!active) {
                         if (videoStream.style.display === 'block') {
                             hideVideo();
                         }
@@ -3430,11 +3494,18 @@
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
                         body: JSON.stringify({ vx, vy, vyaw }),
-                        signal: AbortSignal.timeout(800)
+                        signal: AbortSignal.timeout(4500)
                     });
-                    if (!resp.ok) stopMove();
+                    if (!resp.ok) {
+                        let msg = 'Move rejected';
+                        try { const j = await resp.json(); if (j && j.message) msg = j.message; } catch (_) {}
+                        if (resp.status === 409) msg = 'Crouch first \u2014 movement is blocked while standing';
+                        if (typeof showStatus === 'function') showStatus(msg, 'warning');
+                        stopMove();
+                    }
                 } catch (e) {
-                    stopMove();
+                    // A slow tick (first Move includes BalanceStand) must not end the
+                    // drive session. Skip it and let the repeat interval retry.
                 } finally {
                     _moveInFlight = false;
                 }
@@ -3563,7 +3634,23 @@
         let _detectionFetchInFlight = false;
         let _lastDrawnDetectionTs = 0;
         const _DETECTION_PERSIST_MS = 2000; // keep boxes on screen for 2s even if no new detections
+        // Set true while PPE mode is active. PPE overlays are rendered server-side
+        // onto /video_feed, so the JS canvas must stay empty or stale YOLO boxes
+        // bleed through on top of the compliance boxes.
+        window._ppeModeActive = false;
+
         async function fetchDetections() {
+            // The JS canvas overlay is retired. The server now renders ALL overlays
+            // into /video_feed - white boxes for YOLO detections, red/green boxes for
+            // PPE compliance - and the page shows that stream directly. Drawing here
+            // as well painted a second, differently-coloured box over every detection.
+            // PPE compliance boxes cannot be drawn client-side at all, so the server
+            // is the only renderer that can cover both modes.
+            clearDetectionOverlay();
+            return;
+        }
+
+        async function _fetchDetections_unused() {
             if (_detectionFetchInFlight) return;
             _detectionFetchInFlight = true;
             try {
@@ -3923,6 +4010,57 @@
             }
         }).catch(function() {});
     })();
-    </script>
+    
+        // ---- Detection mode slider ---------------------------------------
+        (function initDetModeToggle() {
+            const el = document.getElementById('detModeToggle');
+            if (!el) return;
+
+            function paint(mode) {
+                el.dataset.mode = mode;
+                window._ppeModeActive = (mode === 'ppe');
+                // Both modes stream, so the pair must stay in the running state.
+                if (typeof setRunStateUI === 'function') setRunStateUI(true);
+                if (window._ppeModeActive && typeof clearDetectionOverlay === 'function') {
+                    clearDetectionOverlay();
+                }
+            }
+
+            async function setMode(mode) {
+                el.classList.add('busy');
+                try {
+                    const r = await fetch('/api/detection/mode', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ mode })
+                    });
+                    const j = await r.json();
+                    if (r.ok && j.mode) {
+                        paint(j.mode);
+                        if (typeof showStatus === 'function') {
+                            showStatus(j.mode === 'ppe'
+                                ? `PPE compliance detection active (${j.device || 'cpu'})`
+                                : 'Object detection active', 'success');
+                        }
+                    } else if (typeof showStatus === 'function') {
+                        showStatus(j.message || 'Mode switch failed', 'error');
+                    }
+                } catch (e) {
+                    if (typeof showStatus === 'function') showStatus('Mode switch failed: ' + e, 'error');
+                } finally {
+                    el.classList.remove('busy');
+                }
+            }
+
+            el.addEventListener('click', () => {
+                setMode(el.dataset.mode === 'ppe' ? 'yolo' : 'ppe');
+            });
+
+            // Reflect whatever the server is actually doing on load.
+            fetch('/api/detection/mode').then(r => r.json())
+                .then(j => { if (j && j.mode) paint(j.mode); })
+                .catch(() => {});
+        })();
+</script>
 </body>
 </html>

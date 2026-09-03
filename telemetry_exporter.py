@@ -201,7 +201,13 @@ class S3Exporter:
     def _get_client(self):
         if self._client is None:
             import boto3
-            kwargs: Dict[str, Any] = {"region_name": self._region}
+            from botocore.config import Config
+            boto_config = Config(
+                connect_timeout=5,
+                read_timeout=10,
+                retries={"max_attempts": 2}
+            )
+            kwargs: Dict[str, Any] = {"region_name": self._region, "config": boto_config}
             if self._endpoint_url:
                 kwargs["endpoint_url"] = self._endpoint_url
             if self._access_key and self._secret_key:

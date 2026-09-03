@@ -67,7 +67,14 @@ class YOLOEDetector:
             # Load model with device configuration
             device = vision_config.get("device", "auto")
             if device == "auto":
-                device = "cuda" if cv2.cuda.getCudaEnabledDeviceCount() > 0 else "cpu"
+                # Probe TORCH for CUDA, not OpenCV. Stock opencv-python is built
+                # without CUDA and reports 0 devices even on a working Jetson GPU,
+                # which silently pinned all inference to CPU.
+                try:
+                    import torch as _torch
+                    device = "cuda" if _torch.cuda.is_available() else "cpu"
+                except Exception:
+                    device = "cpu"
 
             # Load YOLO11 model
             self.model = YOLO(model_path)
@@ -617,12 +624,6 @@ class YOLOEDetector:
     
     def _text_prompted_detection(self, frame: np.ndarray, config: Dict) -> Any:
         """Perform text-prompted detection restricted to specified classes"""
-
-        if not self.text_prompts:
-            if not hasattr(self, '_empty_text_logged'):
-                print("⚠️ Text prompt mode active but no classes provided; falling back to open detection")
-                self._empty_text_logged = True
-            return self._open_detection(frame, config)
 
         # Cache class indices to avoid repeated lookups (huge performance boost)
         if not hasattr(self, '_cached_class_indices') or self._cached_class_prompts != tuple(self.text_prompts):

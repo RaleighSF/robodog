@@ -1,0 +1,14 @@
+[Unit]
+Description=Pin Jetson CPU/GPU clocks to the max allowed by the current power mode
+After=nvpmodel.service multi-user.target
+Wants=nvpmodel.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# nvpmodel (MAXN) persists across reboot; jetson_clocks does NOT. Without this the
+# GPU runs under DVFS and inference latency becomes inconsistent between demos.
+ExecStart=/usr/bin/jetson_clocks
+
+[Install]
+WantedBy=multi-user.target

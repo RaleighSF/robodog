@@ -7,43 +7,50 @@ detection:
 go2:
   enabled: true
   robot_ip: 192.168.123.161
-  service_url: http://192.168.50.207:5001
+  service_url: http://10.0.0.57:5001
 rtsp:
   buffer_size: 1
   max_reconnect_attempts: 10
   reconnect_interval: 5
   timeout: 30000
-telemetry:
-  enabled: true
-  deployment_id: watchdog-snowflake-summit-2026
-  backend: s3
-  s3_bucket: watchdog-telemetry
-  s3_prefix: v1
-  s3_endpoint_url: null
-  s3_region: us-east-1
-  # Credentials loaded from AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY env vars
-  heartbeat_interval_seconds: 30
-  flush_interval_seconds: 10
-  upload_images: true
-  device_id: watchdog-edge-01
-  device_type: nvidia_agx_xavier
-  local_export_dir: telemetry_export
 scene_narrator:
+  default_mode: casual
   enabled: true
-  ollama_url: http://127.0.0.1:11434
-  model: qwen2.5vl:3b
-  default_mode: casual   # "casual" or "gesture"
-  scene_context: >
-    You are at Snowflake Summit 2026. Remember — YOU are the robot dog,
-    this is YOUR point of view. Any robot parts visible at the edges of
-    the frame are YOUR own body — do not mention them. Focus on the humans
-    and environment around you: are people gathering, reacting to you,
-    crouching to look at you, or is the area empty between sessions?
   gesture:
     cooldown_seconds: 10
+  model: qwen2.5vl:3b
+  ollama_url: http://127.0.0.1:11434
+  scene_context: 'You are on the floor of a technology conference / convention. Expect
+    an exhibition hall: booths and banners, people wearing badges and lanyards, tote
+    bags, coffee cups, groups forming and breaking up between sessions.
+
+    People will notice you. They crouch to your level, point phones at you, wave,
+    and try to get your attention. That is normal here - comment on it.
+
+    Watch the crowd''s energy: is a group building around you, is someone filming,
+    has the aisle emptied out because a keynote just started?
+
+    You are the most interesting thing in the aisle and you know it. Be dry about
+    it, never smug, and never invent people who are not there.'
+telemetry:
+  backend: s3
+  deployment_id: watchdog-snowflake-summit-2026
+  device_id: watchdog-edge-01
+  device_type: nvidia_agx_orin
+  enabled: true
+  flush_interval_seconds: 10
+  heartbeat_interval_seconds: 30
+  image_max_width: 960
+  local_export_dir: telemetry_export
+  max_buffer_size: 100
+  s3_bucket: watchdog-telemetry
+  s3_endpoint_url: null
+  s3_prefix: v1
+  s3_region: us-east-1
+  thumbnail_max_width: 320
+  upload_images: true
 vision:
   classes:
-  - ball
   - person
   conf: 0.25
   detection_mode: text
@@ -56,10 +63,7 @@ vision:
   model_path: yolo11m.pt
   nlp_enabled: false
   nlp_prompt: Find all electronics
-  openai_api_key: ""
+  openai_api_key: ''
   rtsp_tcp: true
-  source: rtsp://192.168.50.207:8554/color
-  visual_prompts:
-  - class_name: ups
-    filename: prompt_1760912757_c3fdbe1f.png
-    path: visual_prompts/prompt_1760912757_c3fdbe1f.png
+  source: rtsp://10.0.0.57:8554/color
+  visual_prompts: []

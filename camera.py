@@ -427,88 +427,99 @@ class CameraManager:
             print(f"DEBUG: Frame loop error: {e}")
 
     def _go2_webrtc_capture_loop(self):
-        """Optimized capture loop for GO2 WebRTC camera from service"""
+        """Optimized capture loop for GO2 WebRTC camera from service with auto-reconnect"""
         video_url = f"{self.go2_service_url}/video_feed"
-        consecutive_failures = 0
-        max_consecutive_failures = 15
-        bytes_buffer = bytearray()
         frame_count = 0
+        reconnect_delay = 3  # seconds between reconnect attempts
 
         print(f"[GO2 Capture] Starting capture from {video_url}")
-        response = None
-        try:
-            # Open streaming connection with optimized chunk size
-            response = requests.get(video_url, stream=True, timeout=(5, None))
-            print(f"[GO2 Capture] Connected, status code: {response.status_code}")
 
-            if response.status_code != 200:
-                print(f"[GO2 Capture] Bad status code, stopping")
-                self.go2_stream_active = False
-                return
+        while self.is_running and self.go2_stream_active:
+            consecutive_failures = 0
+            max_consecutive_failures = 15
+            bytes_buffer = bytearray()
+            response = None
+            try:
+                # Open streaming connection with optimized chunk size
+                response = requests.get(video_url, stream=True, timeout=(5, 15))
+                print(f"[GO2 Capture] Connected, status code: {response.status_code}")
 
-            # Parse MJPEG stream with larger chunks for better performance
-            chunk_count = 0
-            for chunk in response.iter_content(chunk_size=16384):  # 16KB chunks
-                if not self.is_running or not self.go2_stream_active:
-                    print(f"[GO2 Capture] Stopping: is_running={self.is_running}, stream_active={self.go2_stream_active}")
-                    break
+                if response.status_code != 200:
+                    print(f"[GO2 Capture] Bad status code {response.status_code}, retrying in {reconnect_delay}s")
+                    time.sleep(reconnect_delay)
+                    continue
 
-                bytes_buffer.extend(chunk)
-                chunk_count += 1
+                # Parse MJPEG stream with larger chunks for better performance
+                chunk_count = 0
+                for chunk in response.iter_content(chunk_size=16384):  # 16KB chunks
+                    if not self.is_running or not self.go2_stream_active:
+                        print(f"[GO2 Capture] Stopping: is_running={self.is_running}, stream_active={self.go2_stream_active}")
+                        return
 
-                if chunk_count <= 5 or chunk_count % 100 == 0:
-                    print(f"[GO2 Capture] Chunk {chunk_count}: size={len(chunk)}, buffer={len(bytes_buffer)} bytes")
+                    bytes_buffer.extend(chunk)
+                    chunk_count += 1
 
-                # Look for JPEG boundaries
-                start = bytes_buffer.find(b'\xff\xd8')
-                end = bytes_buffer.find(b'\xff\xd9')
+                    if chunk_count <= 5 or chunk_count % 100 == 0:
+                        print(f"[GO2 Capture] Chunk {chunk_count}: size={len(chunk)}, buffer={len(bytes_buffer)} bytes")
 
-                if chunk_count <= 5:
-                    print(f"[GO2 Capture] JPEG markers: start={start}, end={end}")
+                    # Look for JPEG boundaries
+                    start = bytes_buffer.find(b'\xff\xd8')
+                    end = bytes_buffer.find(b'\xff\xd9')
 
-                if start != -1 and end != -1 and end > start:
-                    jpg = bytes_buffer[start:end+2]
-                    bytes_buffer = bytes_buffer[end+2:]
+                    if chunk_count <= 5:
+                        print(f"[GO2 Capture] JPEG markers: start={start}, end={end}")
 
-                    try:
-                        # Decode JPEG directly to frame (no intermediate array)
-                        frame = cv2.imdecode(np.frombuffer(jpg, dtype=np.uint8), cv2.IMREAD_COLOR)
+                    if start != -1 and end != -1 and end > start:
+                        jpg = bytes_buffer[start:end+2]
+                        bytes_buffer = bytes_buffer[end+2:]
 
-                        if frame is not None:
-                            with self.frame_lock:
-                                self.current_frame = frame  # No copy needed - frame is already new
-                            consecutive_failures = 0
-                            frame_count += 1
-                            if frame_count == 1 or frame_count % 100 == 0:
-                                print(f"[GO2 Capture] Captured {frame_count} frames")
-                        else:
+                        try:
+                            # Decode JPEG directly to frame (no intermediate array)
+                            frame = cv2.imdecode(np.frombuffer(jpg, dtype=np.uint8), cv2.IMREAD_COLOR)
+
+                            if frame is not None:
+                                with self.frame_lock:
+                                    self.current_frame = frame  # No copy needed - frame is already new
+                                consecutive_failures = 0
+                                frame_count += 1
+                                if frame_count == 1 or frame_count % 100 == 0:
+                                    print(f"[GO2 Capture] Captured {frame_count} frames")
+                            else:
+                                consecutive_failures += 1
+                                if consecutive_failures <= 5:
+                                    print(f"[GO2 Capture] Frame decode returned None (failures: {consecutive_failures})")
+
+                        except Exception as e:
                             consecutive_failures += 1
                             if consecutive_failures <= 5:
-                                print(f"[GO2 Capture] Frame decode returned None (failures: {consecutive_failures})")
+                                print(f"[GO2 Capture] Frame decode exception: {e}")
 
-                    except Exception as e:
-                        consecutive_failures += 1
-                        if consecutive_failures <= 5:
-                            print(f"[GO2 Capture] Frame decode exception: {e}")
+                        if consecutive_failures >= max_consecutive_failures:
+                            print(f"[GO2 Capture] Too many consecutive failures ({consecutive_failures}), reconnecting...")
+                            break
 
-                    if consecutive_failures >= max_consecutive_failures:
-                        print(f"[GO2 Capture] Too many consecutive failures ({consecutive_failures}), exiting")
-                        break
+                    # Keep buffer size reasonable to avoid memory growth
+                    if len(bytes_buffer) > 500000:  # 500KB max buffer
+                        bytes_buffer = bytes_buffer[-250000:]  # Keep last 250KB
 
-                # Keep buffer size reasonable to avoid memory growth
-                if len(bytes_buffer) > 500000:  # 500KB max buffer
-                    bytes_buffer = bytes_buffer[-250000:]  # Keep last 250KB
+                # Stream ended normally (server closed) — reconnect
+                print(f"[GO2 Capture] Stream ended, reconnecting in {reconnect_delay}s...")
 
-        except Exception as e:
-            print(f"[GO2 Capture] Exception in capture loop: {e}")
-        finally:
-            if response:
-                try:
-                    response.close()
-                except Exception:
-                    pass
-            print(f"[GO2 Capture] Exiting - captured {frame_count} total frames")
-            self.go2_stream_active = False
+            except Exception as e:
+                print(f"[GO2 Capture] Connection error: {e}, reconnecting in {reconnect_delay}s...")
+            finally:
+                if response:
+                    try:
+                        response.close()
+                    except Exception:
+                        pass
+
+            # Wait before reconnect attempt
+            if self.is_running and self.go2_stream_active:
+                time.sleep(reconnect_delay)
+
+        print(f"[GO2 Capture] Exiting - captured {frame_count} total frames")
+        self.go2_stream_active = False
 
     def _start_http_mjpeg_stream(self, video_url: str) -> bool:
         """Start a generic HTTP MJPEG stream (e.g., IR/depth proxies)."""

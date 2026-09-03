@@ -1,19 +1,23 @@
 #!/usr/bin/env python3
-"""
-Gesture Detector — YOLO11n-pose keypoint-based gesture recognition.
+"""Pose-based detection of a hand held out toward the robot.
 
-Runs a lightweight pose model (~6MB) on detection frames to identify
-an outstretched hand gesture.  Designed to piggyback on the existing
-detection pipeline with minimal added latency.
+Tuned for a Unitree Go2 camera roughly 30 cm off the floor looking UP at people.
+The gesture of interest is a hand offered TOWARD the robot, which has two
+consequences that earlier versions got wrong:
 
-Outstretched hand heuristic:
-  - Wrist is extended far horizontally from the shoulder
-  - Elbow is roughly between them (arm is straight, not bent at side)
-  - Keypoint confidence is above threshold (not hallucinated)
+  1. The shoulder is frequently cropped or occluded when someone leans in, so it
+     cannot be a hard requirement.
+  2. An arm pointed at the lens is foreshortened, so a purely horizontal
+     "wrist far from shoulder" test fails exactly when the gesture is clearest.
+
+Prominence - how large the forearm is in frame - is therefore the primary signal.
+It is what separates a hand offered to the robot from someone waving across the
+room, and it is the direct expression of "predominantly in frame".
 """
 import logging
 import threading
 import time
+
 import cv2
 import numpy as np
 
@@ -24,11 +28,20 @@ L_SHOULDER, R_SHOULDER = 5, 6
 L_ELBOW, R_ELBOW = 7, 8
 L_WRIST, R_WRIST = 9, 10
 
-# Thresholds
-_KP_CONF_MIN = 0.3           # minimum keypoint confidence
-_ARM_EXTENSION_RATIO = 1.5   # wrist-shoulder horizontal distance must be ≥ 1.5x shoulder width
-_ELBOW_STRAIGHTNESS = 0.6    # elbow must be at least 60% of the way from shoulder to wrist (arm extended)
-_POSE_FRAME_DIM = 480        # resize frames for fast pose inference
+# ── Thresholds ─────────────────────────────────────────────────────
+_KP_CONF_MIN = 0.30           # generic keypoint confidence floor
+_WRIST_CONF_MIN = 0.45        # the wrist is the load-bearing joint; demand more
+_WRIST_CONF_NO_SHOULDER = 0.55  # stricter when the shoulder is unavailable
+_ARM_EXTENSION_RATIO = 1.15   # wrist-to-shoulder reach vs shoulder width
+_ELBOW_STRAIGHTNESS = 0.55    # elbow at least this far along shoulder->wrist
+_MIN_FOREARM_FRAC = 0.11      # elbow->wrist length as fraction of frame height
+_CENTER_BAND = (0.10, 0.90)   # wrist must sit inside this horizontal band
+_MIN_LATERAL_FRAC = 0.5       # wrist must be offset sideways from the shoulder by
+                              # at least this fraction of shoulder width. Rejects an
+                              # arm hanging straight down, which otherwise passes the
+                              # 2D reach test purely on vertical separation.
+_POSE_FRAME_DIM = 480         # resize frames for fast pose inference
+_GESTURE_FRAME_SKIP = 2       # run pose every Nth frame
 
 
 class GestureDetector:
@@ -39,8 +52,15 @@ class GestureDetector:
         self._model_path = model_path
         self._lock = threading.Lock()
         self._loaded = False
+        self._frame_counter = 0
+        self._last_reason = "none"
 
-    def _ensure_model(self):
+    @property
+    def last_reason(self) -> str:
+        """Why the most recent frame did or did not qualify - for tuning."""
+        return self._last_reason
+
+    def _ensure_model(self) -> bool:
         if self._loaded:
             return True
         with self._lock:
@@ -49,29 +69,29 @@ class GestureDetector:
             try:
                 from ultralytics import YOLO
                 self._model = YOLO(self._model_path)
+                try:
+                    import torch
+                    if torch.cuda.is_available():
+                        self._model.to("cuda")
+                except Exception:
+                    pass
                 self._loaded = True
-                logger.info(f"[GestureDetector] Pose model loaded: {self._model_path}")
+                logger.info("[GestureDetector] Pose model loaded: %s", self._model_path)
                 return True
             except Exception as e:
-                logger.error(f"[GestureDetector] Failed to load pose model: {e}")
+                logger.error("[GestureDetector] Failed to load pose model: %s", e)
                 return False
 
+    def should_run_this_frame(self) -> bool:
+        self._frame_counter += 1
+        return (self._frame_counter % _GESTURE_FRAME_SKIP) == 0
+
     def check_outstretched_hand(self, frame: np.ndarray) -> dict:
-        """Run pose estimation and check for outstretched hand.
-
-        Returns:
-            dict with keys:
-              - detected (bool): True if gesture found
-              - confidence (float): keypoint confidence of the match
-              - arm (str): 'left' or 'right' or None
-              - person_count (int): number of people found
-              - inference_ms (float): how long pose inference took
-        """
+        empty = {"detected": False, "confidence": 0, "arm": None,
+                 "person_count": 0, "inference_ms": 0, "reason": "no_model"}
         if not self._ensure_model():
-            return {"detected": False, "confidence": 0, "arm": None,
-                    "person_count": 0, "inference_ms": 0}
+            return empty
 
-        # Resize for speed
         h, w = frame.shape[:2]
         if max(h, w) > _POSE_FRAME_DIM:
             scale = _POSE_FRAME_DIM / max(h, w)
@@ -79,89 +99,100 @@ class GestureDetector:
                                interpolation=cv2.INTER_AREA)
 
         t0 = time.time()
-        results = self._model(frame, verbose=False, conf=0.25)
+        try:
+            results = self._model(frame, verbose=False, conf=0.25)
+        except Exception as e:
+            logger.warning("[GestureDetector] inference failed: %s", e)
+            return dict(empty, reason="inference_error")
         inference_ms = (time.time() - t0) * 1000
 
-        if not results or len(results) == 0:
-            return {"detected": False, "confidence": 0, "arm": None,
-                    "person_count": 0, "inference_ms": inference_ms}
+        if not results or results[0].keypoints is None or results[0].keypoints.data is None:
+            self._last_reason = "no_pose"
+            return dict(empty, inference_ms=inference_ms, reason="no_pose")
 
-        result = results[0]
-        if result.keypoints is None or result.keypoints.data is None:
-            return {"detected": False, "confidence": 0, "arm": None,
-                    "person_count": 0, "inference_ms": inference_ms}
+        keypoints = results[0].keypoints.data          # (N, 17, 3) -> x, y, conf
+        person_count = int(keypoints.shape[0])
+        fh, fw = frame.shape[:2]
 
-        keypoints = result.keypoints.data  # shape: (N, 17, 3) — x, y, conf
-        person_count = keypoints.shape[0]
-
+        best_reason = "no_person" if person_count == 0 else "no_qualifying_arm"
         for person_kps in keypoints:
-            detected, conf, arm = self._check_person_gesture(person_kps)
+            detected, conf, arm, reason = self._check_person(person_kps, fh, fw)
             if detected:
+                self._last_reason = reason
                 return {"detected": True, "confidence": conf, "arm": arm,
-                        "person_count": person_count, "inference_ms": inference_ms}
-
+                        "person_count": person_count,
+                        "inference_ms": inference_ms, "reason": reason}
+            best_reason = reason
+        self._last_reason = best_reason
         return {"detected": False, "confidence": 0, "arm": None,
-                "person_count": person_count, "inference_ms": inference_ms}
+                "person_count": person_count,
+                "inference_ms": inference_ms, "reason": best_reason}
 
-    def _check_person_gesture(self, kps) -> tuple:
-        """Check a single person's keypoints for outstretched hand.
-
-        Args:
-            kps: tensor of shape (17, 3) — x, y, confidence
-
-        Returns:
-            (detected: bool, confidence: float, arm: str|None)
-        """
-        # Check both arms
-        for side, (sh_idx, el_idx, wr_idx) in [
+    def _check_person(self, kps, frame_h: int, frame_w: int) -> tuple:
+        reason = "low_wrist_conf"
+        for side, (sh_i, el_i, wr_i) in [
             ("left", (L_SHOULDER, L_ELBOW, L_WRIST)),
             ("right", (R_SHOULDER, R_ELBOW, R_WRIST)),
         ]:
-            sh = kps[sh_idx]  # shoulder [x, y, conf]
-            el = kps[el_idx]  # elbow
-            wr = kps[wr_idx]  # wrist
+            sh, el, wr = kps[sh_i], kps[el_i], kps[wr_i]
+            sh_c, el_c, wr_c = float(sh[2]), float(el[2]), float(wr[2])
 
-            # All three keypoints must be confident
-            sh_conf, el_conf, wr_conf = float(sh[2]), float(el[2]), float(wr[2])
-            if min(sh_conf, el_conf, wr_conf) < _KP_CONF_MIN:
+            # Wrist and elbow are mandatory; shoulder is optional.
+            if wr_c < _WRIST_CONF_MIN or el_c < _KP_CONF_MIN:
                 continue
 
-            # Shoulder width as a reference scale (distance between shoulders)
-            other_sh = kps[R_SHOULDER if sh_idx == L_SHOULDER else L_SHOULDER]
-            if float(other_sh[2]) >= _KP_CONF_MIN:
-                shoulder_width = abs(float(sh[0]) - float(other_sh[0]))
-            else:
-                # Fallback: use a fraction of frame width as reference
-                shoulder_width = 50  # rough pixel estimate
+            wr_x, wr_y = float(wr[0]), float(wr[1])
+            el_x, el_y = float(el[0]), float(el[1])
 
-            if shoulder_width < 10:
-                shoulder_width = 50  # avoid division issues with tiny values
-
-            # Horizontal extension: wrist must be far from shoulder
-            wrist_shoulder_dx = abs(float(wr[0]) - float(sh[0]))
-            extension_ratio = wrist_shoulder_dx / shoulder_width
-
-            if extension_ratio < _ARM_EXTENSION_RATIO:
+            # PROMINENCE - the "predominantly in frame" test.
+            forearm_px = float(np.hypot(wr_x - el_x, wr_y - el_y))
+            forearm_frac = forearm_px / max(frame_h, 1)
+            if forearm_frac < _MIN_FOREARM_FRAC:
+                reason = f"not_prominent({forearm_frac:.2f}<{_MIN_FOREARM_FRAC})"
                 continue
 
-            # Elbow straightness: elbow should be between shoulder and wrist
-            # (not tucked at the body). Check elbow X is between shoulder X
-            # and wrist X, at least 60% of the way out.
-            sh_x, wr_x = float(sh[0]), float(wr[0])
-            el_x = float(el[0])
-            if wr_x != sh_x:
-                elbow_ratio = (el_x - sh_x) / (wr_x - sh_x)
-                if elbow_ratio < _ELBOW_STRAIGHTNESS:
+            # CENTRALITY - ignore hands drifting off the edge.
+            if not (_CENTER_BAND[0] * frame_w <= wr_x <= _CENTER_BAND[1] * frame_w):
+                reason = "off_centre"
+                continue
+
+            if sh_c >= _KP_CONF_MIN:
+                other = kps[R_SHOULDER if sh_i == L_SHOULDER else L_SHOULDER]
+                sw = (abs(float(sh[0]) - float(other[0]))
+                      if float(other[2]) >= _KP_CONF_MIN else 0.0)
+                if sw < 10:
+                    sw = max(forearm_px, 50.0)
+                sh_x, sh_y = float(sh[0]), float(sh[1])
+                # Full 2D reach, not just horizontal: a hand toward the lens
+                # separates from the shoulder vertically as much as sideways.
+                if float(np.hypot(wr_x - sh_x, wr_y - sh_y)) / sw < _ARM_EXTENSION_RATIO:
+                    reason = "arm_not_extended"
                     continue
-            # else: wrist directly above/below shoulder, skip
+                # An arm hanging at the side clears the 2D reach test on vertical
+                # distance alone. Require real sideways displacement too.
+                if abs(wr_x - sh_x) / sw < _MIN_LATERAL_FRAC:
+                    reason = "arm_at_side"
+                    continue
+                if abs(wr_x - sh_x) > 1e-3:
+                    if ((el_x - sh_x) / (wr_x - sh_x)) < _ELBOW_STRAIGHTNESS:
+                        reason = "elbow_tucked"
+                        continue
+                conf = (sh_c + el_c + wr_c) / 3.0
+                method = "full_arm"
+            else:
+                # Shoulder cropped. Prominence and centrality already did the work.
+                if wr_c < _WRIST_CONF_NO_SHOULDER:
+                    reason = "no_shoulder_and_weak_wrist"
+                    continue
+                conf = (el_c + wr_c) / 2.0
+                method = "forearm_toward"
 
-            avg_conf = (sh_conf + el_conf + wr_conf) / 3
-            return True, round(avg_conf, 2), side
+            logger.info("[GestureDetector] %s hand via %s - forearm %.0f%% of frame, wrist conf %.2f",
+                        side, method, forearm_frac * 100, wr_c)
+            return True, round(conf, 2), side, method
+        return False, 0, None, reason
 
-        return False, 0, None
 
-
-# Module-level singleton
 _detector = None
 
 

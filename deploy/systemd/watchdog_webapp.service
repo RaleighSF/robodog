@@ -1,0 +1,22 @@
+[Unit]
+Description=Watch Dog Dashboard (Flask Web App)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=raleigh
+Group=raleigh
+WorkingDirectory=/home/raleigh/dev/watch_dog
+Environment=PYTHONUNBUFFERED=1
+Environment=AWS_PROFILE=claude-code-dev
+Environment=AWS_SHARED_CREDENTIALS_FILE=/home/raleigh/.aws/credentials
+Environment=AWS_CONFIG_FILE=/home/raleigh/.aws/config
+ExecStart=/usr/bin/env bash -lc 'cd /home/raleigh/dev/watch_dog && source venv/bin/activate && exec python start_web_app.py'
+Restart=always
+RestartSec=5
+StandardOutput=append:/home/raleigh/dev/watch_dog/web_app_agx.log
+StandardError=append:/home/raleigh/dev/watch_dog/web_app_agx.log
+
+[Install]
+WantedBy=multi-user.target

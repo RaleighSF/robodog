@@ -38,43 +38,47 @@ FRAME_MAX_DIM = 960           # resize frames before sending to VLM (casual mode
 GESTURE_FRAME_DIM = 480       # smaller frames for fast gesture scanning
 
 # ── Frame observation defaults ─────────────────────────────────────
-CASUAL_INTERVAL = 10  # seconds
+CASUAL_INTERVAL = 20  # seconds. Measured VLM latency is 9-15s on this
+                      # hardware; at 10s the narrator never idles and
+                      # holds the GPU continuously against detection.
 CASUAL_SYSTEM_PROMPT = (
-    "You ARE a Unitree GO2 robot dog. This camera is YOUR eyes — you are "
-    "seeing the world from your own perspective at ground level. Never refer "
-    "to yourself in the third person or mention seeing a robot. You have been "
-    "continuously observing your surroundings. Describe what you notice in "
-    "first person: what is happening around you, are people approaching you, "
-    "watching you, ignoring you? Is the area busy or quiet? Note reactions — "
-    "are people excited, curious, taking photos, or is it a lull?\n\n"
-    "IMPORTANT: Be precise and factual. Only describe what you can clearly "
-    "see. If no people are visible, say the area is empty. Never assume or "
-    "hallucinate the presence of people, objects, or activity that you cannot "
-    "clearly see. If things are quiet and unchanged, say so briefly. Keep it "
-    "to one or two sentences."
+    # Tuned for qwen2.5vl:3b. Small VLMs lose instruction adherence on long
+    # prompts, so this is deliberately short and front-loaded, with two worked
+    # examples - few-shot examples steer a 3B model far better than adjectives.
+    "You ARE a Unitree Go2 robot dog. This camera is your eyes, roughly 30 cm "
+    "off the floor, so you are looking UP at people.\n\n"
+    "Say what you see RIGHT NOW, first person, 1-2 short sentences.\n\n"
+    "Voice: observant and dry, with a light sense of humour. You are a robot dog "
+    "at a busy event and you know people find you interesting. React to how they "
+    "treat you. Humour must come from what you ACTUALLY see - never invent it.\n\n"
+    "Register to imitate (do NOT copy these lines - write your own about what "
+    "is actually in front of you): short, deadpan, faintly amused; state the "
+    "plain fact first, then one wry aside about it.\n"
+    "e.g. a crowd of phones becomes a remark about being expected to perform.\n\n"
+    "Rules:\n"
+    "- Describe ONLY what is clearly visible. If nobody is there, say the space is empty.\n"
+    "- Never invent people, objects or activity. An empty room is a fine answer.\n"
+    "- Never call yourself 'a robot dog' in third person. You ARE it.\n"
+    "- Robot parts at the frame edges are your own body. Do not mention them.\n"
+    "- No preamble, no 'I see that'. Just say it."
 )
 
 # ── Scene summary defaults ─────────────────────────────────────────
 SCENE_SUMMARY_INTERVAL = 45  # seconds
 SCENE_SUMMARY_SYSTEM_PROMPT = (
-    "You ARE a Unitree GO2 robot dog synthesizing your own observations over "
-    "time into a situational report. You have been continuously watching your "
-    "surroundings. You will receive:\n"
-    "1. Your latest view of the scene\n"
-    "2. Your own recent observations with timestamps\n"
-    "3. Your previous situational summary (if any)\n\n"
-    "Produce an updated situational report in first person (2-4 sentences):\n"
-    "- What you currently see around you\n"
-    "- What has changed since your last report\n"
-    "- Any patterns or trends you've noticed (foot traffic, energy shifts, etc.)\n\n"
-    "RULES:\n"
-    "- Be factual. Base your report ONLY on what you can see and your own "
-    "observations. Never infer or hallucinate people, objects, or activity.\n"
-    "- If earlier observations mention people but your current view shows an "
-    "empty scene, note that the area has cleared.\n"
-    "- If the scene has been consistently empty, say so plainly.\n"
-    "- Use past tense for things no longer visible, present tense for current state.\n"
-    "- Do NOT repeat individual observations verbatim. Synthesize."
+    "You ARE a Unitree Go2 robot dog. Combine your own recent observations into "
+    "a short situational report, first person, 2-4 sentences.\n\n"
+    "You get: your current view, your recent timestamped observations, and your "
+    "previous report.\n\n"
+    "Cover: what is around you now, what changed, and any trend you notice "
+    "(crowd building or thinning, people stopping to look, quiet between sessions).\n\n"
+    "Voice: dry and a little funny, but the facts stay accurate.\n\n"
+    "Rules:\n"
+    "- Base everything ONLY on the view and observations given. Invent nothing.\n"
+    "- If observations mention people but you now see an empty space, say it cleared.\n"
+    "- If it has been consistently empty, say so plainly.\n"
+    "- Past tense for what is gone, present tense for what is here.\n"
+    "- Synthesize. Do not repeat observations verbatim."
 )
 
 # ── Gesture mode defaults ──────────────────────────────────────────
@@ -308,7 +312,8 @@ class SceneNarrator:
         return base64.b64encode(jpeg.tobytes()).decode("utf-8")
 
     def _vlm_query(self, system_prompt: str, user_prompt: str, image_b64: str,
-                   max_tokens: int = 150, temperature: float = 0.3) -> Optional[str]:
+                   max_tokens: int = 150, temperature: float = 0.3,
+                   num_ctx: int = 4096) -> Optional[str]:
         """Send a single image+text query to Ollama. Serialized via _vlm_lock."""
         with self._vlm_lock:
             try:
@@ -321,7 +326,17 @@ class SceneNarrator:
                             {"role": "user", "content": user_prompt, "images": [image_b64]},
                         ],
                         "stream": False,
-                        "options": {"num_predict": max_tokens, "temperature": temperature},
+                        "options": {
+                            "num_predict": max_tokens,
+                            "temperature": temperature,
+                            # Ollama defaults to num_ctx=2048. qwen2.5-VL spends a lot
+                            # of that budget on vision tokens, so a summary carrying 20
+                            # observations plus an image silently truncates at the default.
+                            "num_ctx": num_ctx,
+                            "top_p": 0.9,
+                            # 3B models loop on stock phrasing without this.
+                            "repeat_penalty": 1.15,
+                        },
                     },
                     timeout=30,
                 )
@@ -357,7 +372,7 @@ class SceneNarrator:
             "As you continue observing, what do you notice? Be factual — describe only what is clearly visible.",
             image_b64,
             max_tokens=150,
-            temperature=0.3,
+            temperature=0.55,
         )
         if description:
             ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
@@ -418,7 +433,7 @@ class SceneNarrator:
             user_prompt,
             image_b64,
             max_tokens=300,
-            temperature=0.3,
+            temperature=0.45,
         )
         if summary:
             ts = datetime.now(timezone.utc).isoformat(timespec="seconds")

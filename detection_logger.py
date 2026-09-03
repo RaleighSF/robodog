@@ -9,6 +9,26 @@ from typing import List, Dict, Any, Optional
 import numpy as np
 from hybrid_detector import Detection
 
+
+def _atomic_imwrite(path: str, img) -> None:
+    """Write an image atomically.
+
+    cv2.imwrite writes in place, so a crash or service restart mid-write leaves a
+    truncated or zero-byte file on disk. Those files still satisfy os.path.exists(),
+    so they get served as 0 bytes and render as broken images forever. Writing to a
+    temp file and renaming makes a partial file impossible to observe.
+    """
+    tmp = path + ".tmp"
+    if not cv2.imwrite(tmp, img):
+        try: os.remove(tmp)
+        except OSError: pass
+        raise IOError("imwrite failed for %s" % path)
+    if os.path.getsize(tmp) == 0:
+        os.remove(tmp)
+        raise IOError("imwrite produced an empty file for %s" % path)
+    os.replace(tmp, path)
+
+
 class DetectionLogger:
     def __init__(self, log_dir: str = "detection_logs", cooldown_seconds: int = 5):
         self.log_dir = log_dir
@@ -92,7 +112,7 @@ class DetectionLogger:
             
             thumbnail = cv2.resize(frame, (thumb_width, thumb_height))
             thumb_filepath = os.path.join(self.log_dir, "thumbnails", filename)
-            cv2.imwrite(thumb_filepath, thumbnail)
+            _atomic_imwrite(thumb_filepath, thumbnail)
             
             # Save larger image for modal (max 800x600, maintaining aspect ratio)
             if aspect_ratio > 800/600:
@@ -104,7 +124,7 @@ class DetectionLogger:
             
             large_image = cv2.resize(frame, (large_width, large_height))
             large_filepath = os.path.join(self.log_dir, "images", filename)
-            cv2.imwrite(large_filepath, large_image)
+            _atomic_imwrite(large_filepath, large_image)
             
             return filename
         except Exception as e:
@@ -200,8 +220,28 @@ class DetectionLogger:
         return True
     
     def get_recent_logs(self, limit: int = 20) -> List[Dict[str, Any]]:
-        """Get the most recent log entries"""
-        return self.detection_logs[-limit:] if self.detection_logs else []
+        """Get the most recent log entries that still have a usable thumbnail.
+
+        Log entries and thumbnail files can drift apart: clear_logs() removes the
+        files, and a crash mid-write used to leave zero-byte images behind. An
+        entry whose image is gone renders as a broken tile forever, so filter
+        them out here rather than shipping phantom rows to the UI.
+        """
+        if not self.detection_logs:
+            return []
+        thumb_dir = os.path.join(self.log_dir, "thumbnails")
+        usable = []
+        for entry in self.detection_logs:
+            name = entry.get("thumbnail")
+            if not name:
+                continue
+            path = os.path.join(thumb_dir, os.path.basename(name))
+            try:
+                if os.path.getsize(path) > 0:
+                    usable.append(entry)
+            except OSError:
+                continue
+        return usable[-limit:]
     
     def clear_logs(self):
         """Clear all logs, thumbnails, and images"""

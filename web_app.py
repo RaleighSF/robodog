@@ -12,6 +12,8 @@ from detection_logger import DetectionLogger
 from telemetry_exporter import TelemetryManager, init_telemetry, get_telemetry
 from scene_narrator import init_narrator, get_narrator
 from gesture_detector import get_gesture_detector
+from ppe_detector import get_ppe_detector
+from hand_detector import get_hand_detector
 import asyncio
 import threading
 import json
@@ -66,8 +68,13 @@ class WebApp:
         self._detection_lock = threading.Lock()
         self._last_detections = []
         self._last_detection_ts = 0.0
-        self._detection_interval = 0.25  # seconds between detector invocations (~4 FPS)
-        self._max_detection_width = 800  # downscale before inference to save memory/compute
+        # Retuned 2026-09-02 for GPU. Was 0.25 (~4 FPS), a CPU-era compromise.
+        # YOLO11m @1280 measures ~59 ms on the Orin GPU, so 0.1 s (~10 FPS) leaves
+        # roughly 40% headroom for the VLM, JPEG encode and telemetry.
+        self._detection_interval = 0.1   # seconds between detector invocations (~10 FPS)
+        # Source frames are 1280x720; 1280 means no downscale at all. The old 800 px
+        # cap existed only to make CPU inference tractable and cost small-object recall.
+        self._max_detection_width = 1280 # native width — no downscale on GPU
         self._last_start_request = 0.0
         self._last_stop_request = 0.0
         self._throttle_window = 3.0  # seconds between successive start/stop calls
@@ -104,6 +111,24 @@ class WebApp:
         if self._detection_thread and self._detection_thread.is_alive():
             return
         self._detection_stop_event.clear()
+        # Drain the queue before starting a new worker.
+        #
+        # shutdown_detection_worker() enqueues a None sentinel to wake the worker,
+        # but the worker's loop tests _detection_stop_event FIRST, so it usually
+        # exits without ever consuming that sentinel. The None then survives in the
+        # queue, and the next worker's first get() returns it and breaks out
+        # immediately - leaving NO worker running while is_running stays True.
+        # The visible symptom is detections frozen at their last value forever.
+        drained = 0
+        while True:
+            try:
+                self._detection_queue.get_nowait()
+                self._detection_queue.task_done()
+                drained += 1
+            except queue.Empty:
+                break
+        if drained:
+            logger.info("[DetectionWorker] drained %d stale queue item(s) before start", drained)
         self._detection_thread = threading.Thread(
             target=self._detection_worker_loop,
             name="DetectionWorker",
@@ -184,15 +209,21 @@ class WebApp:
                     newer = self._detection_queue.get_nowait()
                     self._detection_queue.task_done()
                     if newer is None:
+                        frame = None
                         break
                     frame = newer
                 except queue.Empty:
                     break
 
+            # Check if drain loop received a None sentinel
+            if frame is None:
+                self._detection_queue.task_done()
+                break
+
             try:
                 # Skip detection when paused (queue is still drained above)
+                # task_done() is handled by the finally block below
                 if self._detection_paused:
-                    self._detection_queue.task_done()
                     continue
 
                 if not self._config_manager:
@@ -239,7 +270,11 @@ class WebApp:
                     print(f"[DetectionWorker] Processed {detection_count} frames, latest: {len(detections)} objects")
 
                 # Outstretched hand gesture detection (YOLO Pose keypoints)
-                if detections and _gesture_enabled:
+                # Run the hand check regardless of whether YOLO found anything.
+                # A hand held close to the lens frequently is NOT classified as a
+                # person, so gating on `detections` meant the check never ran in
+                # exactly the situation it exists for.
+                if _gesture_enabled:
                     _check_outstretched_hand(frame)
 
                 if self._config_manager.is_alert_logging_enabled():
@@ -311,18 +346,44 @@ class WebApp:
         # Lower quality = smaller files = faster transmission = less browser lag
         jpeg_params = [cv2.IMWRITE_JPEG_QUALITY, 75]
 
+        # ------------------------------------------------------------------
+        # Stream pacing. The yield path below had NO sleep, so this loop
+        # re-encoded and re-sent the SAME frame as fast as the CPU allowed —
+        # measured at 164 FPS / 97 Mbit/s. That saturates the link, floods the
+        # browser decoder and starves thumbnail/API requests. The camera only
+        # produces ~15 FPS, so anything above that is duplicate frames.
+        # ------------------------------------------------------------------
+        STREAM_TARGET_FPS = 15.0
+        STREAM_MIN_INTERVAL = 1.0 / STREAM_TARGET_FPS
+        last_emit_ts = 0.0
+
         while True:
             try:
-                if self.is_running and camera_manager.is_camera_available():
+                # Serve frames when YOLO-E is running OR PPE is running independently
+                has_activity = self.is_running or _ppe_enabled
+                if has_activity and camera_manager.is_camera_available():
                     frame = camera_manager.get_frame()
                     if frame is not None:
+                        # Pace before spending CPU on draw + JPEG encode.
+                        _dt = time.time() - last_emit_ts
+                        if _dt < STREAM_MIN_INTERVAL:
+                            time.sleep(STREAM_MIN_INTERVAL - _dt)
+                        last_emit_ts = time.time()
                         frame_count += 1
 
-                        with self._detection_lock:
-                            detections = list(self._last_detections or [])
-
-                        # Draw detections on frame only if we have results to overlay
-                        annotated_frame = detector.draw_detections(frame, detections) if detections else frame
+                        if _ppe_enabled:
+                            # PPE mode: draw compliance boxes only, never YOLO-E boxes
+                            annotated_frame = frame
+                            with _ppe_lock:
+                                ppe_snap = _ppe_last_result
+                            if ppe_snap and ppe_snap.get("people"):
+                                annotated_frame = get_ppe_detector().draw_compliance(annotated_frame, ppe_snap)
+                        elif self.is_running:
+                            with self._detection_lock:
+                                detections = list(self._last_detections or [])
+                            annotated_frame = detector.draw_detections(frame, detections) if detections else frame
+                        else:
+                            annotated_frame = frame
 
                         # Optionally resize for web display (reduces bandwidth, improves browser performance)
                         # Scale to max width of 1280px if larger (maintains aspect ratio)
@@ -344,8 +405,11 @@ class WebApp:
                     else:
                         time.sleep(0.01)  # Reduced sleep when waiting for frames
                 else:
-                    # Detection stopped - exit gracefully instead of looping
-                    if not self.is_running:
+                    # Detection stopped - exit gracefully instead of looping.
+                    # Must consider PPE too: during a mode switch is_running goes
+                    # False before _ppe_enabled goes True, and breaking in that
+                    # window blanks the browser until it reconnects.
+                    if not self.is_running and not _ppe_enabled:
                         print(f"🛑 Frame generation stopped - exiting stream (ID: {my_stream_id})")
                         break
                     time.sleep(0.1)
@@ -439,7 +503,14 @@ def stop_detection():
         web_app._last_stop_request = now
 
         # Set state first to stop loops
+        global _ppe_enabled, _ppe_last_result
         web_app.is_running = False
+        # Stop PPE as well. Stop must mean "stop everything" - otherwise pressing
+        # Stop while in PPE mode leaves the PPE worker running and the stream
+        # alive, so the button appears to do nothing.
+        _ppe_enabled = False
+        with _ppe_lock:
+            _ppe_last_result = None
         web_app._stop_detection_feeder()
         web_app.shutdown_detection_worker()
 
@@ -541,7 +612,7 @@ def get_status():
 def go2_battery():
     """Proxy endpoint for GO2 battery data to avoid CORS issues"""
     try:
-        response = requests.get('http://192.168.50.207:5001/battery', timeout=2)
+        response = requests.get('http://10.0.0.57:5001/battery', timeout=2)
         if response.status_code == 200:
             return jsonify(response.json())
         else:
@@ -555,7 +626,7 @@ def go2_video_passthrough():
     """Zero-copy proxy that relays the GO2 MJPEG stream for low-latency viewing."""
     def proxy():
         try:
-            with requests.get('http://192.168.50.207:5001/video_feed', stream=True, timeout=(3, 30)) as resp:
+            with requests.get('http://10.0.0.57:5001/video_feed', stream=True, timeout=(3, 30)) as resp:
                 resp.raise_for_status()
                 for chunk in resp.iter_content(chunk_size=8192):
                     if chunk:
@@ -602,6 +673,62 @@ _gesture_last_trigger_ts = 0.0
 _gesture_count = 0
 _gesture_enabled = False    # toggled by scene narrator mode
 
+# ---------------------------------------------------------------------------
+# PPE compliance detection. Runs in its own worker thread so it never shares a
+# code path with YOLO-E; exactly one of the two is active at a time, selected
+# via /api/detection/mode. Ported from the Plano PoC 2026-09-02.
+# ---------------------------------------------------------------------------
+_ppe_enabled = False
+_ppe_last_result = None
+_ppe_lock = threading.Lock()
+_ppe_thread = None
+
+
+def _ppe_worker_loop():
+    """Independent PPE loop — pulls frames straight from camera_manager."""
+    global _ppe_last_result
+    pd = get_ppe_detector()
+    logger.info("[PPE] Worker thread started on %s", pd.device)
+    while _ppe_enabled:
+        if not camera_manager.is_camera_available():
+            time.sleep(0.5); continue
+        frame = camera_manager.get_frame()
+        if frame is None:
+            time.sleep(0.1); continue
+        if not pd.should_run_this_frame():
+            time.sleep(0.02); continue
+        try:
+            result = pd.detect(frame)
+        except Exception as e:
+            logger.warning("[PPE] detect failed: %s", e)
+            time.sleep(0.25); continue
+        result['_ts'] = time.time()
+        with _ppe_lock:
+            _ppe_last_result = result
+
+        # Log non-compliance to the detection log so violations show up in the
+        # right-hand pane. The thumbnail is taken from the ANNOTATED frame so the
+        # red/green boxes are visible in the log tile, not just the live stream.
+        people = result.get('people') or []
+        violations = [pp for pp in people if not pp.get('compliant')]
+        if violations:
+            try:
+                from types import SimpleNamespace
+                dets = [SimpleNamespace(class_name='PPE Violation',
+                                        confidence=float(pp.get('confidence') or 0.0))
+                        for pp in violations]
+                annotated = pd.draw_compliance(frame, result)
+                if detection_logger.log_detections(annotated, dets, ['PPE Violation']):
+                    if detection_logger.detection_logs:
+                        detection_logger.detection_logs[-1]['camera_source'] = camera_manager.camera_source
+                    logger.info("[PPE] %d violation(s), %d compliant (%.0fms)",
+                                len(violations), len(people) - len(violations),
+                                result.get('inference_ms', 0))
+            except Exception as e:
+                logger.warning("[PPE] violation logging failed: %s", e)
+        time.sleep(0.02)
+    logger.info("[PPE] Worker thread stopped")
+
 
 def _check_outstretched_hand(frame):
     """Run YOLO Pose keypoint detection for outstretched hand and fire shake.
@@ -617,16 +744,29 @@ def _check_outstretched_hand(frame):
         return
 
     gd = get_gesture_detector()
-    result = gd.check_outstretched_hand(frame)
+    if not gd.should_run_this_frame():
+        return
+
+    # An open hand held near the camera is the trigger. Pose keypoints cannot
+    # express this (COCO-17 has a wrist and no fingers), so use the hand
+    # detector and gate on how much of the frame the hand occupies.
+    hd = get_hand_detector()
+    hres = hd.detect(frame)
+    result = {"detected": hres["detected"],
+              "confidence": hres["confidence"],
+              "arm": "hand",
+              "person_count": 0,
+              "inference_ms": hres["inference_ms"],
+              "area_frac": hres["area_frac"],
+              "fingers": hres["fingers"]}
 
     if result["detected"]:
         _gesture_last_trigger_ts = now
         _gesture_count += 1
         logger.info(
-            f"[GesturePose] Outstretched hand ({result['arm']}) detected! "
-            f"conf={result['confidence']:.2f} persons={result['person_count']} "
-            f"pose_ms={result['inference_ms']:.0f} — "
-            f"firing shake #{_gesture_count}"
+            f"[Gesture] Open hand near camera! area={result['area_frac']*100:.1f}% "
+            f"conf={result['confidence']:.2f} fingers={result['fingers']} "
+            f"ms={result['inference_ms']:.0f} — firing shake #{_gesture_count}"
         )
         _gesture_shake_callback(f"outstretched_hand_{result['arm']}")
 
@@ -636,18 +776,24 @@ _go2_last_command_ts = 0.0
 _go2_watchdog_thread = None
 _go2_watchdog_running = False
 _GO2_MOVE_TIMEOUT = 0.6
+# True while a /move request is awaiting the robot. The first Move includes a
+# BalanceStand and can take ~3s; the watchdog must not fire /stop during it.
+_go2_move_inflight = False
+_go2_move_inflight_lock = threading.Lock()
 _GO2_COMMAND_COOLDOWN = 1.5
 _GO2_MAX_VX = 0.25
 _GO2_MAX_VY = 0.2
 _GO2_MAX_VYAW = 0.5
-_GO2_SERVICE_URL = 'http://192.168.50.207:5001'
+_GO2_SERVICE_URL = 'http://10.0.0.57:5001'
 
 
 def _go2_watchdog_loop():
     global _go2_watchdog_running
     _go2_watchdog_running = True
     while _go2_watchdog_running:
-        if _go2_last_move_ts > 0 and (time.time() - _go2_last_move_ts) > _GO2_MOVE_TIMEOUT:
+        with _go2_move_inflight_lock:
+            _inflight = _go2_move_inflight
+        if (not _inflight) and _go2_last_move_ts > 0 and (time.time() - _go2_last_move_ts) > _GO2_MOVE_TIMEOUT:
             try:
                 requests.post(f'{_GO2_SERVICE_URL}/stop', json={}, timeout=1)
                 logger.debug("[GO2 Watchdog] Auto-stop — no move command received")
@@ -667,7 +813,7 @@ def _ensure_go2_watchdog():
 
 @app.route('/go2/command', methods=['POST'])
 def go2_command():
-    global _go2_last_command_ts
+    global _go2_last_command_ts, _go2_last_move_ts
     try:
         data = request.get_json()
         command = data.get('command')
@@ -725,10 +871,20 @@ def go2_move():
         vyaw = max(-_GO2_MAX_VYAW, min(_GO2_MAX_VYAW, float(data.get('vyaw', 0))))
 
         _go2_last_move_ts = time.time()
-        response = requests.post(f'{_GO2_SERVICE_URL}/move',
-            json={'vx': vx, 'vy': vy, 'vyaw': vyaw},
-            timeout=1
-        )
+        global _go2_move_inflight
+        with _go2_move_inflight_lock:
+            _go2_move_inflight = True
+        try:
+            # Must exceed the Orin's own 3.0s move-result timeout, or this proxy
+            # gives up before the robot can answer.
+            response = requests.post(f'{_GO2_SERVICE_URL}/move',
+                json={'vx': vx, 'vy': vy, 'vyaw': vyaw},
+                timeout=4
+            )
+        finally:
+            with _go2_move_inflight_lock:
+                _go2_move_inflight = False
+            _go2_last_move_ts = time.time()
         return jsonify(response.json()), response.status_code
     except Exception as e:
         _go2_last_move_ts = 0.0
@@ -756,7 +912,7 @@ def go2_motion_mode():
 
         logger.info(f"Setting GO2 motion mode to: {mode}")
 
-        response = requests.post('http://192.168.50.207:5001/motion_mode',
+        response = requests.post('http://10.0.0.57:5001/motion_mode',
                                  json={'mode': mode},
                                  timeout=5)
 
@@ -897,8 +1053,13 @@ def set_scene_mode():
         return jsonify({'success': False, 'message': f'Invalid mode: {mode}'}), 400
     global _gesture_enabled
     narrator.set_mode(mode)
-    _gesture_enabled = (mode == 'gesture')
-    logger.info(f"[GesturePose] Outstretched hand detection {'ENABLED' if _gesture_enabled else 'DISABLED'}")
+    # Selecting narrator 'gesture' mode arms it as a convenience, but switching
+    # back to 'casual' no longer disarms: gesture firing is a PHYSICAL robot
+    # action and must not be toggled as a side effect of a narration setting.
+    # Use POST /api/gesture {"enabled": false} to disarm explicitly.
+    if mode == 'gesture' and not _gesture_enabled:
+        _gesture_enabled = True
+        logger.info("[GesturePose] armed via narrator mode")
     return jsonify({'success': True, 'mode': narrator.mode})
 
 @app.route('/api/scene/summary')
@@ -967,7 +1128,9 @@ def serve_thumbnail(filename):
     """Serve thumbnail images"""
     try:
         thumbnail_path = os.path.join(detection_logger.log_dir, "thumbnails", filename)
-        if os.path.exists(thumbnail_path):
+        # A zero-byte file satisfies exists() but renders as a broken image.
+        # Treat it as missing so the UI can fall back cleanly.
+        if os.path.exists(thumbnail_path) and os.path.getsize(thumbnail_path) > 0:
             return send_file(thumbnail_path, mimetype='image/jpeg')
         else:
             return jsonify({'error': 'Thumbnail not found'}), 404
@@ -980,7 +1143,7 @@ def serve_large_image(filename):
     try:
         # Try to serve the large image first
         image_path = os.path.join(detection_logger.log_dir, "images", filename)
-        if os.path.exists(image_path):
+        if os.path.exists(image_path) and os.path.getsize(image_path) > 0:
             return send_file(image_path, mimetype='image/jpeg')
         
         # Fallback to thumbnail for older entries (will be upscaled by CSS)
@@ -1305,9 +1468,12 @@ def ssh_exec_command(command):
                 _ssh_client = paramiko.SSHClient()
                 _ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
                 _ssh_client.connect(
-                    os.environ.get('ORIN_HOST', '192.168.50.207'),
+                    os.environ.get('ORIN_HOST', '10.0.0.57'),
                     username=os.environ.get('ORIN_USER', 'unitree'),
-                    password=os.environ.get('ORIN_PASS', '123'),
+                    # No default: this repository is public. Set ORIN_PASS in the
+                    # systemd unit or the environment. RTSP control is disabled by
+                    # default anyway (the server costs ~103% CPU at idle).
+                    password=os.environ.get('ORIN_PASS', ''),
                     timeout=5,
                 )
             stdin, stdout, stderr = _ssh_client.exec_command(command, timeout=10)
@@ -1386,7 +1552,7 @@ def rtsp_stop():
 def _refresh_robot_state():
     """Fetch battery/status from go2_service and cache for telemetry."""
     try:
-        resp = requests.get('http://192.168.50.207:5001/battery', timeout=2)
+        resp = requests.get('http://10.0.0.57:5001/battery', timeout=2)
         if resp.status_code == 200:
             data = resp.json()
             web_app._cached_robot_state.update({
@@ -1411,7 +1577,7 @@ def _build_heartbeat_event():
     # Check if go2_service is reachable
     go2_reachable = False
     try:
-        r = requests.get('http://192.168.50.207:5001/status', timeout=2)
+        r = requests.get('http://10.0.0.57:5001/status', timeout=2)
         go2_reachable = r.status_code == 200
     except Exception:
         pass
@@ -1515,6 +1681,127 @@ def _init_scene_narrator():
 
 
 _init_scene_narrator()
+
+@app.route('/api/detection/mode', methods=['GET'])
+def get_detection_mode():
+    """Report which detector is active: 'yolo' or 'ppe'."""
+    pd = get_ppe_detector()
+    with _ppe_lock:
+        snap = _ppe_last_result
+    ppe_info = {'people': 0, 'compliant': 0, 'violations': 0,
+                'inference_ms': None, 'age_s': None, 'raw_detections': 0}
+    if snap:
+        people = snap.get('people', [])
+        ppe_info['people'] = len(people)
+        ppe_info['compliant'] = sum(1 for p in people if p.get('compliant'))
+        ppe_info['violations'] = sum(1 for p in people if not p.get('compliant'))
+        ppe_info['inference_ms'] = round(snap.get('inference_ms', 0), 1)
+        ppe_info['raw_detections'] = len(snap.get('all_detections', []))
+        ts = snap.get('_ts')
+        if ts:
+            ppe_info['age_s'] = round(time.time() - ts, 1)
+    return jsonify({'mode': 'ppe' if _ppe_enabled else 'yolo',
+                    'device': pd.device,
+                    'yolo_running': web_app.is_running,
+                    'ppe_running': _ppe_enabled,
+                    'ppe': ppe_info})
+
+
+@app.route('/api/detection/mode', methods=['POST'])
+def set_detection_mode():
+    """Switch between YOLO-E and PPE. Only one runs at a time so they never
+    contend for the GPU. The video stream is never torn down — /video_feed
+    keeps serving and only the overlay source changes, so switching is seamless."""
+    global _ppe_enabled, _ppe_last_result, _ppe_thread
+    data = request.get_json() or {}
+    mode = (data.get('mode') or '').lower()
+    if mode not in ('yolo', 'ppe'):
+        return jsonify({'status': 'error', 'message': "mode must be 'yolo' or 'ppe'"}), 400
+
+    if mode == 'ppe':
+        # ORDER MATTERS. Start PPE first, then stop YOLO. generate_frames() serves
+        # while (is_running or _ppe_enabled); if both are false for even one tick
+        # the stream loop exits and the video goes blank until the browser
+        # reconnects. Overlapping them by a few milliseconds keeps it seamless.
+        if not _ppe_enabled:
+            pd = get_ppe_detector()
+            try:
+                import torch
+                pd.set_device('cuda' if torch.cuda.is_available() else 'cpu')
+            except Exception:
+                pd.set_device('cpu')
+            _ppe_enabled = True
+            _ppe_thread = threading.Thread(target=_ppe_worker_loop, daemon=True, name='ppe-worker')
+            _ppe_thread.start()
+
+        # Now it is safe to tear YOLO down; the camera stays running throughout.
+        web_app.is_running = False
+        try:
+            web_app._stop_detection_feeder()
+            # Stop the WORKER too, not just the feeder. Frames already queued keep
+            # being processed after is_running flips, and the worker writes its
+            # result back into _last_detections AFTER we clear it - so YOLO boxes
+            # reappear on top of the PPE overlay. Shutting the worker down first
+            # makes the clear below final. The queue is drained on next start.
+            web_app.shutdown_detection_worker()
+        except Exception as e:
+            logger.warning("[Mode] detection shutdown: %s", e)
+        with web_app._detection_lock:
+            web_app._last_detections = []
+        logger.info("[Mode] -> PPE")
+    else:
+        # Same ordering rule in reverse: bring YOLO up before dropping PPE so
+        # has_activity never goes false and the stream never breaks.
+        if not web_app.is_running:
+            web_app.is_running = True
+            web_app._ensure_detection_worker()
+            web_app._start_detection_feeder()
+        _ppe_enabled = False
+        with _ppe_lock:
+            _ppe_last_result = None
+        logger.info("[Mode] -> YOLO")
+
+    return jsonify({'status': 'success', 'mode': mode,
+                    'device': get_ppe_detector().device})
+
+
+@app.route('/api/gesture', methods=['GET'])
+def get_gesture_state():
+    gd = get_gesture_detector()
+    return jsonify({
+        'enabled': _gesture_enabled,
+        'triggers': _gesture_count,
+        'cooldown_seconds': _GESTURE_COOLDOWN,
+        'cooldown_remaining': max(0.0, round(_GESTURE_COOLDOWN - (time.time() - _gesture_last_trigger_ts), 1)),
+        'last_reason': get_hand_detector().last.get('reason'),
+        'last_area_frac': get_hand_detector().last.get('area_frac'),
+        'last_confidence': get_hand_detector().last.get('confidence'),
+        'last_fingers': get_hand_detector().last.get('fingers'),
+        'device': get_hand_detector().device,
+        'tuning': get_hand_detector().cfg,
+    })
+
+
+@app.route('/api/gesture', methods=['POST'])
+def set_gesture_state():
+    """Arm or disarm the outstretched-hand -> shake behaviour.
+
+    Explicit and independent of the scene narrator, because this fires a real
+    physical movement on the robot.
+    """
+    global _gesture_enabled
+    data = request.get_json() or {}
+    if 'enabled' in data:
+        _gesture_enabled = bool(data['enabled'])
+    # Optional live tuning so thresholds can be dialled in with a hand in frame.
+    hd = get_hand_detector()
+    for k in ('min_area_frac', 'center_band', 'min_conf', 'require_open', 'min_fingers'):
+        if k in data:
+            hd.cfg[k] = data[k]
+    logger.info("[Gesture] %s by operator; tuning=%s",
+                'ARMED' if _gesture_enabled else 'DISARMED', hd.cfg)
+    return jsonify({'status': 'success', 'enabled': _gesture_enabled, 'tuning': hd.cfg})
+
 
 if __name__ == '__main__':
     print("Starting Computer Vision Object Detector Web App")

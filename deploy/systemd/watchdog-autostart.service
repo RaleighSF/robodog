@@ -1,0 +1,15 @@
+[Unit]
+Description=Keep Watch Dog camera + detection armed
+After=watchdog_webapp.service network-online.target
+Wants=watchdog_webapp.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/watchdog-autostart.sh
+Restart=always
+RestartSec=15
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
