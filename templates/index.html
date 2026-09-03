@@ -120,8 +120,14 @@
         }
 
         .partner-logo-img {
-            height: 30px;
+            /* The mark's black body vanishes against the dark nav, so mount it on a
+               white tile. border-box keeps the tile a fixed 34px with 4px padding. */
+            height: 34px;
             width: auto;
+            padding: 4px;
+            box-sizing: border-box;
+            background: #fff;
+            border-radius: 6px;
             display: block;
         }
 
@@ -1572,7 +1578,7 @@
             .project-title { font-size: 14px; padding-left: 10px; }
             .partner-section { gap: 6px; }
             .partner-label { font-size: 10px; }
-            .partner-logo-img { height: 22px; }
+            .partner-logo-img { height: 26px; padding: 3px; }
 
             .header-controls {
                 flex-wrap: wrap;
