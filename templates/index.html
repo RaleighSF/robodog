@@ -3595,8 +3595,9 @@
                         headers: {'Content-Type': 'application/json'},
                         body: JSON.stringify({ vx, vy, vyaw, session, seq: ++_seq, permit }),
                         // The server answers within 0.3 s (its own deadline); give up
-                        // just after, so a stalled tick never holds back the next
-                        // renewal past the robot's 0.4 s lease.
+                        // just after. Renewal within the robot's 0.4 s lease is NOT
+                        // guaranteed under stalls: if it lapses the robot stops and
+                        // retires the press (deliberate fail-stop) - press again.
                         signal: AbortSignal.timeout(400)
                     });
                     let j = {};

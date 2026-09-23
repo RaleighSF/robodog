@@ -25,17 +25,40 @@ fi
 # :latest tag if the service is down) and the installed unit file.
 # Fail closed: an upgrade proceeds only with BOTH captured. A first install
 # (no unit and no image yet) is the only case allowed without a rollback point.
+set +e
 UNIT=/etc/systemd/system/go2_service.service
-PREV="$(docker inspect -f '{{.Image}}' watchdog-go2 2>/dev/null || docker image inspect -f '{{.Id}}' watchdog-go2:latest 2>/dev/null || true)"
-if [ -z "$PREV" ] && [ ! -e "$UNIT" ]; then
-  echo "first install: no previous image or unit - no rollback point"
+# Tri-state lookups: prints the value (found), returns 3 for a CONFIRMED
+# "No such ..." from the daemon, and aborts on any other error (daemon down,
+# permissions) - an unknown state is never mistaken for absence.
+lookup() {   # $1 = inspect subcommand args...
+  local out rc
+  out="$("$@" 2>&1)"; rc=$?
+  if [ $rc -eq 0 ]; then printf '%s' "$out"; return 0; fi
+  if grep -qi "no such" <<<"$out"; then return 3; fi
+  echo "docker lookup failed ($*): $out - aborting (state unknown)" >&2; exit 1
+}
+# ($(...) runs lookup in a subshell, so its abort arrives here as rc 1.)
+PREV="$(lookup docker container inspect -f '{{.Image}}' watchdog-go2)"; rc=$?
+[ $rc -eq 0 ] || [ $rc -eq 3 ] || exit 1
+if [ $rc -eq 3 ]; then
+  PREV="$(lookup docker image inspect -f '{{.Id}}' watchdog-go2:latest)"; rc=$?
+  [ $rc -eq 0 ] || [ $rc -eq 3 ] || exit 1
+  [ $rc -eq 3 ] && PREV=""
+fi
+# Unit presence checked with privileges; only a confirmed "absent" counts.
+printf "%s\n" "$pw" | sudo -S -p "" test -e "$UNIT"; urc=$?
+case $urc in 0) UNIT_PRESENT=1 ;; 1) UNIT_PRESENT=0 ;; *) echo "cannot check $UNIT (rc $urc) - aborting" >&2; exit 1 ;; esac
+if [ -z "$PREV" ] && [ "$UNIT_PRESENT" -eq 0 ]; then
+  echo "first install (confirmed: no image, no unit) - no rollback point"
 else
-  [ -n "$PREV" ] || { echo "cannot identify the running image - refusing to upgrade without a rollback point" >&2; exit 1; }
+  [ -n "$PREV" ] || { echo "unit exists but no image found - refusing to upgrade without a rollback point" >&2; exit 1; }
+  [ "$UNIT_PRESENT" -eq 1 ] || { echo "image exists but no unit - refusing to upgrade without a rollback point" >&2; exit 1; }
   docker tag "$PREV" watchdog-go2:previous || { echo "cannot tag rollback image - aborting" >&2; exit 1; }
   printf "%s\n" "$pw" | sudo -S -p "" cat "$UNIT" > "$RDIR/prev.service" && [ -s "$RDIR/prev.service" ] \
     || { echo "cannot back up $UNIT - refusing to upgrade without a rollback point" >&2; exit 1; }
   echo "rollback point: $PREV + saved unit"
 fi
+set -e
 
 sudo_do() { printf "%s\n" "$pw" | sudo -S -p "" bash -c "$1"; }
 install_and_restart() {   # $1 = unit file to install
