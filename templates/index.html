@@ -4134,6 +4134,24 @@
         })();
 </script>
 <script>
+    /* Signed out (password changed elsewhere, or session expired): any API call
+       answering 401 sends the operator to the sign-in page instead of failing
+       quietly, and brings them back here afterwards. */
+    (function () {
+        const nativeFetch = window.fetch.bind(window);
+        let redirecting = false;
+        window.fetch = function () {
+            return nativeFetch.apply(null, arguments).then(function (resp) {
+                if (resp.status === 401 && !redirecting) {
+                    redirecting = true;
+                    location.href = '/login?next=' + encodeURIComponent(location.pathname + location.search);
+                }
+                return resp;
+            });
+        };
+    })();
+</script>
+<script>
     /* Demo profiles: live-repaint the dashboard, then persist on the edge. */
     (function () {
         const PROFILES = {{ profiles|tojson }};

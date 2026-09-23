@@ -66,20 +66,21 @@ ssh -t thor 'docker exec -it watchdog python3 auth.py set-password'   # change i
 ssh thor 'docker exec watchdog python3 auth.py status'
 ```
 
-- **HTTPS only.** On first boot the container generates a self-signed
-  certificate into the state volume (`/state/tls`), so each browser warns
-  once. **Don't accept that warning blindly.** A warning alone can't tell
-  the Thor apart from an impostor on the same WiFi. Before entering the
-  password, compare the fingerprint the browser shows (click the warning
-  or padlock, then view the certificate, SHA-256) with the one from the
-  Thor over SSH:
+- **HTTPS only, with a padlock.** The Thor and the AGX use certificates
+  issued by a private "NTT DATA Watch Dog Demo CA". The CA key lives only on
+  Raleigh's Mac in `~/.watchdog-ca/` and never goes in git. The CA is
+  name-constrained to private IP ranges plus `nvidia-thor`, `watchdog-agx` and
+  `localhost`, so even a leaked key can't vouch for a real website. Trust the CA
+  once on each demo laptop and both dashboards load with a normal padlock:
 
   ```bash
-  ssh thor 'docker exec watchdog openssl x509 -in /state/tls/cert.pem -noout -fingerprint -sha256'
+  security add-trusted-cert -r trustRoot -k ~/Library/Keychains/login.keychain-db ~/.watchdog-ca/ca.pem
   ```
 
-  Better: install `cert.pem` as trusted on the booth laptop once, or replace
-  `cert.pem`/`key.pem` with a CA-issued pair.
+  To re-issue a device certificate (for example when an IP changes), rerun the
+  CA's `issue` step and copy the result to `/state/tls/` (Thor) or `tls/`
+  (AGX). If no certificate is present, the Thor container falls back to
+  generating a self-signed one, which browsers warn about.
 - **Password change revokes sessions.** Every session is bound to a credential
   generation that rotates with the password, so an old session is refused on
   its next request, including one that was in flight during the change.
