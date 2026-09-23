@@ -1,0 +1,21 @@
+[Unit]
+Description=Watch Dog Go2 link (DDS commands/telemetry + WebRTC video) on :5001
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+# Watch Dog and Azimuth never drive the dog at the same time.
+Conflicts=azimuth-edge.service
+
+[Service]
+# GO2_AES_KEY (per-device WebRTC key, secret) and optional GO2_ROBOT_IP.
+EnvironmentFile=/etc/go2_service.env
+ExecStartPre=-/usr/bin/docker rm -f watchdog-go2
+ExecStart=/usr/bin/docker run --rm --name watchdog-go2 --network host --ipc host \
+  -e GO2_AES_KEY -e GO2_ROBOT_IP watchdog-go2:latest
+ExecStop=/usr/bin/docker stop -t 10 watchdog-go2
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target
