@@ -48,3 +48,8 @@ auth.json.tmp
 
 # Dashboard TLS key/cert (device-local)
 tls/
+
+# Go2 per-device WebRTC AES key (secret) and Azimuth lockdown archive
+scout-aes.key
+*.aes.key
+azimuth-orin-lockdown/

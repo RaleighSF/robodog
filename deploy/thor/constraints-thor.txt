@@ -1,6 +1,7 @@
 # Complete package resolution of the image validated on the Thor (2026-09-23),
 # from `pip list --format=freeze` so wheel-file installs (torch, torchvision)
 # are pinned too. Regenerate after any intentional dependency change.
+absl-py==2.5.0
 aiohappyeyeballs==2.6.1
 aiohttp==3.13.3
 aiohttp-cors==0.8.1
@@ -50,6 +51,7 @@ flash_attn==2.7.4.post1+nvinternal.main.41386253
 flashinfer-cubin==0.6.0+60f594fa.nvinternal.main.cu131.41395937
 flashinfer-python==0.6.0+60f594fa.nvinternal.main.cu131.41395937
 Flask==3.0.3
+flatbuffers==25.12.19
 fonttools==4.65.0
 frozenlist==1.8.0
 fsspec==2026.1.0
@@ -89,6 +91,7 @@ MarkupSafe==3.0.3
 matplotlib==3.11.2
 mcp==1.25.0
 mdurl==0.1.2
+mediapipe==1.0.1
 mistral_common==1.8.8
 model-hosting-container-standards==0.1.13
 mpmath==1.3.0

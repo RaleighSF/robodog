@@ -79,6 +79,16 @@ CASUAL_SYSTEM_PROMPT = (
     "  dull -> \"A power outlet, and no one to admire it with. Still holding position.\""
 )
 
+# Cosmos Reason 2 (Thor) copies worked examples verbatim — its first live line
+# was the "dull" example word for word — so it gets the same rules with the
+# register described instead of demonstrated.
+CASUAL_SYSTEM_PROMPT_COSMOS = CASUAL_SYSTEM_PROMPT.split(
+    "The register, in two examples.")[0] + (
+    "Keep it short and specific to THIS frame: name one concrete thing you "
+    "actually see (a person, what they hold or do, an object, the light), then "
+    "the dry aside. Never reuse a line you have said before."
+)
+
 # ── Scene summary defaults ─────────────────────────────────────────
 SCENE_SUMMARY_INTERVAL = 45  # seconds
 SCENE_SUMMARY_SYSTEM_PROMPT = (
@@ -486,16 +496,12 @@ class SceneNarrator:
     # ── Frame observations (casual mode) ───────────────────────────
 
     def _build_casual_prompt(self) -> str:
+        base = CASUAL_SYSTEM_PROMPT_COSMOS if self.backend == "openai" else CASUAL_SYSTEM_PROMPT
         if self.scene_context:
             # Scene context is the primary personality/location framing —
             # it comes first so it anchors the dog's entire worldview.
-            prompt = (
-                f"SETTING: {self.scene_context}\n\n"
-                f"{CASUAL_SYSTEM_PROMPT}"
-            )
-        else:
-            prompt = CASUAL_SYSTEM_PROMPT
-        return prompt
+            return f"SETTING: {self.scene_context}\n\n{base}"
+        return base
 
     def _casual_tick(self):
         image_b64 = self._encode_frame()

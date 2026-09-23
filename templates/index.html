@@ -2207,6 +2207,17 @@
             resizeDetectionCanvas();
         }
 
+        // An MJPEG <img> never reopens by itself after the server restarts or the
+        // robot link blips: while the feed should be showing, retry on error.
+        let _videoRetry = null;
+        videoStream.addEventListener('error', () => {
+            if (videoStream.style.display === 'none' || _videoRetry) return;
+            _videoRetry = setTimeout(() => {
+                _videoRetry = null;
+                if (videoStream.style.display !== 'none') videoStream.src = `/video_feed?${Date.now()}`;
+            }, 2000);
+        });
+
         function hideVideo() {
             // Clear the video source to stop the stream gracefully
             videoStream.src = '';
@@ -3513,53 +3524,102 @@
 
         // D-Pad movement controls with safety gating
         (function initDpad() {
+            // Azimuth's teleop model: each press is its own drive session (random id,
+            // increasing seq). Release stops AND retires the session on the robot, so
+            // a delayed Move from it can never restart motion. The Orin's 0.4 s lease
+            // stops the dog if renewals stop arriving; renew well inside it.
+            // Drive permits: the robot only moves for a Move carrying a permit it
+            // issued < 0.5 s earlier. The first Move of a press fetches one (no
+            // motion) and is resent at once; every accepted Move returns the next.
+            const MOVE_RATE_MS = 150;
+            const KEEP_TRYING = new Set(['STOP_PENDING', 'SETTLING', 'BUSY', 'DEADLINE']);   // transient: keep renewing
             let _moveInterval = null;
-            let _moveInFlight = false;
-            const MOVE_RATE_MS = 300;
+            let _inFlight = null;          // session whose request is outstanding
+            let _session = null;
+            let _seq = 0;
+            let _permit = null;            // {session, id} - newest permit for the live press
+
+            function newSession() {
+                const b = new Uint8Array(12);
+                crypto.getRandomValues(b);
+                return Array.from(b, x => x.toString(16).padStart(2, '0')).join('');
+            }
+
+            function clearLocal() {
+                if (_moveInterval) { clearInterval(_moveInterval); _moveInterval = null; }
+                document.querySelectorAll('.dpad-btn.active').forEach(b => b.classList.remove('active'));
+            }
 
             function startMove(btn) {
-                stopMove();
+                // No new press while an E-stop is still confirming; after it, the
+                // operator must press again (a fresh engagement).
+                if (window.__estopPending) return;
+                const previous = _session;
+                clearLocal();
+                if (previous) sendStop(previous);            // retire the old press; the new one is separate
                 btn.classList.add('active');
                 const vx = parseFloat(btn.dataset.vx);
                 const vy = parseFloat(btn.dataset.vy);
                 const vyaw = parseFloat(btn.dataset.vyaw);
-                sendMoveCmd(vx, vy, vyaw);
-                _moveInterval = setInterval(() => sendMoveCmd(vx, vy, vyaw), MOVE_RATE_MS);
+                _session = newSession();
+                _seq = 0;
+                const mine = _session;
+                sendMoveCmd(vx, vy, vyaw, mine);
+                _moveInterval = setInterval(() => sendMoveCmd(vx, vy, vyaw, mine), MOVE_RATE_MS);
+            }
+
+            function sendStop(session) {
+                fetch('/go2/stop', { method: 'POST', headers: {'Content-Type': 'application/json'},
+                                     body: JSON.stringify({ session }) }).catch(() => {});
             }
 
             function stopMove() {
-                if (_moveInterval) {
-                    clearInterval(_moveInterval);
-                    _moveInterval = null;
-                }
-                _moveInFlight = false;
-                document.querySelectorAll('.dpad-btn.active').forEach(b => b.classList.remove('active'));
-                fetch('/go2/stop', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}' }).catch(() => {});
+                // Only a press that is actually being held sends a stop; page-level
+                // mouseup/blur with nothing driving must not stop (or retire) anything.
+                // The E-stop button is separate and always stops the robot.
+                const s = _session;
+                if (!s) return;
+                _session = null;
+                clearLocal();
+                sendStop(s);
             }
 
-            async function sendMoveCmd(vx, vy, vyaw) {
-                if (_moveInFlight) return;
-                _moveInFlight = true;
+            async function sendMoveCmd(vx, vy, vyaw, session) {
+                if (_inFlight === session || session !== _session) return;
+                _inFlight = session;
+                let resendNow = false;
                 try {
+                    const permit = (_permit && _permit.session === session) ? _permit.id : null;
                     const resp = await fetch('/go2/move', {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ vx, vy, vyaw }),
-                        signal: AbortSignal.timeout(4500)
+                        body: JSON.stringify({ vx, vy, vyaw, session, seq: ++_seq, permit }),
+                        // The server answers within 0.3 s (its own deadline); give up
+                        // just after. Renewal within the robot's 0.4 s lease is NOT
+                        // guaranteed under stalls: if it lapses the robot stops and
+                        // retires the press (deliberate fail-stop) - press again.
+                        signal: AbortSignal.timeout(400)
                     });
-                    if (!resp.ok) {
-                        let msg = 'Move rejected';
-                        try { const j = await resp.json(); if (j && j.message) msg = j.message; } catch (_) {}
-                        if (resp.status === 409) msg = 'Crouch first \u2014 movement is blocked while standing';
-                        if (typeof showStatus === 'function') showStatus(msg, 'warning');
-                        stopMove();
+                    let j = {};
+                    try { j = await resp.json(); } catch (_) {}
+                    if (session === _session && typeof j.permit === 'string') {
+                        _permit = { session, id: j.permit };
+                        resendNow = (j.error === 'PERMIT');     // granted: drive now, not next tick
+                    }
+                    if (!resp.ok && session === _session && j.error !== 'PERMIT') {
+                        // A stale reply from an older press must never stop a newer one.
+                        if (!KEEP_TRYING.has(j.error)) {
+                            if (typeof showStatus === 'function') showStatus(j.message || 'Move rejected', 'warning');
+                            stopMove();
+                        }
                     }
                 } catch (e) {
-                    // A slow tick (first Move includes BalanceStand) must not end the
-                    // drive session. Skip it and let the repeat interval retry.
+                    // A slow or lost tick must not end the press: the next tick renews,
+                    // and the Orin's lease stops the dog if renewals really stop.
                 } finally {
-                    _moveInFlight = false;
+                    if (_inFlight === session) _inFlight = null;
                 }
+                if (resendNow && session === _session) sendMoveCmd(vx, vy, vyaw, session);
             }
 
             document.querySelectorAll('.dpad-btn:not(.dpad-center)').forEach(btn => {
@@ -3575,6 +3635,10 @@
                 if (document.hidden) stopMove();
             });
             window.addEventListener('blur', stopMove);
+            // E-stop ends any local renewal too (the robot-side stop is session-less).
+            // Returns the local press (it may not have reached the robot yet) so the
+            // E-stop can retire it too.
+            window.__dpadCancel = function () { const s = _session; _session = null; clearLocal(); return s; };
         })();
 
         // Show action bar on page load if GO2 is selected
@@ -3621,12 +3685,40 @@
             }
         }
 
-        // Emergency stop — always accessible
-        async function emergencyStop() {
-            try {
-                await fetch('/go2/stop', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}' });
-                showStatus('Emergency stop sent', 'warning');
-            } catch(e) {}
+        // Emergency stop — always accessible.
+        // Latched: the D-pad stays locked until the robot link CONFIRMS a stop
+        // (verified at rest). Unconfirmed attempts are retried; pressing E-stop
+        // again while one is in flight joins it rather than starting another.
+        let _estopLoop = null;
+        function emergencyStop() {
+            window.__estopPending = true;
+            const local = (typeof window.__dpadCancel === 'function') ? window.__dpadCancel() : null;
+            if (_estopLoop) return _estopLoop;
+            _estopLoop = (async () => {
+                let attempt = 0;
+                while (true) {
+                    attempt++;
+                    try {
+                        // all: stop the robot and retire BOTH this page's press and
+                        // whatever drive is active on the robot.
+                        const r = await fetch('/go2/stop', {
+                            method: 'POST', headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({ session: local, all: true }),
+                            signal: AbortSignal.timeout(6000) });
+                        const body = await r.json().catch(() => ({}));
+                        if (r.ok && body.confirmed === true) {
+                            showStatus('Emergency stop confirmed — robot at rest', 'warning');
+                            break;
+                        }
+                        showStatus(attempt === 1 ? 'Emergency stop sent — confirming…'
+                                                 : `E-stop NOT yet confirmed (try ${attempt}) — retrying`, 'error');
+                    } catch (e) {
+                        showStatus(`E-stop: robot link not answering (try ${attempt}) — retrying`, 'error');
+                    }
+                    await new Promise(res => setTimeout(res, attempt < 10 ? 1000 : 3000));
+                }
+            })().finally(() => { window.__estopPending = false; _estopLoop = null; });
+            return _estopLoop;
         }
 
         function showStatus(message, type) {
@@ -3920,6 +4012,15 @@
 
         // ── Polling ────────────────────────────────────────────
         function poll() {
+            // The Gesture/Observe selector is the switch. While Gesture is selected
+            // this page renews the server-side arm (also from a background window);
+            // leaving or closing the page disarms it (see pagehide below).
+            if (currentMode === 'gesture') {
+                fetch('/api/scene/mode', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({mode: 'gesture'})
+                }).catch(function() {});
+            }
             // Mode + pause status
             fetch('/api/scene/mode').then(r => r.json()).then(modeData => {
                 if (modeData.model_label) modelLabel = modeData.model_label;
@@ -4003,6 +4104,17 @@
 
         poll();
         setInterval(poll, 5000);
+        // Closing or leaving the dashboard ends gesture detection immediately.
+        window.addEventListener('pagehide', function() {
+            if (currentMode !== 'gesture') return;
+            try {
+                fetch('/api/scene/mode', {
+                    method: 'POST', keepalive: true,
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({mode: 'casual'})
+                });
+            } catch (e) {}
+        });
 
         // ── Context panel ──────────────────────────────────────
         const ctxToggle = document.getElementById('toggleSceneCtx');

@@ -1,777 +1,855 @@
 #!/usr/bin/env python3
 """
-GO2 Service - Optimized for Performance
-Provides battery, video, and commands via HTTP
+GO2 Service (DDS edition) — Watch Dog's robot link on the dog's Orin.
+
+Firmware 1.1.15 moved the Go2 to per-device-keyed WebRTC, so this service
+follows the path Azimuth proved on the same robot (azimuth repo,
+edge/transport.py DDSTransport):
+
+  * Commands + telemetry over DDS on the robot's wire: rclpy publishes
+    unitree_api/Request on /api/sport/request, replies are matched by
+    header.identity.id on /api/sport/response; battery from /lf/lowstate,
+    liveness + body height from /lf/sportmodestate. Lease id 0: Watch Dog
+    and Azimuth never run at the same time (the units Conflicts= each other),
+    so nobody else holds the sport lease.
+  * Video only over WebRTC (library 2.2.0, per-device AES key from
+    GO2_AES_KEY): the front camera has no usable DDS framing yet.
+
+Safety model (this box sits next to the robot, so it owns the deadman):
+  * Every Move buys a short motion lease (MOVE_LEASE_S). A supervisor sends
+    StopMove when the lease lapses — a dead dashboard, Thor or network can
+    never leave the dog walking — and keeps retrying until the robot
+    confirms the stop. Until then all movement is refused.
+  * Move and Stop publish under one actuation lock with a drive generation:
+    a Stop bumps the generation, so a Move admitted before it can never be
+    published after it.
+  * Posture comes from fresh telemetry (body height), not from the last
+    command, so a remote-controller change is seen. Movement and gestures
+    are only admitted when the dog is verifiably standing, no posture
+    command is in flight, and the settle time after one has passed.
+
+Same HTTP contract as the old WebRTC service on :5001:
+  GET /status /battery /video_feed   POST /command /move /stop /motion_mode
 """
-import asyncio, sys, threading, queue, cv2, time, struct, os
-from flask import Flask, jsonify, Response, request
-from flask_cors import CORS
+import asyncio
+import hmac
+import json
+import math
+import os
+import queue
+import secrets
+import threading
+import sys
+import time
 
-sys.path.insert(0, '/home/unitree/.local/lib/python3.8/site-packages')
-os.environ.setdefault('OPENCV_FFMPEG_CAPTURE_OPTIONS', 'loglevel;quiet')
-try:
-    cv2.setLogLevel(cv2.LOG_LEVEL_SILENT)
-except AttributeError:
-    try:
-        cv2.utils.logging.setLogLevel(cv2.utils.logging.LOG_LEVEL_SILENT)
-    except Exception:
-        pass
-from unitree_webrtc_connect.webrtc_driver import UnitreeWebRTCConnection, WebRTCConnectionMethod  
-from unitree_webrtc_connect.constants import RTC_TOPIC, SPORT_CMD
-try:
-    import av
-    av.logging.set_level(av.logging.QUIET)
-    av.logging.set_libav_level(av.logging.QUIET)
-    av.logging.set_skip_repeated(True)
-except Exception:
-    av = None
-from aiortc import MediaStreamTrack
+import cv2
+from flask import Flask, Response, jsonify, request
 
+from go2dds.core import DDSCore
+from go2dds.motion import (MIN_VX_FWD, MIN_VYAW, RestVerifier, SETTLE_V, SETTLE_W,
+                           TELEOP_LIMITS, planar_motion, snap)
+from go2dds.topics import MOTION_SWITCHER, SPORT, TOPICS
 
-def suppress_swscale_logs():
-    """Redirect C-level stderr to filter noisy swscaler warnings."""
-    suppress = b"No accelerated colorspace conversion found from yuv420p to bgr24"
-    def redirect_stream(fd):
-        try:
-            original_fd = os.dup(fd)
-            read_fd, write_fd = os.pipe()
-            os.dup2(write_fd, fd)
-            os.close(write_fd)
-        except OSError:
-            return
+ROBOT_IP = os.environ.get("GO2_ROBOT_IP", "192.168.123.161")
+# Control token: every command endpoint requires "Authorization: Bearer <token>".
+# Only the controlling dashboard (the Thor) holds it; others are view-only.
+# Fail closed: with no token configured, commands are refused (stop excepted).
+CONTROL_TOKEN = (os.environ.get("GO2_SERVICE_TOKEN") or "").strip()
+if CONTROL_TOKEN and (not CONTROL_TOKEN.isascii() or any(c.isspace() for c in CONTROL_TOKEN)
+                      or len(CONTROL_TOKEN) < 32):
+    CONTROL_TOKEN = ""                     # malformed: fail closed (logged at start)
+    _TOKEN_REJECTED = True
+else:
+    _TOKEN_REJECTED = False
+OPEN_ENDPOINTS = {"status", "battery", "video_feed"}   # read-only
+AES_KEY = (os.environ.get("GO2_AES_KEY") or "").strip() or None
+JPEG_QUALITY = int(os.environ.get("GO2_JPEG_QUALITY", "80"))
+JPEG_PARAMS = [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY]
 
-        def pump():
-            with os.fdopen(read_fd, 'rb', buffering=0) as reader, os.fdopen(original_fd, 'wb', buffering=0) as writer:
-                while True:
-                    data = reader.readline()
-                    if not data:
-                        break
-                    if suppress in data:
-                        continue
-                    writer.write(data)
+API = SPORT                                   # shared go2dds table (Azimuth-validated ids)
 
-        threading.Thread(target=pump, daemon=True).start()
-
-    redirect_stream(1)
-    redirect_stream(2)
-
-
-suppress_swscale_logs()
+LENIENT_CODES = {"sit": {-1}, "shake": {-1}}      # vendor -1 observed as benign for these
+CMD_MIN_GAP_S = 2.0
+REQUEST_TIMEOUT_S = 5.0
+MOVE_REPLY_TIMEOUT_S = 1.0
+STOP_REPLY_TIMEOUT_S = 1.0
+MOVE_LEASE_S = 0.4            # Azimuth's teleop lease: a Move authorizes this long, then the deadman stops it
+# Drive permits (robot-side freshness). A Move moves the dog only if it carries a
+# permit THIS process issued to that press less than PERMIT_TTL_S ago (on the
+# Orin's own clock) and that permit is the current or the immediately previous
+# one. Every accepted Move returns the next permit; a Move without a valid one
+# gets a permit back but never moves. So no Move can cause motion if it arrives
+# more than PERMIT_TTL_S after the permit it carries was issued, however it was
+# delayed (browser, Thor or network), and a released or stopped press's permits
+# are void.
+# What this does NOT promise: zero late motion or a stopping distance. A Move
+# admitted just inside the TTL authorizes one more MOVE_LEASE_S, so the
+# commanded-motion window after the last fresh permit is <= 0.5 + 0.4 s
+# (~0.29 m planar at the 0.32 m/s combined cap), plus scheduling, StopMove
+# delivery and physical braking. Known, accepted: a permit may authorize one
+# further higher-seq Move while it is the "previous" one, and a stale request
+# without a valid permit replaces the current grant (an extra handshake for the
+# live press, never extra motion). At most two permits are held.
+PERMIT_TTL_S = 0.5
+STOP_RETRY_S = 0.5
+POSTURE_SETTLE_S = 2.0        # after a posture command, telemetry must settle before moving
+TELEMETRY_STALE_S = 1.5
+STANDING_MIN_M = 0.27         # measured on Scout (1.1.15): standing 0.31-0.33, sit 0.22, lying 0.08
+LYING_MAX_M = 0.15
+VIDEO_STALE_S = 2.0
+VIDEO_RECONNECT_S = 10.0
+LIMITS = TELEOP_LIMITS                          # Azimuth's envelope (go2dds.motion)
+# Speed floors (MIN_VX_FWD 0.22, MIN_VYAW 0.45) and rest thresholds (SETTLE_V/W)
+# come from go2dds.motion, measured by Azimuth on this robot.
+STILL_HOLD_S = 0.3
+STILL_MIN_SAMPLES = 4
+STILL_DEADLINE_S = 2.5
 
 app = Flask(__name__)
-CORS(app)
-
-battery_state = {'soc': None, 'voltage': None, 'current': None, 'connected': False}
-latest_frame = None
-latest_jpeg = None
-frame_lock = threading.Lock()
-frame_counter = 0
-command_queue = queue.Queue()
-command_results = {}
-result_lock = threading.Lock()
-encoding_queue = queue.Queue(maxsize=2)
-motion_mode_queue = queue.Queue()
-motion_mode_results = {}
-motion_mode_lock = threading.Lock()
-move_queue = queue.Queue()
-move_results = {}
-move_lock = threading.Lock()
-_move_state = {'balance_ready': False}
-standing_heartbeat_queue = queue.Queue()
-
-COMMAND_MAP = {
-    'stand': SPORT_CMD['StandUp'],
-    'crouch': SPORT_CMD['StandDown'],
-    'sit': SPORT_CMD['Sit'],
-    'shake': SPORT_CMD['Hello']
-}
-
-KEEPALIVE_COMMANDS = {'sit', 'shake'}
-# 'stand' intentionally excluded — keepalive pings send set_motion_mode('normal')
-# which conflicts with BalanceStand posture and causes the robot to fall over.
-# Standing commands STOP the keepalive instead (see handle_command).
-KEEPALIVE_STOP_COMMANDS = {'stand', 'crouch'}  # commands that should halt keepalive
-KEEPALIVE_INTERVAL_SECONDS = 30   # increased from 20 — less aggressive pinging
-
-# Standing posture needs a sport-level refresh, not a motion-switcher keepalive.
-# Field logs show the robot can stay up for roughly 10 minutes after StandUp and
-# then enter a red-light fault/fall when no further WebRTC sport traffic is sent.
-# Re-selecting MOTION_SWITCHER "normal" while standing previously caused falls, so
-# this heartbeat intentionally re-sends the posture command on SPORT_MOD instead.
-# Five minutes keeps the refresh well inside the observed firmware timeout while
-# avoiding high-rate command churn.
-STANDING_HEARTBEAT_INTERVAL_SECONDS = 300
-REMOTE_ACTIVITY_TIMEOUT = 5.0  # seconds of silence before assuming remote released control
-REMOTE_AXIS_THRESHOLD = 0.05
-LENIENT_STATUS_CODES = {
-    'sit': {-1},
-    'shake': {-1},
-}
-COMMAND_RESULT_TIMEOUT = 8.0
-
-# --- Robot safety state ---
-_robot_busy_lock = threading.Lock()
-_robot_busy = False          # True while a sport command is in-flight
-_robot_last_cmd_ts = 0.0     # timestamp of last sport command sent
-_ROBOT_CMD_MIN_GAP = 2.0     # minimum seconds between sport commands
-_robot_posture = 'idle'      # tracks current posture: 'idle', 'standing', 'sitting'
-_robot_posture_lock = threading.Lock()
-JPEG_QUALITY = int(os.environ.get('GO2_JPEG_QUALITY', '80'))
-JPEG_ENCODE_PARAMS = [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY]
-
-keepalive_lock = threading.Lock()
-keepalive_stop_event = threading.Event()
-keepalive_thread = None
-keepalive_active = False
-
-standing_heartbeat_lock = threading.Lock()
-standing_heartbeat_stop_event = threading.Event()
-standing_heartbeat_thread = None
-standing_heartbeat_active = False
-
-remote_activity_lock = threading.Lock()
-remote_last_active_ts = 0.0
 
 
-def frame_encoder_worker():
-    global latest_jpeg, frame_counter
-    while True:
-        frame = encoding_queue.get()
+@app.before_request
+def _require_control_token():
+    import hmac
+    if request.endpoint in OPEN_ENDPOINTS:
+        return None
+    sent = request.headers.get("Authorization", "")
+    # Bytes compare: a non-ASCII header is simply a mismatch, never an exception
+    # (which would also have skipped the anonymous-stop path below).
+    ok = bool(CONTROL_TOKEN) and hmac.compare_digest(
+        sent.encode("utf-8", "replace"), ("Bearer " + CONTROL_TOKEN).encode("ascii"))
+    if ok:
+        return None
+    if request.endpoint == "handle_stop":
+        # A stop is never refused (anyone may stop the dog), but without the token
+        # it cannot name or retire sessions: it stops and retires the active drive.
+        request.environ["watchdog.anonymous_stop"] = True
+        return None
+    return jsonify({"success": False, "error": "UNAUTHORIZED",
+                    "message": "control token required (this dashboard is view-only)"}), 401
+
+
+@app.after_request
+def _cors(resp):
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    return resp
+
+
+def log(msg):
+    print(msg, flush=True)
+
+
+# ── DDS link ────────────────────────────────────────────────────────────────
+
+class RobotLink:
+    """Watch Dog's view of the robot on the shared go2dds core (the same DDS
+    code Azimuth runs): battery from /lf/lowstate, liveness, body height and
+    planar motion from /lf/sportmodestate; sport + motion_switcher requests."""
+
+    _TOPIC = {"sport": TOPICS["SPORT_MOD"], "motion_switcher": "rt/api/motion_switcher/request"}
+
+    def __init__(self):
+        self.battery = {"soc": None, "voltage": None, "current": None}
+        self.body_height = None
+        self.motion = None                    # (planar speed, |yaw rate|) or None if not finite
+        self.last_state = 0.0
+        self.core = DDSCore("watchdog_go2_service").start()
         try:
-            ret, buffer = cv2.imencode('.jpg', frame, JPEG_ENCODE_PARAMS)
-            if ret:
-                jpeg_bytes = buffer.tobytes()
-                with frame_lock:
-                    latest_jpeg = jpeg_bytes
-                    frame_counter += 1
-        except Exception as exc:
-            print(f"[Encoder] Failed to encode frame: {exc}", flush=True)
-        finally:
-            encoding_queue.task_done()
-
-
-threading.Thread(target=frame_encoder_worker, daemon=True).start()
-
-
-def enqueue_motion_mode_ping(source='keepalive'):
-    """Queue a motion mode ping without requiring a response.
-    Skips if robot is standing, busy, or recently executed a sport command.
-    """
-    with _robot_posture_lock:
-        posture = _robot_posture
-    if posture == 'standing':
-        print(f"[KeepAlive] Skipping ping ({source}) — robot is standing", flush=True)
-        return
-    with _robot_busy_lock:
-        if _robot_busy:
-            print(f"[KeepAlive] Skipping ping ({source}) — robot busy", flush=True)
-            return
-        gap = time.time() - _robot_last_cmd_ts
-        if gap < _ROBOT_CMD_MIN_GAP:
-            print(f"[KeepAlive] Skipping ping ({source}) — too soon after command ({gap:.1f}s)", flush=True)
-            return
-    try:
-        motion_mode_queue.put(('normal', None))
-        print(f"[KeepAlive] Queued 'normal' ping ({source})", flush=True)
-    except Exception as exc:
-        print(f"[KeepAlive] Failed to queue ping ({source}): {exc}", flush=True)
-
-
-def remote_is_actively_controlling():
-    with remote_activity_lock:
-        if remote_last_active_ts == 0.0:
-            return False
-        return (time.time() - remote_last_active_ts) < REMOTE_ACTIVITY_TIMEOUT
-
-
-def mark_remote_activity():
-    global remote_last_active_ts
-    with remote_activity_lock:
-        remote_last_active_ts = time.time()
-
-
-def detect_remote_activity(remote_data):
-    """Best-effort detection of wireless remote activity based on joystick/button input."""
-    if remote_data is None:
-        return False
-
-    try:
-        remote_bytes = bytes(remote_data)
-    except (TypeError, ValueError):
-        try:
-            remote_bytes = bytes(int(x) & 0xFF for x in remote_data)
+            self.core.subscribe(TOPICS["LOW_STATE"], self._on_low)
+            self.core.subscribe(TOPICS["LF_SPORT_MOD_STATE"], self._on_sport)
         except Exception:
-            return False
+            self.core.close()
+            raise
 
-    if len(remote_bytes) < 24:
+    @property
+    def dead(self):
+        return self.core.dead
+
+    def close(self):
+        self.core.close()
+
+    def _on_low(self, payload):
+        d = payload["data"]; b = d["bms_state"]
+        self.battery = {"soc": b["soc"], "voltage": d["power_v"], "current": b["current"]}
+
+    def _on_sport(self, payload):
+        d = payload["data"]
+        self.body_height = d.get("body_height")
+        self.motion = planar_motion(d)
+        self.last_state = payload["_recvMono"]
+
+    def alive(self):
+        return (not self.core.dead) and self.last_state and time.monotonic() - self.last_state < TELEMETRY_STALE_S
+
+    def send(self, api_id, parameter=None, svc="sport"):
+        """Publish; returns a go2dds Pending. Never blocks on the robot."""
+        return self.core.send(self._TOPIC[svc], api_id, parameter, 0)
+
+    def wait(self, pending, timeout):
+        return self.core.wait(pending, timeout)
+
+    def request(self, api_id, parameter=None, svc="sport", timeout=REQUEST_TIMEOUT_S):
+        return self.core.request(self._TOPIC[svc], api_id, parameter, 0, timeout)
+
+
+dds = None
+dds_lock = threading.Lock()
+
+
+def dds_supervisor():
+    """Create the link, and re-create it if its executor ever dies."""
+    global dds
+    while True:
+        with dds_lock:
+            current = dds
+        if current is not None and current.dead:
+            log("[DDS] link dead — rebuilding")
+            with dds_lock:
+                dds = None
+            current.close()
+            current = None
+        if current is None:
+            try:
+                link = RobotLink()
+                with dds_lock:
+                    dds = link
+                log("[DDS] link up (sport + motion_switcher, /lf telemetry)")
+            except Exception as e:                       # noqa: BLE001
+                log("[DDS] init failed: %s — retrying in 5s" % e)
+                time.sleep(5)
+                continue
+        time.sleep(1)
+
+
+def link():
+    with dds_lock:
+        return dds
+
+
+def link_ok():
+    d = link()
+    return d is not None and bool(d.alive())
+
+
+def telemetry_posture():
+    """lying | low (sitting or mid-transition) | standing | unknown — fresh, finite telemetry only."""
+    d = link()
+    if d is None or not d.alive() or d.body_height is None or not math.isfinite(d.body_height):
+        return "unknown"
+    h = d.body_height
+    if h < LYING_MAX_M:
+        return "lying"
+    if h < STANDING_MIN_M:
+        return "low"
+    return "standing"
+
+
+# ── Actuation (Azimuth's teleop model) ───────────────────────────────────────
+#
+# * Drive sessions: every D-pad press is a new session id with its own
+#   increasing seq, generated in the browser. A stop (operator or deadman)
+#   RETIRES the session, so a delayed Move from it can never restart motion,
+#   whatever order the network delivers things in.
+# * One stop machine, owned by the supervisor thread and never blocking: it
+#   publishes StopMove, polls the reply, and verifies rest incrementally from
+#   fresh sport samples (evidence resets on stale telemetry or a DDS rebuild).
+#   Stops are numbered; a stop is confirmed only for its own number.
+# * Movement is refused while any stop is outstanding (STOP_PENDING — the
+#   browser keeps renewing, so a held button resumes once the stop verifies).
+# * Posture / mode transitions share one admission rule (busy, cooldown,
+#   settle) and always start from a FRESH verified stop.
+
+class Actuator:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.wake = threading.Event()
+        # stop machine
+        self.stop_req = 0            # highest requested stop number
+        self.op_stops = 0            # operator/deadman stops (not a transition's own prerequisite stop)
+        self.stop_ok = 0             # highest stop number verified at rest
+        self.attempt = None          # dict for the in-flight StopMove attempt
+        # drive
+        self.moving = False
+        self.lease_until = 0.0
+        self.session = None          # active drive session id
+        self.seq = 0
+        self.retired = set()         # process lifetime, like Azimuth (a few bytes per press)
+        self.permit_cur = None       # {"id", "session", "exp"} - newest permit issued
+        self.permit_prev = None      # the one before it (a lost reply must not end a press)
+        # transitions
+        self.transition_busy = False
+        self.settle_until = 0.0
+        self.last_transition = 0.0
+
+    # -- helpers (caller holds lock) --------------------------------------
+    def _retire(self, session):
+        if session:
+            self.retired.add(session)
+        if self.session == session:
+            self.session = None
+        for attr in ("permit_cur", "permit_prev"):
+            p = getattr(self, attr)
+            if p is not None and (session is None or p["session"] == session):
+                setattr(self, attr, None)
+
+    def _permit_ok(self, session, permit, now):
+        if not isinstance(permit, str):
+            return False
+        for p in (self.permit_cur, self.permit_prev):
+            if (p is not None and p["session"] == session and now < p["exp"]
+                    and hmac.compare_digest(p["id"].encode(), permit.encode())):
+                return True
         return False
 
-    buttons_active = remote_bytes[2] != 0 or remote_bytes[3] != 0
-    axes_active = False
+    def _issue_permit(self, session, now, rotate):
+        new = {"id": secrets.token_hex(12), "session": session, "exp": now + PERMIT_TTL_S}
+        self.permit_prev = self.permit_cur if rotate else None
+        self.permit_cur = new
+        return new["id"]
 
-    try:
-        axes = []
-        for offset in (4, 8, 12, 20):
-            segment = remote_bytes[offset:offset + 4]
-            if len(segment) < 4:
-                continue
-            axes.append(struct.unpack('<f', segment)[0])
-        axes_active = any(abs(val) > REMOTE_AXIS_THRESHOLD for val in axes)
-    except Exception:
-        pass
+    def _request_stop(self, retire_session=None, retire_active=True, operator=True):
+        """retire_session: a drive the caller knows about (the browser's own press,
+        which may not have reached us yet). retire_active: also retire whatever
+        drive is active here. A plain D-pad release retires only its own press so
+        it can never kill the next one; E-stop and the deadman retire both."""
+        self.stop_req += 1
+        if operator:
+            self.op_stops += 1
+        self.lease_until = 0.0
+        if retire_session:
+            self._retire(retire_session)
+        if retire_active or not retire_session:
+            self._retire(self.session)
+        self.wake.set()
+        return self.stop_req
 
-    return buttons_active or axes_active
+    def stop_pending(self):
+        return self.stop_ok < self.stop_req
 
-
-def motion_keepalive_worker(trigger_source):
-    global keepalive_active, keepalive_thread
-    print(f"[KeepAlive] Motion keepalive started via {trigger_source}", flush=True)
-    # Send one initial mode ping to ensure we're in 'normal'
-    enqueue_motion_mode_ping(f"start:{trigger_source}")
-
-    while True:
-        if keepalive_stop_event.wait(KEEPALIVE_INTERVAL_SECONDS):
-            break
-        if remote_is_actively_controlling():
-            print("[KeepAlive] Remote activity detected; stopping keepalive loop", flush=True)
-            break
-        # Safety: skip mode ping if a sport command is currently in-flight
-        with _robot_busy_lock:
-            busy = _robot_busy
-        if busy:
-            print("[KeepAlive] Robot busy with command — skipping mode ping", flush=True)
-            continue
-        enqueue_motion_mode_ping('interval')
-
-    with keepalive_lock:
-        keepalive_active = False
-        keepalive_thread = None
-        keepalive_stop_event.clear()
-
-    print("[KeepAlive] Motion keepalive stopped", flush=True)
-
-
-def start_motion_keepalive_if_needed(trigger_source):
-    global keepalive_thread, keepalive_active
-    with keepalive_lock:
-        if keepalive_active:
-            print(f"[KeepAlive] Loop already active, skipping trigger {trigger_source}", flush=True)
-            return False
-        keepalive_stop_event.clear()
-        keepalive_thread = threading.Thread(
-            target=motion_keepalive_worker,
-            args=(trigger_source,),
-            daemon=True
-        )
-        keepalive_active = True
-        print(f"[KeepAlive] Spawning keepalive thread via {trigger_source}", flush=True)
-        keepalive_thread.start()
-        return True
-
-
-def stop_motion_keepalive(reason=''):
-    with keepalive_lock:
-        if not keepalive_active:
-            return False
-        print(f"[KeepAlive] Stop requested ({reason})", flush=True)
-        keepalive_stop_event.set()
-        return True
-
-
-def standing_sport_heartbeat_worker(trigger_source):
-    global standing_heartbeat_active, standing_heartbeat_thread
-    print(f"[StandHeartbeat] Sport heartbeat started via {trigger_source}", flush=True)
-
-    while True:
-        if standing_heartbeat_stop_event.wait(STANDING_HEARTBEAT_INTERVAL_SECONDS):
-            break
-
-        with _robot_posture_lock:
-            posture = _robot_posture
-        if posture != 'standing':
-            print("[StandHeartbeat] Posture no longer standing; stopping", flush=True)
-            break
-
-        if remote_is_actively_controlling():
-            print("[StandHeartbeat] Remote activity detected; stopping", flush=True)
-            break
-
-        with _robot_busy_lock:
-            if _robot_busy:
-                print("[StandHeartbeat] Robot busy with command — skipping this interval", flush=True)
-                continue
-
-        try:
-            standing_heartbeat_queue.put(('StandUp', SPORT_CMD['StandUp']))
-            print("[StandHeartbeat] Queued SPORT_MOD StandUp refresh", flush=True)
-        except Exception as exc:
-            print(f"[StandHeartbeat] Failed to queue refresh: {exc}", flush=True)
-
-    with standing_heartbeat_lock:
-        standing_heartbeat_active = False
-        standing_heartbeat_thread = None
-        standing_heartbeat_stop_event.clear()
-
-    print("[StandHeartbeat] Sport heartbeat stopped", flush=True)
-
-
-def start_standing_sport_heartbeat(trigger_source):
-    global standing_heartbeat_thread, standing_heartbeat_active
-    with standing_heartbeat_lock:
-        if standing_heartbeat_active:
-            print(f"[StandHeartbeat] Loop already active, skipping trigger {trigger_source}", flush=True)
-            return False
-        standing_heartbeat_stop_event.clear()
-        standing_heartbeat_thread = threading.Thread(
-            target=standing_sport_heartbeat_worker,
-            args=(trigger_source,),
-            daemon=True
-        )
-        standing_heartbeat_active = True
-        print(f"[StandHeartbeat] Spawning sport heartbeat thread via {trigger_source}", flush=True)
-        standing_heartbeat_thread.start()
-        return True
-
-
-def stop_standing_sport_heartbeat(reason=''):
-    with standing_heartbeat_lock:
-        if not standing_heartbeat_active:
-            return False
-        print(f"[StandHeartbeat] Stop requested ({reason})", flush=True)
-        standing_heartbeat_stop_event.set()
-        return True
-
-
-async def set_motion_mode(conn, mode_name='normal'):
-    """Ensure the GO2 motion controller is in a desired mode."""
-    return await conn.datachannel.pub_sub.publish_request_new(
-        RTC_TOPIC['MOTION_SWITCHER'],
-        {
-            'api_id': 1002,
-            'parameter': {'name': mode_name}
-        }
-    )
-
-async def recv_camera_stream(track: MediaStreamTrack):
-    global latest_frame
-    while True:
-        try:
-            frame = await track.recv()
-            img = frame.to_ndarray(format='bgr24')
-            with frame_lock:
-                latest_frame = img
+    # -- stop machine (supervisor thread only) ------------------------------
+    def _tick(self):
+        now = time.monotonic()
+        d = link()
+        with self.lock:
+            if self.moving and not self.stop_pending() and self.lease_until and now > self.lease_until:
+                log("[Deadman] no move within %.1fs — stopping" % MOVE_LEASE_S)
+                self._request_stop()
+            if not self.stop_pending():
+                self.attempt = None
+                return
+            target = self.stop_req
+            att = self.attempt
+        if d is None:
+            return                                   # link down: keep the stop pending
+        if att is None or att["link"] is not d or now - att["t"] > STILL_DEADLINE_S:
+            if att is not None:
+                att["link"].core.cancel(att["p"])                   # abandoned: no leak
+                log("[Stop] attempt for #%d not verified in %.1fs (reply code %s, still samples %d) — retrying"
+                    % (att["target"], STILL_DEADLINE_S, att["code"], att["rv"].samples))
             try:
-                encoding_queue.put_nowait(img)
-            except queue.Full:
-                pass
-        except: 
-            await asyncio.sleep(0.05)
+                p = d.send(API["StopMove"])
+            except Exception as e:                   # noqa: BLE001
+                log("[Stop] publish failed: %s" % e)
+                return
+            att = {"target": target, "t": now, "p": p, "link": d, "code": None,
+                   "rv": RestVerifier(now, hold_s=STILL_HOLD_S, min_samples=STILL_MIN_SAMPLES,
+                                      settle_v=SETTLE_V, settle_w=SETTLE_W)}
+            with self.lock:
+                self.attempt = att
+            return
+        if att["code"] is None and att["p"].replied:
+            att["code"] = att["p"].code
+            d.core.cancel(att["p"])
+        # Rest on distinct fresh samples after the stop (go2dds RestVerifier =
+        # Azimuth's settle_still; resets on stale gaps or motion).
+        verified = att["rv"].feed(d.last_state, d.motion, now)
+        # A stop needs BOTH delivery (the robot replied — any code: a lying dog
+        # answers -1 because there is nothing to stop) and PHYSICAL REST on fresh
+        # samples (Azimuth's verdict_for). An unanswered StopMove never counts,
+        # however still the body looks: that would hide a dead command channel.
+        if verified and att["code"] is not None:
+            d.core.cancel(att["p"])                   # done with this request either way
+            with self.lock:
+                self.stop_ok = max(self.stop_ok, att["target"])
+                if not self.stop_pending():
+                    self.moving = False
+                self.attempt = None
+            log("[Stop] #%d verified at rest (StopMove reply code %s)" % (att["target"], att["code"]))
+
+    def supervise(self):
+        while True:
+            self.wake.wait(0.05)
+            self.wake.clear()
+            try:
+                self._tick()
+            except Exception as e:                   # noqa: BLE001
+                log("[Supervisor] %s" % e)
+
+    def anonymous_stop(self):
+        """Operator stop from an unauthenticated caller. Check-and-create is one
+        atomic step: joins an outstanding stop instead of publishing another,
+        but ALWAYS counts as an operator stop, so a posture command waiting on
+        that stop is still cancelled. Returns the stop number to wait for."""
+        with self.lock:
+            if self.stop_pending():
+                self.op_stops += 1
+                self.lease_until = 0.0
+                self._retire(self.session)
+                self.wake.set()
+                return self.stop_req
+            return self._request_stop(None, True, True)
+
+    def wait_stop(self, n, timeout=3.0):
+        t = time.monotonic()
+        while time.monotonic() - t < timeout:
+            with self.lock:
+                if self.stop_ok >= n:
+                    return n
+            time.sleep(0.02)
+        return 0
+
+    def stop_and_wait(self, retire_session=None, timeout=3.0, retire_active=True, operator=True):
+        """Request a stop; returns its number if THAT stop (or a later one)
+        verified at rest, else 0."""
+        with self.lock:
+            n = self._request_stop(retire_session, retire_active, operator)
+        t = time.monotonic()
+        while time.monotonic() - t < timeout:
+            with self.lock:
+                if self.stop_ok >= n:
+                    return n
+            time.sleep(0.02)
+        return 0
+
+    def _send_if_current(self, d, n, admitted_ops, api, parameter=None, svc="sport"):
+        """Publish a transition only if no newer stop arrived since its own
+        verified stop #n AND no operator stop since the transition was admitted
+        (an E-stop at any point cancels a pending posture/mode change)."""
+        with self.lock:
+            if self.stop_req != n or self.op_stops != admitted_ops:
+                return None
+            return d.send(api, parameter, svc)
+
+    # -- move -------------------------------------------------------------
+    def move(self, vx, vy, vyaw, session, seq, permit=None):
+        d = link()
+        if d is None or not d.alive():
+            return 503, {"success": False, "error": "NOT_CONNECTED", "message": "Robot not connected (no DDS telemetry)"}
+        with self.lock:
+            # A lapsed drive is stopped HERE, atomically, not only on the next
+            # supervisor tick: an old session can never be renewed after expiry.
+            if self.moving and not self.stop_pending() and self.lease_until and time.monotonic() > self.lease_until:
+                log("[Deadman] lease lapsed (seen at admission) — stopping")
+                self._request_stop()
+                return 409, {"success": False, "error": "STOP_PENDING", "message": "Previous drive lapsed — stopping."}
+            if session in self.retired:
+                return 409, {"success": False, "error": "SESSION_RETIRED", "message": "That drive was stopped — press again."}
+            if (self.session is not None and session != self.session and self.moving
+                    and time.monotonic() < self.lease_until):
+                # One controller at a time (Azimuth's rule): a live drive is never
+                # taken over by another press/client; it must release or lapse.
+                return 409, {"success": False, "error": "BUSY", "message": "Another drive is active."}
+            if session == self.session and seq <= self.seq:
+                return 409, {"success": False, "error": "SUPERSEDED", "message": "Older than the current setpoint."}
+            if self.stop_pending():
+                return 409, {"success": False, "error": "STOP_PENDING", "message": "Stopping — waiting for the robot to settle."}
+            if self.transition_busy or time.monotonic() < self.settle_until:
+                return 409, {"success": False, "error": "SETTLING", "message": "Posture change in progress — wait a moment."}
+            p = telemetry_posture()
+            if p != "standing":
+                return 409, {"success": False, "error": "NOT_STANDING", "message": "Stand up before moving (robot reads %s)." % p}
+            now = time.monotonic()
+            if not self._permit_ok(session, permit, now):
+                # No (fresh) permit: grant one, move nothing. The caller resends
+                # at once carrying it. A late Move therefore never starts motion.
+                pid = self._issue_permit(session, now, rotate=False)
+                return 409, {"success": False, "error": "PERMIT", "permit": pid,
+                             "message": "Drive permit issued — resend with it."}
+            if self.session is not None and self.session != session:
+                self._retire(self.session)           # a new press supersedes an old one
+            next_permit = self._issue_permit(session, now, rotate=True)
+            self.session, self.seq = session, seq
+            self.moving = True
+            self.lease_until = time.monotonic() + MOVE_LEASE_S
+            try:
+                p = d.send(API["Move"], {"x": vx, "y": vy, "z": vyaw})
+            except Exception as e:                   # noqa: BLE001
+                log("[Move] publish failed: %s" % e)
+                return 503, {"success": False, "error": "PUBLISH_FAILED", "message": "publish failed"}
+        code, _ = d.wait(p, MOVE_REPLY_TIMEOUT_S)
+        return 200, {"success": code == 0, "code": code, "permit": next_permit}
+
+    # -- transitions ---------------------------------------------------------
+    def _admit_transition(self):
+        """None if admitted (self._admitted_ops records the operator-stop count
+        at admission), else an (http, body) refusal."""
+        with self.lock:
+            if self.transition_busy:
+                return (429, {"success": False, "message": "Robot busy — wait for current command to finish"})
+            gap = time.time() - self.last_transition
+            if gap < CMD_MIN_GAP_S:
+                return (429, {"success": False, "message": "Command cooldown — wait %.1fs" % (CMD_MIN_GAP_S - gap)})
+            if time.monotonic() < self.settle_until:
+                return (429, {"success": False, "message": "Settling after the last command — wait a moment"})
+            self.transition_busy = True
+            self._admitted_ops = self.op_stops
+        return None
+
+    def _end_transition(self):
+        with self.lock:
+            self.transition_busy = False
+            self.last_transition = time.time()
+            self.settle_until = time.monotonic() + POSTURE_SETTLE_S
+
+    def command(self, name):
+        d = link()
+        if d is None or not d.alive():
+            return 503, {"success": False, "message": "Robot not connected (no DDS telemetry)"}
+        refused = self._admit_transition()
+        if refused:
+            return refused
+        try:
+            n = self.stop_and_wait(operator=False)   # always from a FRESH verified rest
+            if not n:
+                return 409, {"success": False, "message": "Could not verify the robot at rest — command not sent."}
+            p = telemetry_posture()
+            if name == "stand":
+                api = API["RiseSit"] if p == "low" else API["RecoveryStand"]
+            elif name == "crouch":
+                api = API["StandDown"]
+            elif name == "sit":
+                if p != "standing":
+                    return 409, {"success": False, "message": "Stand up before sitting (robot reads %s)." % p}
+                api = API["Sit"]
+            elif name == "shake":
+                if p != "standing":
+                    return 409, {"success": False, "message": "Stand up first — the dog shakes hands from standing (robot reads %s)." % p}
+                api = API["Hello"]
+            else:
+                return 400, {"success": False, "message": "Invalid command"}
+            sent = self._send_if_current(d, n, self._admitted_ops, api)
+            if sent is None:
+                return 409, {"success": False, "message": "Cancelled by a newer stop — command not sent."}
+            code, _ = d.wait(sent, REQUEST_TIMEOUT_S)
+            ok = code == 0 or code in LENIENT_CODES.get(name, set())
+            msg = ("No reply from robot within %.0fs" % REQUEST_TIMEOUT_S if code is None
+                   else "ok" if code == 0 else "robot code %s%s" % (code, " (tolerated)" if ok else ""))
+            log("[Command] %s (api %s, robot read %s) -> code %s" % (name, api, p, code))
+            return 200, {"success": ok, "message": msg, "raw_status": {"code": code}}
+        finally:
+            self._end_transition()
+
+    def motion_mode(self, mode):
+        d = link()
+        if d is None or not d.alive():
+            return 503, {"success": False, "message": "Robot not connected"}
+        refused = self._admit_transition()
+        if refused:
+            return refused
+        try:
+            code, data = d.request(MOTION_SWITCHER["CheckMode"], svc="motion_switcher")
+            if code != 0:
+                return 502, {"success": False, "message": "Could not read the current mode (code %s) — not changing it." % code}
+            try:
+                current = (json.loads(data) if data else {}).get("name")
+            except (ValueError, AttributeError):
+                return 502, {"success": False, "message": "Unreadable mode reply — not changing it."}
+            if current == mode:
+                return 200, {"success": True, "message": "already in '%s'" % mode, "code": 0}
+            n = self.stop_and_wait(operator=False)
+            if not n:
+                return 409, {"success": False, "message": "Could not verify the robot at rest — mode not changed."}
+            sent = self._send_if_current(d, n, self._admitted_ops, MOTION_SWITCHER["SelectMode"],
+                                         {"name": mode}, "motion_switcher")
+            if sent is None:
+                return 409, {"success": False, "message": "Cancelled by a newer stop — mode not changed."}
+            code, data = d.wait(sent, REQUEST_TIMEOUT_S)
+            log("[MotionMode] %s -> %s (code %s)" % (current, mode, code))
+            return 200, {"success": code == 0, "code": code, "message": data or ""}
+        finally:
+            self._end_transition()
 
 
-async def establish_connection_with_retry():
-    """Persistently try to bring up the WebRTC session so the API heals after reboots."""
+act = Actuator()
+
+
+# ── Video over WebRTC (video only) ──────────────────────────────────────────
+
+frame_lock = threading.Lock()
+latest_jpeg = None
+frame_counter = 0
+last_frame_mono = 0.0
+video_connected = False
+encode_queue = queue.Queue(maxsize=2)
+
+
+def encoder():
+    global latest_jpeg, frame_counter, last_frame_mono
+    while True:
+        img = encode_queue.get()
+        try:
+            ok, buf = cv2.imencode(".jpg", img, JPEG_PARAMS)
+        except Exception as e:                           # noqa: BLE001
+            log("[Video] encode error: %s" % e)
+            continue
+        if ok:
+            with frame_lock:
+                latest_jpeg = buf.tobytes()
+                frame_counter += 1
+                last_frame_mono = time.monotonic()
+
+
+async def on_track(track):
+    while True:
+        frame = await track.recv()
+        try:
+            img = frame.to_ndarray(format="bgr24")
+        except Exception as e:                           # noqa: BLE001
+            log("[Video] frame conversion error: %s" % e)
+            continue
+        try:
+            encode_queue.put_nowait(img)
+        except queue.Full:
+            pass                                          # encoder behind: drop, keep latency low
+
+
+def video_fresh():
+    with frame_lock:
+        return latest_jpeg is not None and time.monotonic() - last_frame_mono < VIDEO_STALE_S
+
+
+async def video_loop():
+    global video_connected, latest_jpeg
+    from unitree_webrtc_connect.webrtc_driver import UnitreeWebRTCConnection, WebRTCConnectionMethod
     attempt = 0
     while True:
         attempt += 1
+        conn = None
         try:
-            conn = UnitreeWebRTCConnection(WebRTCConnectionMethod.LocalSTA, ip='192.168.123.161')
+            kw = {"ip": ROBOT_IP}
+            if AES_KEY:
+                kw["aes_128_key"] = AES_KEY
+            conn = UnitreeWebRTCConnection(WebRTCConnectionMethod.LocalSTA, **kw)
             await conn.connect()
-            battery_state['connected'] = True
-            if attempt > 1:
-                print(f"[Connect] Recovered connection on attempt {attempt}", flush=True)
-            return conn
-        except Exception as connect_error:
-            battery_state['connected'] = False
-            wait_time = min(5 * attempt, 30)
-            print(f"[Connect] Attempt {attempt} failed: {connect_error}. Retry in {wait_time}s", flush=True)
-            await asyncio.sleep(wait_time)
-
-async def robot_loop():
-    global battery_state, command_results, _robot_busy, _robot_last_cmd_ts
-
-    while True:
-        conn = await establish_connection_with_retry()
-        try:
-            # Ensure motion mode is set to 'normal' — but NOT if robot is standing
-            # (sending mode change while standing causes safety fault / red light)
-            with _robot_posture_lock:
-                posture = _robot_posture
-            if posture == 'standing':
-                print(f"[Connect] Skipping initial set_motion_mode — robot is standing", flush=True)
-            else:
-                try:
-                    resp = await set_motion_mode(conn, 'normal')
-                    status = resp.get('data', {}).get('header', {}).get('status', {})
-                    msg = status.get('message') or status.get('msg') or ''
-                    print(f"Motion mode set response: code={status.get('code')} msg='{msg}'")
-                except Exception as motion_error:
-                    print(f"Failed to set motion mode: {motion_error}")
-            
             conn.video.switchVideoChannel(True)
-            conn.video.add_track_callback(recv_camera_stream)
-            
-            def lowstate_callback(message):
-                global _robot_posture
-                data = message['data']
-                bms = data['bms_state']
-                battery_state['soc'] = bms['soc']
-                battery_state['voltage'] = data['power_v']
-                battery_state['current'] = bms['current']
-                remote_data = data.get('wireless_remote') or data.get('wirelessRemote')
-                if remote_data and detect_remote_activity(remote_data):
-                    mark_remote_activity()
-                    stop_motion_keepalive('remote takeover detected via wireless remote input')
-                    stop_standing_sport_heartbeat('remote takeover detected via wireless remote input')
-                    # Remote operator may change posture — clear standing guard
-                    with _robot_posture_lock:
-                        if _robot_posture == 'standing':
-                            _robot_posture = 'idle'
-                            print("[Posture] → idle (remote takeover)", flush=True)
-            
-            conn.datachannel.pub_sub.subscribe(RTC_TOPIC['LOW_STATE'], lowstate_callback)
-            
-            # 30Hz command processing loop
-            while True: 
-                try:
-                    try:
-                        mode_name, result_id = motion_mode_queue.get_nowait()
-                        # Final safety gate: drop keepalive pings if robot is standing
-                        with _robot_posture_lock:
-                            posture = _robot_posture
-                        if posture == 'standing' and result_id is None:
-                            # result_id is None → this is a keepalive ping, not an explicit API call
-                            print(f"[Safety] Dropping mode ping '{mode_name}' — robot is standing", flush=True)
-                            raise queue.Empty  # skip to next iteration
-                        try:
-                            resp = await set_motion_mode(conn, mode_name)
-                            status = resp.get('data', {}).get('header', {}).get('status', {})
-                            success = status.get('code', 1) == 0
-                            message = status.get('message') or status.get('msg') or f"Requested {mode_name}"
-                            if result_id is not None:
-                                with motion_mode_lock:
-                                    motion_mode_results[result_id] = {
-                                        'success': success,
-                                        'message': message,
-                                        'raw_status': status,
-                                        'response': resp
-                                    }
-                        except Exception as e:
-                            if result_id is not None:
-                                with motion_mode_lock:
-                                    motion_mode_results[result_id] = {'success': False, 'error': str(e)}
-                    except queue.Empty:
-                        pass
-
-                    try:
-                        cmd_id, cmd_api_id, result_id = command_queue.get_nowait()
-                        _move_state['balance_ready'] = False
-
-                        # --- Safety: mark robot busy and enforce minimum gap ---
-                        with _robot_busy_lock:
-                            _robot_busy = True
-                        try:
-                            # Verify motion mode is 'normal' before sending sport cmd
-                            # BUT skip if robot is standing — set_motion_mode('normal')
-                            # via MOTION_SWITCHER causes safety fault while standing
-                            with _robot_posture_lock:
-                                posture = _robot_posture
-                            if posture != 'standing':
-                                try:
-                                    mode_resp = await set_motion_mode(conn, 'normal')
-                                    mode_status = mode_resp.get('data', {}).get('header', {}).get('status', {})
-                                    mode_code = mode_status.get('code', 1)
-                                    if mode_code != 0:
-                                        msg = mode_status.get('message') or mode_status.get('msg') or ''
-                                        print(f"[Command] Mode check returned code {mode_code}: {msg} — proceeding cautiously", flush=True)
-                                except Exception as mode_err:
-                                    print(f"[Command] Mode verify failed: {mode_err} — proceeding anyway", flush=True)
-                            else:
-                                print(f"[Command] Skipping set_motion_mode — robot is standing", flush=True)
-
-                            # Small pause to let mode settle before sport command
-                            await asyncio.sleep(0.1)
-
-                            resp = await conn.datachannel.pub_sub.publish_request_new(
-                                RTC_TOPIC['SPORT_MOD'], {'api_id': cmd_api_id}
-                            )
-                            status = resp.get('data', {}).get('header', {}).get('status', {})
-                            code = status.get('code', 1)
-                            success = (code == 0) or (code in LENIENT_STATUS_CODES.get(cmd_id, set()))
-                            if code in LENIENT_STATUS_CODES.get(cmd_id, set()) and code != 0:
-                                print(f"[Command] {cmd_id} returned tolerated code {code}", flush=True)
-                            message = status.get('message') or status.get('msg') or ''
-
-                            # If sport command failed with an unexpected code, attempt recovery
-                            if not success and code not in LENIENT_STATUS_CODES.get(cmd_id, set()):
-                                print(f"[Command] {cmd_id} FAILED code={code} msg='{message}' — attempting RecoveryStand", flush=True)
-                                try:
-                                    await conn.datachannel.pub_sub.publish_request_new(
-                                        RTC_TOPIC['SPORT_MOD'], {'api_id': SPORT_CMD.get('RecoveryStand', SPORT_CMD.get('StandUp'))}
-                                    )
-                                    print(f"[Command] RecoveryStand sent after {cmd_id} failure", flush=True)
-                                except Exception as recovery_err:
-                                    print(f"[Command] RecoveryStand also failed: {recovery_err}", flush=True)
-
-                            with result_lock:
-                                command_results[result_id] = {
-                                    'success': success,
-                                    'message': message,
-                                    'raw_status': status,
-                                    'response': resp
-                                }
-                        except Exception as e:
-                            with result_lock:
-                                command_results[result_id] = {'success': False, 'error': str(e)}
-                        finally:
-                            with _robot_busy_lock:
-                                _robot_busy = False
-                                _robot_last_cmd_ts = time.time()
-                    except queue.Empty:
-                        pass
-
-                    try:
-                        vx, vy, vyaw, result_id = move_queue.get_nowait()
-                        try:
-                            if not _move_state['balance_ready']:
-                                await conn.datachannel.pub_sub.publish_request_new(
-                                    RTC_TOPIC['SPORT_MOD'], {'api_id': SPORT_CMD['BalanceStand']}
-                                )
-                                _move_state['balance_ready'] = True
-                            resp = await conn.datachannel.pub_sub.publish_request_new(
-                                RTC_TOPIC['SPORT_MOD'],
-                                {'api_id': SPORT_CMD['Move'], 'parameter': {'x': vx, 'y': vy, 'z': vyaw}}
-                            )
-                            status = resp.get('data', {}).get('header', {}).get('status', {})
-                            code = status.get('code', 1)
-                            with move_lock:
-                                move_results[result_id] = {'success': True, 'code': code}
-                        except Exception as e:
-                            with move_lock:
-                                move_results[result_id] = {'success': False, 'error': str(e)}
-                    except queue.Empty:
-                        pass
-
-                    try:
-                        heartbeat_name, heartbeat_api_id = standing_heartbeat_queue.get_nowait()
-                        with _robot_posture_lock:
-                            posture = _robot_posture
-                        if posture != 'standing':
-                            print(f"[StandHeartbeat] Dropping {heartbeat_name} — posture is {posture}", flush=True)
-                        elif _robot_busy:
-                            print(f"[StandHeartbeat] Dropping {heartbeat_name} — robot busy", flush=True)
-                        else:
-                            with _robot_busy_lock:
-                                _robot_busy = True
-                            try:
-                                resp = await conn.datachannel.pub_sub.publish_request_new(
-                                    RTC_TOPIC['SPORT_MOD'], {'api_id': heartbeat_api_id}
-                                )
-                                status = resp.get('data', {}).get('header', {}).get('status', {})
-                                code = status.get('code', 1)
-                                msg = status.get('message') or status.get('msg') or ''
-                                if code == 0:
-                                    print(f"[StandHeartbeat] {heartbeat_name} refresh accepted", flush=True)
-                                else:
-                                    print(f"[StandHeartbeat] {heartbeat_name} refresh returned code={code} msg='{msg}'", flush=True)
-                            except Exception as heartbeat_error:
-                                print(f"[StandHeartbeat] {heartbeat_name} refresh failed: {heartbeat_error}", flush=True)
-                            finally:
-                                with _robot_busy_lock:
-                                    _robot_busy = False
-                    except queue.Empty:
-                        pass
-                except Exception as loop_error:
-                    print(f"[Loop] Error processing commands: {loop_error}", flush=True)
-                await asyncio.sleep(0.03)
-        except Exception as connection_error:
-            battery_state['connected'] = False
-            stop_standing_sport_heartbeat('WebRTC session lost')
-            print(f"[Connect] Connection lost: {connection_error}", flush=True)
-            await asyncio.sleep(5)
-        finally:
+            conn.video.add_track_callback(on_track)
+            video_connected = True
+            up_since = time.monotonic()
+            log("[Video] WebRTC video link up (%s)" % ("AES key" if AES_KEY else "no key"))
+            while True:
+                await asyncio.sleep(2)
+                if conn.isConnected is False:
+                    raise RuntimeError("WebRTC link dropped")
+                with frame_lock:
+                    last = last_frame_mono
+                if time.monotonic() - max(last, up_since) > VIDEO_RECONNECT_S:
+                    raise RuntimeError("no video frames for %.0fs" % VIDEO_RECONNECT_S)
+                attempt = 0
+        except Exception as e:                            # noqa: BLE001
+            video_connected = False
+            with frame_lock:
+                latest_jpeg = None                        # never serve a frozen picture
+            wait = min(5 * max(attempt, 1), 30)
+            log("[Video] %s — retry in %ss" % (e, wait))
             try:
-                conn.video.switchVideoChannel(False)
-            except Exception:
+                if conn is not None:
+                    await conn.disconnect()
+            except Exception:                             # noqa: BLE001
                 pass
+            await asyncio.sleep(wait)
 
-def start_robot_thread():
+
+def start_video():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    loop.run_until_complete(robot_loop())
+    loop.run_until_complete(video_loop())
 
-threading.Thread(target=start_robot_thread, daemon=True).start()
 
-@app.route('/battery')
-def battery():
-    return jsonify(battery_state)
+# ── HTTP ─────────────────────────────────────────────────────────────────────
 
-@app.route('/video_feed')
-def video_feed():
-    def generate():
-        client_frame_id = -1
-        while True:
-            with frame_lock:
-                jpeg = latest_jpeg
-                server_frame_id = frame_counter
-            if jpeg is not None and server_frame_id != client_frame_id:
-                client_frame_id = server_frame_id
-                yield (b'--frame\r\n'
-                       b'Content-Type: image/jpeg\r\n\r\n' + jpeg + b'\r\n')
-            else:
-                time.sleep(0.01)
-    return Response(generate(), mimetype='multipart/x-mixed-replace; boundary=frame')
-
-@app.route('/status')
+@app.route("/status")
 def status():
-    with frame_lock:
-        frame_available = latest_frame is not None
-    
+    d = link()
+    with act.lock:
+        stop_ok = not act.stop_pending()
     return jsonify({
-        'connected': battery_state['connected'],
-        'battery_soc': battery_state['soc'],
-        'has_video': frame_available
+        "connected": link_ok(),
+        "battery_soc": d.battery["soc"] if d else None,
+        "has_video": video_connected and video_fresh(),
+        "transport": "dds",
+        "video_transport": "webrtc",
+        "posture": telemetry_posture(),
+        "body_height": round(d.body_height, 3) if d and d.body_height is not None else None,
+        "stop_confirmed": stop_ok,
     })
 
-@app.route('/command', methods=['POST'])
+
+@app.route("/battery")
+def battery():
+    d = link()
+    b = dict(d.battery) if d else {"soc": None, "voltage": None, "current": None}
+    b["connected"] = link_ok()
+    return jsonify(b)
+
+
+@app.route("/video_feed")
+def video_feed():
+    def generate():
+        seen = -1
+        while True:
+            with frame_lock:
+                jpeg, n = latest_jpeg, frame_counter
+            if jpeg is not None and n != seen:
+                seen = n
+                yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + jpeg + b"\r\n"
+            else:
+                time.sleep(0.01)
+    return Response(generate(), mimetype="multipart/x-mixed-replace; boundary=frame")
+
+
+@app.route("/command", methods=["POST"])
 def handle_command():
-    data = request.get_json()
-    cmd_name = data.get('command')
+    name = (request.get_json(silent=True) or {}).get("command")
+    http, body = act.command(name)
+    return jsonify(body), http
 
-    if not cmd_name or cmd_name not in COMMAND_MAP:
-        return jsonify({'success': False, 'message': 'Invalid command'}), 400
 
-    # --- Safety: reject if robot is already executing a command ---
-    with _robot_busy_lock:
-        if _robot_busy:
-            print(f"[Command] REJECTED '{cmd_name}' — robot busy with another command", flush=True)
-            return jsonify({'success': False, 'message': 'Robot busy — wait for current command to finish'}), 429
-        # Also enforce minimum gap between commands
-        gap = time.time() - _robot_last_cmd_ts
-        if gap < _ROBOT_CMD_MIN_GAP:
-            remaining = _ROBOT_CMD_MIN_GAP - gap
-            print(f"[Command] REJECTED '{cmd_name}' — too soon after last command ({gap:.1f}s < {_ROBOT_CMD_MIN_GAP}s)", flush=True)
-            return jsonify({'success': False, 'message': f'Command cooldown — wait {remaining:.1f}s'}), 429
-
-    # Track posture so we can guard against disruptive mode changes
-    global _robot_posture
-    with _robot_posture_lock:
-        if cmd_name == 'stand':
-            _robot_posture = 'standing'
-            print(f"[Posture] → standing", flush=True)
-        else:
-            # Any non-stand command (crouch, sit, shake) means the robot
-            # is transitioning out of standing posture — safe to allow pings again
-            _robot_posture = 'idle'
-            print(f"[Posture] → idle ({cmd_name})", flush=True)
-
-    result_id = f'{cmd_name}_{time.time()}'
-    command_queue.put((cmd_name, COMMAND_MAP[cmd_name], result_id))
-    if cmd_name == 'stand':
-        start_standing_sport_heartbeat('stand command issued')
-    else:
-        stop_standing_sport_heartbeat(f'{cmd_name} command issued')
-
-    if cmd_name in KEEPALIVE_STOP_COMMANDS:
-        stop_motion_keepalive(f'{cmd_name} command issued — suppressing keepalive pings')
-    elif cmd_name in KEEPALIVE_COMMANDS:
-        start_motion_keepalive_if_needed(cmd_name)
-
-    # Wait for result with timeout
-    start_time = time.time()
-    while time.time() - start_time < COMMAND_RESULT_TIMEOUT:
-        with result_lock:
-            if result_id in command_results:
-                result = command_results.pop(result_id)
-                if cmd_name == 'stand':
-                    if result.get('success'):
-                        start_standing_sport_heartbeat('stand command accepted')
-                    else:
-                        with _robot_posture_lock:
-                            _robot_posture = 'idle'
-                        stop_standing_sport_heartbeat('stand command failed')
-                else:
-                    stop_standing_sport_heartbeat(f'{cmd_name} command issued')
-                return jsonify(result)
-        time.sleep(0.05)
-
-    if cmd_name == 'stand':
-        with _robot_posture_lock:
-            _robot_posture = 'idle'
-        stop_standing_sport_heartbeat('stand command timed out')
-    return jsonify({'success': False, 'message': 'Timeout'}), 504
-
-@app.route('/move', methods=['POST'])
+@app.route("/move", methods=["POST"])
 def handle_move():
-    # Safety: reject move commands while robot is in standing posture hold
-    # — move path sends BalanceStand which conflicts with StandUp
-    with _robot_posture_lock:
-        posture = _robot_posture
-    if posture == 'standing':
-        return jsonify({'success': False, 'message': 'Cannot move — robot is in standing posture. Send crouch first.'}), 409
+    d = request.get_json(silent=True) or {}
+    session, seq = d.get("session"), d.get("seq")
+    if not isinstance(session, str) or not (8 <= len(session) <= 64):
+        return jsonify({"success": False, "error": "BAD_SESSION", "message": "a drive session id is required"}), 400
+    if not isinstance(seq, int) or isinstance(seq, bool) or seq < 1:
+        return jsonify({"success": False, "error": "BAD_SEQ", "message": "seq must be a positive integer"}), 400
+    vals = {}
+    for k in ("vx", "vy", "vyaw"):
+        try:
+            v = float(d.get(k, 0))
+        except (TypeError, ValueError):
+            return jsonify({"success": False, "message": "%s must be a number" % k}), 400
+        if not math.isfinite(v):
+            return jsonify({"success": False, "message": "%s must be finite" % k}), 400
+        lo, hi = LIMITS[k]
+        floor = MIN_VX_FWD if k == "vx" else MIN_VYAW if k == "vyaw" else 0
+        vals[k] = snap(v, lo, hi, floor)
+    permit = d.get("permit") if isinstance(d.get("permit"), str) and len(d.get("permit")) <= 64 else None
+    http, body = act.move(vals["vx"], vals["vy"], vals["vyaw"], session, seq, permit)
+    return jsonify(body), http
 
-    data = request.get_json()
-    vx = float(data.get('vx', 0))
-    vy = float(data.get('vy', 0))
-    vyaw = float(data.get('vyaw', 0))
 
-    result_id = f'move_{time.time()}'
-    move_queue.put((vx, vy, vyaw, result_id))
+_ANON_WAITERS = threading.BoundedSemaphore(4)
 
-    start_time = time.time()
-    while time.time() - start_time < 3.0:
-        with move_lock:
-            if result_id in move_results:
-                return jsonify(move_results.pop(result_id))
-        time.sleep(0.05)
 
-    return jsonify({'success': False, 'message': 'Timeout'}), 504
-
-@app.route('/stop', methods=['POST'])
+@app.route("/stop", methods=["POST"])
 def handle_stop():
-    # Safety: if robot is standing (posture hold), don't send move commands
-    # — the move path sends BalanceStand which conflicts with StandUp posture
-    global _robot_posture
-    with _robot_posture_lock:
-        posture = _robot_posture
-    if posture == 'standing':
-        stop_standing_sport_heartbeat('stop command issued')
-        with _robot_posture_lock:
-            _robot_posture = 'idle'
-            print("[Posture] → idle (stop)", flush=True)
-        print("[Stop] Ignored — robot is in standing posture hold", flush=True)
-        return jsonify({'success': True, 'message': 'No-op — robot is standing'})
+    # Never refused. Retires the named drive session (or the active one) and
+    # waits briefly for a verified rest; unconfirmed stops keep being retried.
+    body = request.get_json(silent=True) or {}
+    if request.environ.get("watchdog.anonymous_stop"):
+        body = {"all": True}
+    session = body.get("session") if isinstance(body.get("session"), str) else None
+    # 'all' (E-stop): retire the caller's own press AND whatever drive is active
+    # here. Without it a named stop is a D-pad release: only that press retires.
+    everything = bool(body.get("all")) or session is None
+    if request.environ.get("watchdog.anonymous_stop"):
+        n = act.anonymous_stop()             # coalesced: never a new DDS stop per call
+        # Waiting is a courtesy; the stop itself is already in force. Only a few
+        # anonymous callers may hold a server thread for it at once.
+        if not _ANON_WAITERS.acquire(blocking=False):
+            return jsonify({"success": False, "confirmed": False, "message": "Stop requested — still verifying"}), 202
+        try:
+            ok = bool(act.wait_stop(n, timeout=3.0))
+        finally:
+            _ANON_WAITERS.release()
+        return jsonify({"success": ok, "confirmed": ok,
+                        "message": "Stop verified at rest" if ok else "Stop sent — still verifying"})
+    # retire: released presses the controller has not yet had confirmed. Retired
+    # here even if no Move of theirs ever arrived, so a Move of theirs that lands
+    # late is refused (SESSION_RETIRED) instead of starting motion.
+    retire = body.get("retire") if isinstance(body.get("retire"), list) else []
+    retire = [s for s in retire[:32] if isinstance(s, str) and 8 <= len(s) <= 64]
+    retire_only = bool(retire) and session is None and body.get("all") is False
+    # Retirement and the stop it needs are ONE atomic step: no other press can be
+    # admitted between them (and then be caught by this stop).
+    with act.lock:
+        active_hit = act.session is not None and act.session in retire and act.moving
+        for s in retire:
+            act._retire(s)
+        if retire_only:
+            # never stops a different, live press: stop only if the active drive
+            # was one of the listed (now retired) sessions
+            n = act._request_stop(None, retire_active=False) if active_hit else None
+        else:
+            n = act._request_stop(session, retire_active=everything)
+    if n is None:
+        return jsonify({"success": True, "confirmed": True, "retired": len(retire),
+                        "message": "Released drives retired"})
+    ok = bool(act.wait_stop(n, timeout=3.0))
+    return jsonify({"success": ok, "confirmed": ok, "retired": len(retire),
+                    "message": "Stop verified at rest" if ok else "Stop sent — still verifying, retrying until confirmed"})
 
-    result_id = f'stop_{time.time()}'
-    move_queue.put((0, 0, 0, result_id))
 
-    start_time = time.time()
-    while time.time() - start_time < 3.0:
-        with move_lock:
-            if result_id in move_results:
-                return jsonify(move_results.pop(result_id))
-        time.sleep(0.05)
+@app.route("/motion_mode", methods=["POST"])
+def motion_mode():
+    mode = (request.get_json(silent=True) or {}).get("mode", "normal")
+    if not isinstance(mode, str) or not mode:
+        return jsonify({"success": False, "message": "Mode must be a non-empty string"}), 400
+    http, body = act.motion_mode(mode)
+    return jsonify(body), http
 
-    return jsonify({'success': True, 'message': 'Stop sent'})
 
-@app.route('/motion_mode', methods=['POST'])
-def set_motion_mode_route():
-    data = request.get_json() or {}
-    mode = data.get('mode', 'normal')
+def preflight():
+    """Validate exactly what the service will use (same token rules, the real
+    TLS pair). Exit 0 = safe to restart onto; used by deploy/orin/build.sh."""
+    import ssl
+    problems = []
+    if _TOKEN_REJECTED:
+        problems.append("GO2_SERVICE_TOKEN malformed (need >= 32 ASCII chars, no whitespace)")
+    elif not CONTROL_TOKEN:
+        problems.append("GO2_SERVICE_TOKEN not set")
+    if not AES_KEY:
+        problems.append("GO2_AES_KEY not set (no video)")
+    cert, key = os.environ.get("GO2_TLS_CERT"), os.environ.get("GO2_TLS_KEY")
+    if not (cert and key):
+        problems.append("GO2_TLS_CERT / GO2_TLS_KEY not set")
+    else:
+        try:
+            ssl.create_default_context(ssl.Purpose.CLIENT_AUTH).load_cert_chain(cert, key)
+        except Exception as e:                       # noqa: BLE001
+            problems.append("TLS certificate/key unusable or mismatched: %s" % e)
+        else:
+            try:
+                info = ssl._ssl._test_decode_cert(cert)
+                if ssl.cert_time_to_seconds(info["notAfter"]) < time.time() + 86400:
+                    problems.append("TLS certificate expires within a day (%s)" % info["notAfter"])
+            except Exception as e:                   # noqa: BLE001
+                problems.append("TLS certificate unreadable: %s" % e)
+    for p in problems:
+        print("[preflight] FAIL: " + p)
+    if not problems:
+        print("[preflight] ok")
+    raise SystemExit(1 if problems else 0)
 
-    if not isinstance(mode, str):
-        return jsonify({'success': False, 'message': 'Mode must be a string'}), 400
 
-    result_id = f'motion_{mode}_{time.time()}'
-    motion_mode_queue.put((mode, result_id))
-
-    start_time = time.time()
-    while time.time() - start_time < 3.0:
-        with motion_mode_lock:
-            if result_id in motion_mode_results:
-                return jsonify(motion_mode_results.pop(result_id))
-        time.sleep(0.05)
-
-    return jsonify({'success': False, 'message': 'Timeout'}), 504
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5001, threaded=True)
+if __name__ == "__main__":
+    if "--preflight" in sys.argv:
+        preflight()
+    # HTTP/1.1 so the controller's pooled connections stay open (Werkzeug's
+    # default HTTP/1.0 closes every connection, adding a handshake per Move).
+    from werkzeug.serving import WSGIRequestHandler
+    WSGIRequestHandler.protocol_version = "HTTP/1.1"
+    if _TOKEN_REJECTED:
+        log("[Auth] GO2_SERVICE_TOKEN malformed (need >= 32 ASCII, no spaces) — commands refuse")
+    elif not CONTROL_TOKEN:
+        log("[Auth] GO2_SERVICE_TOKEN not set — all command endpoints refuse (fail closed)")
+    cert, key = os.environ.get("GO2_TLS_CERT"), os.environ.get("GO2_TLS_KEY")
+    if bool(cert) != bool(key):
+        raise SystemExit("GO2_TLS_CERT and GO2_TLS_KEY must be set together")
+    tls = (cert, key) if cert else None
+    log("[HTTP] serving %s on :5001" % ("HTTPS (CA-issued certificate)" if tls else "plain HTTP"))
+    threading.Thread(target=dds_supervisor, name="dds-supervisor", daemon=True).start()
+    threading.Thread(target=act.supervise, name="deadman", daemon=True).start()
+    threading.Thread(target=encoder, name="jpeg-encoder", daemon=True).start()
+    threading.Thread(target=start_video, name="video", daemon=True).start()
+    app.run(host="0.0.0.0", port=5001, threaded=True, ssl_context=tls)

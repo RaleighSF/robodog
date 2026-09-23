@@ -83,8 +83,9 @@ class VisionConfig:
             }
         }
     
-    def _load_config_file(self):
-        """Load configuration from file if it exists"""
+    def _load_config_file(self, target=None):
+        """Load configuration from file if it exists (into target, default self.config)"""
+        target = self.config if target is None else target
         if os.path.exists(self.config_path):
             try:
                 with open(self.config_path, 'r') as f:
@@ -94,22 +95,42 @@ class VisionConfig:
                         file_config = json.load(f)
                 
                 # Merge with default config
-                self._deep_merge(self.config, file_config)
+                self._deep_merge(target, file_config)
                 print(f"✅ Loaded configuration from {self.config_path}")
             except Exception as e:
                 print(f"⚠️ Error loading config file: {e}, using defaults")
         else:
             print(f"📄 No config file found at {self.config_path}, using defaults")
     
-    def _load_overlay(self):
+    def reload(self):
+        """Re-read the writable config file and re-apply the device overlay.
+        Always use this instead of _load_config_file() alone, which would let
+        the base file override the overlay (e.g. the Thor's device_type).
+        The new config is built privately and swapped in key by key under the
+        save lock, so concurrent readers never see defaults or a half file."""
+        live = self.config
+        with self._save_lock:
+            staged = self._load_default_config()          # built privately: never visible
+            self._load_config_file(staged)
+            base = copy.deepcopy(staged)
+            self._load_overlay(staged)
+            for key in [k for k in live if k not in staged]:
+                del live[key]
+            for key, value in staged.items():
+                live[key] = value                   # each top-level swap is atomic
+            self._base = base
+            self._loaded = copy.deepcopy(live)
+
+    def _load_overlay(self, target=None):
         """Apply the per-device overlay last so it always wins."""
+        target = self.config if target is None else target
         if not self.overlay_path:
             return
         try:
             with open(self.overlay_path, 'r') as f:
                 overlay = yaml.safe_load(f) or {}
             if isinstance(overlay, dict):
-                self._deep_merge(self.config, overlay)
+                self._deep_merge(target, overlay)
                 print(f"✅ Applied config overlay {self.overlay_path}")
         except Exception as e:
             print(f"⚠️ Could not apply config overlay {self.overlay_path}: {e}")

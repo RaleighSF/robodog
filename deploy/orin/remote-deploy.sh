@@ -1,0 +1,91 @@
+#!/bin/bash
+# Runs ON THE ORIN, from the private staging dir, invoked by build.sh.
+# stdin: the sudo password (one line). Env: RDIR = this staging dir.
+set -e
+read -r pw
+trap 'rm -rf "$RDIR"' EXIT
+exec 9>/tmp/watchdog-go2-deploy.lock
+flock -n 9 || { echo "another Watch Dog deploy is running on this Orin - try again after it finishes" >&2; exit 1; }
+# Under the lock: sweep staging left by interrupted deploys - never our own,
+# and only dirs untouched for an hour (a deploy still uploading is minutes old).
+find "$HOME" -maxdepth 1 -name "watchdog-go2.*" -type d ! -path "$RDIR" -mmin +60 -exec rm -rf {} + 2>/dev/null || true
+cd "$RDIR"
+ID="$(docker build -q .)"
+[ -n "$ID" ] || { echo "build produced no image" >&2; exit 1; }
+echo "built $ID"
+if ! printf "%s\n" "$pw" | sudo -S -p "" systemd-run --quiet --wait --pipe --collect \
+      -p EnvironmentFile=/etc/go2_service.env \
+      /usr/bin/docker run --rm -e GO2_AES_KEY -e GO2_SERVICE_TOKEN \
+        -e GO2_TLS_CERT=/tls/cert.pem -e GO2_TLS_KEY=/tls/key.pem \
+        -v /etc/watchdog-go2/tls:/tls:ro "$ID" --preflight; then
+  echo "preflight failed - running service left untouched (see deploy/orin/README.md)" >&2; exit 1
+fi
+
+# Rollback point: the image the RUNNING container uses (falling back to the
+# :latest tag if the service is down) and the installed unit file.
+# Fail closed: an upgrade proceeds only with BOTH captured. A first install
+# (no unit and no image yet) is the only case allowed without a rollback point.
+set +e
+UNIT=/etc/systemd/system/go2_service.service
+# Absence is established only by a SUCCESSFUL listing that returns nothing -
+# never by interpreting an error message. Any failing command aborts.
+CID="$(docker ps -a -q --no-trunc --filter 'name=^/?watchdog-go2$')" \
+  || { echo "docker ps failed - aborting (state unknown)" >&2; exit 1; }
+if [ -n "$CID" ]; then
+  PREV="$(docker container inspect -f '{{.Image}}' "$CID")" && [ -n "$PREV" ] \
+    || { echo "cannot read the running container's image - aborting" >&2; exit 1; }
+else
+  PREV="$(docker images -q --no-trunc watchdog-go2:latest)" \
+    || { echo "docker images failed - aborting (state unknown)" >&2; exit 1; }
+fi
+# Unit presence: the privileged command must RUN and print exactly one marker.
+UMARK="$(printf "%s\n" "$pw" | sudo -S -p "" sh -c "if [ -e $UNIT ]; then echo UNIT_PRESENT; else echo UNIT_ABSENT; fi")" \
+  || { echo "cannot check $UNIT with sudo - aborting" >&2; exit 1; }
+case "$UMARK" in
+  UNIT_PRESENT) UNIT_PRESENT=1 ;;
+  UNIT_ABSENT)  UNIT_PRESENT=0 ;;
+  *) echo "unexpected unit check result '$UMARK' - aborting" >&2; exit 1 ;;
+esac
+if [ -z "$PREV" ] && [ "$UNIT_PRESENT" -eq 0 ]; then
+  echo "first install (confirmed: no image, no unit) - no rollback point"
+else
+  [ -n "$PREV" ] || { echo "unit exists but no image found - refusing to upgrade without a rollback point" >&2; exit 1; }
+  [ "$UNIT_PRESENT" -eq 1 ] || { echo "image exists but no unit - refusing to upgrade without a rollback point" >&2; exit 1; }
+  docker tag "$PREV" watchdog-go2:previous || { echo "cannot tag rollback image - aborting" >&2; exit 1; }
+  printf "%s\n" "$pw" | sudo -S -p "" cat "$UNIT" > "$RDIR/prev.service" && [ -s "$RDIR/prev.service" ] \
+    || { echo "cannot back up $UNIT - refusing to upgrade without a rollback point" >&2; exit 1; }
+  echo "rollback point: $PREV + saved unit"
+fi
+set -e
+
+sudo_do() { printf "%s\n" "$pw" | sudo -S -p "" bash -c "$1"; }
+install_and_restart() {   # $1 = unit file to install
+  sudo_do "install -m 644 '$1' /etc/systemd/system/go2_service.service && systemctl daemon-reload && systemctl restart go2_service"
+}
+healthy() {
+  # Verified like a client would: demo CA (staged beside the build), the
+  # certificate's 127.0.0.1 SAN, a live DDS link AND video, within 90 s.
+  local end=$((SECONDS + 90)) st
+  while [ "$SECONDS" -lt "$end" ]; do
+    st="$(curl -sf -m2 --cacert "$RDIR/ca.pem" https://127.0.0.1:5001/status 2>/dev/null || true)"
+    if grep -q '"connected":true' <<<"$st" && grep -q '"has_video":true' <<<"$st"; then return 0; fi
+    sleep 2
+  done
+  return 1
+}
+rollback() {
+  echo "deploy failed: $1 - rolling back" >&2
+  if [ -n "$PREV" ] && [ -f "$RDIR/prev.service" ]; then
+    docker tag "$PREV" watchdog-go2:latest && install_and_restart "$RDIR/prev.service" && healthy \
+      && echo "rolled back to $PREV with the previous unit (healthy)" >&2 \
+      || echo "rolled back to $PREV - STILL NOT HEALTHY, check the robot" >&2
+  else
+    echo "no previous image/unit to roll back to" >&2
+  fi
+  exit 1
+}
+set +e    # every failure from here on goes through rollback()
+docker tag "$ID" watchdog-go2:latest || rollback "tagging the new image"
+install_and_restart "$RDIR/go2_service.service" || rollback "installing/restarting the unit"
+healthy || rollback "new service not healthy (link + video) within 90 s"
+echo "new service healthy ($ID)"
