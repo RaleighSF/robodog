@@ -3513,51 +3513,81 @@
 
         // D-Pad movement controls with safety gating
         (function initDpad() {
+            // Azimuth's teleop model: each press is its own drive session (random id,
+            // increasing seq). Release stops AND retires the session on the robot, so
+            // a delayed Move from it can never restart motion. The Orin's 0.4 s lease
+            // stops the dog if renewals stop arriving; renew well inside it.
+            const MOVE_RATE_MS = 150;
+            const KEEP_TRYING = new Set(['STOP_PENDING', 'SETTLING']);   // transient: keep renewing
             let _moveInterval = null;
             let _moveInFlight = false;
-            // Renew well inside the Orin's 0.4 s motion lease (Azimuth's cadence).
-            const MOVE_RATE_MS = 150;
+            let _session = null;
+            let _seq = 0;
+
+            function newSession() {
+                const b = new Uint8Array(12);
+                crypto.getRandomValues(b);
+                return Array.from(b, x => x.toString(16).padStart(2, '0')).join('');
+            }
+
+            function clearLocal() {
+                if (_moveInterval) { clearInterval(_moveInterval); _moveInterval = null; }
+                _moveInFlight = false;
+                document.querySelectorAll('.dpad-btn.active').forEach(b => b.classList.remove('active'));
+            }
 
             function startMove(btn) {
-                stopMove();
+                const previous = _session;
+                clearLocal();
+                if (previous) sendStop(previous);            // retire the old press; the new one is separate
                 btn.classList.add('active');
                 const vx = parseFloat(btn.dataset.vx);
                 const vy = parseFloat(btn.dataset.vy);
                 const vyaw = parseFloat(btn.dataset.vyaw);
-                sendMoveCmd(vx, vy, vyaw);
-                _moveInterval = setInterval(() => sendMoveCmd(vx, vy, vyaw), MOVE_RATE_MS);
+                _session = newSession();
+                _seq = 0;
+                const mine = _session;
+                sendMoveCmd(vx, vy, vyaw, mine);
+                _moveInterval = setInterval(() => sendMoveCmd(vx, vy, vyaw, mine), MOVE_RATE_MS);
+            }
+
+            function sendStop(session) {
+                fetch('/go2/stop', { method: 'POST', headers: {'Content-Type': 'application/json'},
+                                     body: JSON.stringify({ session }) }).catch(() => {});
             }
 
             function stopMove() {
-                if (_moveInterval) {
-                    clearInterval(_moveInterval);
-                    _moveInterval = null;
-                }
-                _moveInFlight = false;
-                document.querySelectorAll('.dpad-btn.active').forEach(b => b.classList.remove('active'));
-                fetch('/go2/stop', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}' }).catch(() => {});
+                // Only a press that is actually being held sends a stop; page-level
+                // mouseup/blur with nothing driving must not stop (or retire) anything.
+                // The E-stop button is separate and always stops the robot.
+                const s = _session;
+                if (!s) return;
+                _session = null;
+                clearLocal();
+                sendStop(s);
             }
 
-            async function sendMoveCmd(vx, vy, vyaw) {
-                if (_moveInFlight) return;
+            async function sendMoveCmd(vx, vy, vyaw, session) {
+                if (_moveInFlight || session !== _session) return;
                 _moveInFlight = true;
                 try {
                     const resp = await fetch('/go2/move', {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ vx, vy, vyaw }),
-                        signal: AbortSignal.timeout(4500)
+                        body: JSON.stringify({ vx, vy, vyaw, session, seq: ++_seq }),
+                        signal: AbortSignal.timeout(2500)
                     });
-                    if (!resp.ok) {
-                        let msg = 'Move rejected';
-                        try { const j = await resp.json(); if (j && j.message) msg = j.message; } catch (_) {}
-                        if (typeof showStatus === 'function') showStatus(msg, 'warning');
-                        stopMove();
+                    if (!resp.ok && session === _session) {
+                        let j = {};
+                        try { j = await resp.json(); } catch (_) {}
+                        if (!KEEP_TRYING.has(j.error)) {
+                            if (typeof showStatus === 'function') showStatus(j.message || 'Move rejected', 'warning');
+                            stopMove();
+                        }
                     }
                 } catch (e) {
-                    // A slow or lost tick must not end the drive session: skip it and
-                    // let the repeat interval retry (the Orin's lease stops the dog
-                    // if renewals really stop arriving).
+                    // A slow or lost tick must not end the press: the next tick renews,
+                    // and the Orin's lease stops the dog if renewals really stop.
                 } finally {
                     _moveInFlight = false;
                 }

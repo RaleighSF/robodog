@@ -260,9 +260,9 @@ def link_ok():
 
 
 def telemetry_posture():
-    """lying | low (sitting or in transition) | standing | unknown — fresh telemetry only."""
+    """lying | low (sitting or mid-transition) | standing | unknown — fresh, finite telemetry only."""
     d = link()
-    if d is None or not d.alive() or d.body_height is None:
+    if d is None or not d.alive() or d.body_height is None or not math.isfinite(d.body_height):
         return "unknown"
     h = d.body_height
     if h < LYING_MAX_M:
@@ -270,28 +270,6 @@ def telemetry_posture():
     if h < STANDING_MIN_M:
         return "low"
     return "standing"
-
-
-# ── Actuation: one lock, drive generations, Orin-side deadman ───────────────
-
-def settle_still(t_stop):
-    """True once distinct fresh samples after t_stop show the body still for
-    STILL_HOLD_S (>= STILL_MIN_SAMPLES), within STILL_DEADLINE_S."""
-    held_since = None; samples = 0; last_seen = None
-    while time.monotonic() - t_stop < STILL_DEADLINE_S:
-        d = link()
-        at = d.last_state if d else 0
-        if d and at and at > t_stop and at != last_seen and time.monotonic() - at < 0.5:
-            last_seen = at
-            m = d.motion
-            if m is not None and m[0] < STILL_V and m[1] < STILL_W:
-                held_since = held_since or time.monotonic(); samples += 1
-                if time.monotonic() - held_since >= STILL_HOLD_S and samples >= STILL_MIN_SAMPLES:
-                    return True
-            else:
-                held_since = None; samples = 0
-        time.sleep(0.02)
-    return False
 
 
 def snap(v, lo, hi, floor):
@@ -303,114 +281,192 @@ def snap(v, lo, hi, floor):
     return v
 
 
+# ── Actuation (Azimuth's teleop model) ───────────────────────────────────────
+#
+# * Drive sessions: every D-pad press is a new session id with its own
+#   increasing seq, generated in the browser. A stop (operator or deadman)
+#   RETIRES the session, so a delayed Move from it can never restart motion,
+#   whatever order the network delivers things in.
+# * One stop machine, owned by the supervisor thread and never blocking: it
+#   publishes StopMove, polls the reply, and verifies rest incrementally from
+#   fresh sport samples (evidence resets on stale telemetry or a DDS rebuild).
+#   Stops are numbered; a stop is confirmed only for its own number.
+# * Movement is refused while any stop is outstanding (STOP_PENDING — the
+#   browser keeps renewing, so a held button resumes once the stop verifies).
+# * Posture / mode transitions share one admission rule (busy, cooldown,
+#   settle) and always start from a FRESH verified stop.
+
 class Actuator:
     def __init__(self):
         self.lock = threading.Lock()
-        self.gen = 0                 # bumped by every stop; a Move publishes only in its own gen
-        self.moving = False          # a Move was published and no stop has been confirmed since
-        self.lease_until = 0.0       # monotonic: the deadman stops the dog after this
-        self.stop_confirmed = True   # False while a stop is outstanding: all motion refused
-        self.last_stop_attempt = 0.0
-        self.posture_busy = False
+        self.wake = threading.Event()
+        # stop machine
+        self.stop_req = 0            # highest requested stop number
+        self.stop_ok = 0             # highest stop number verified at rest
+        self.attempt = None          # dict for the in-flight StopMove attempt
+        # drive
+        self.moving = False
+        self.lease_until = 0.0
+        self.session = None          # active drive session id
+        self.seq = 0
+        self.retired = set()
+        self.retired_order = []
+        # transitions
+        self.transition_busy = False
         self.settle_until = 0.0
-        self.last_cmd_ts = 0.0
-        self.last_move_seq = 0       # client seqs: a Move older than the newest stop/move never drives
-        self.stop_seq = 0
+        self.last_transition = 0.0
 
-    # -- stop -------------------------------------------------------------
-    def stop(self, reason, seq=None):
+    # -- helpers (caller holds lock) --------------------------------------
+    def _retire(self, session):
+        if session and session not in self.retired:
+            self.retired.add(session)
+            self.retired_order.append(session)
+            if len(self.retired_order) > 512:
+                self.retired.discard(self.retired_order.pop(0))
+        if self.session == session:
+            self.session = None
+
+    def _request_stop(self, retire_session=None):
+        self.stop_req += 1
+        self.lease_until = 0.0
+        self._retire(retire_session or self.session)
+        self.wake.set()
+        return self.stop_req
+
+    def stop_pending(self):
+        return self.stop_ok < self.stop_req
+
+    # -- stop machine (supervisor thread only) ------------------------------
+    def _tick(self):
+        now = time.monotonic()
         d = link()
-        if seq is not None:
-            with self.lock:
-                self.stop_seq = max(self.stop_seq, int(seq))
-        if d is None:
-            with self.lock:
-                self.stop_confirmed = False
-            return None
         with self.lock:
-            self.gen += 1
-            self.lease_until = 0.0
-            self.stop_confirmed = False
-            self.last_stop_attempt = time.monotonic()
+            if self.moving and not self.stop_pending() and self.lease_until and now > self.lease_until:
+                log("[Deadman] no move within %.1fs — stopping" % MOVE_LEASE_S)
+                self._request_stop()
+            if not self.stop_pending():
+                self.attempt = None
+                return
+            target = self.stop_req
+            att = self.attempt
+        if d is None:
+            return                                   # link down: keep the stop pending
+        if att is None or att["link"] is not d or now - att["t"] > STILL_DEADLINE_S:
+            if att is not None:
+                log("[Stop] attempt for #%d not verified in %.1fs — retrying" % (att["target"], STILL_DEADLINE_S))
             try:
                 rid, slot = d.send(API["StopMove"])
-            except Exception as e:                       # noqa: BLE001
-                log("[Stop] publish failed (%s): %s" % (reason, e))
-                return None
-            my_gen = self.gen
-        t_stop = time.monotonic()
-        code, _ = d.wait(rid, slot, STOP_REPLY_TIMEOUT_S)
-        still = code == 0 and settle_still(t_stop)       # an ACK alone is not a stop
-        if still:
+            except Exception as e:                   # noqa: BLE001
+                log("[Stop] publish failed: %s" % e)
+                return
+            att = {"target": target, "t": now, "rid": rid, "slot": slot, "link": d,
+                   "code": None, "held_since": None, "samples": 0, "last_seen": None}
             with self.lock:
-                if self.gen == my_gen:                    # no newer stop/move since
-                    self.stop_confirmed = True
+                self.attempt = att
+            return
+        if att["code"] is None and att["slot"][0].is_set():
+            att["code"] = att["slot"][1]
+            with d.lock:
+                d.pending.pop(att["rid"], None)
+        # Incremental rest verification on distinct fresh samples after the stop.
+        at, motion = d.last_state, d.motion
+        fresh = at and at > att["t"] and now - at < 0.5
+        if not fresh:
+            att["held_since"] = None; att["samples"] = 0      # evidence gap: start over
+        elif at != att["last_seen"]:
+            att["last_seen"] = at
+            if motion is not None and motion[0] < STILL_V and motion[1] < STILL_W:
+                att["held_since"] = att["held_since"] or now; att["samples"] += 1
+            else:
+                att["held_since"] = None; att["samples"] = 0
+        if (att["code"] == 0 and att["held_since"] and now - att["held_since"] >= STILL_HOLD_S
+                and att["samples"] >= STILL_MIN_SAMPLES):
+            with self.lock:
+                self.stop_ok = max(self.stop_ok, att["target"])
+                if not self.stop_pending():
                     self.moving = False
-        log("[Stop] %s -> code %s, %s" % (reason, code, "verified at rest" if still else "NOT verified — will retry"))
-        return 0 if still else (code if code else -1)
+                self.attempt = None
+            log("[Stop] #%d verified at rest" % att["target"])
 
     def supervise(self):
-        """Deadman + stop retry, 20 Hz."""
         while True:
-            time.sleep(0.05)
-            now = time.monotonic()
+            self.wake.wait(0.05)
+            self.wake.clear()
+            try:
+                self._tick()
+            except Exception as e:                   # noqa: BLE001
+                log("[Supervisor] %s" % e)
+
+    def stop_and_wait(self, retire_session=None, timeout=3.0):
+        """Request a stop; True only if THAT stop (or a later one) verified at rest."""
+        with self.lock:
+            n = self._request_stop(retire_session)
+        t = time.monotonic()
+        while time.monotonic() - t < timeout:
             with self.lock:
-                lapse = self.moving and self.stop_confirmed and self.lease_until and now > self.lease_until
-                retry = (not self.stop_confirmed) and now - self.last_stop_attempt > STOP_RETRY_S
-            if lapse:
-                self.stop("deadman: no move within %.1fs" % MOVE_LEASE_S)
-            elif retry:
-                self.stop("retrying unconfirmed stop")
+                if self.stop_ok >= n:
+                    return True
+            time.sleep(0.02)
+        return False
 
     # -- move -------------------------------------------------------------
-    def move(self, vx, vy, vyaw, seq=None):
+    def move(self, vx, vy, vyaw, session, seq):
         d = link()
         if d is None or not d.alive():
-            return 503, {"success": False, "message": "Robot not connected (no DDS telemetry)"}
+            return 503, {"success": False, "error": "NOT_CONNECTED", "message": "Robot not connected (no DDS telemetry)"}
         with self.lock:
-            if seq is not None:
-                seq = int(seq)
-                if seq <= self.stop_seq or seq <= self.last_move_seq:
-                    return 409, {"success": False, "message": "Superseded — a newer stop or move exists."}
-                self.last_move_seq = seq
-            if not self.stop_confirmed:
-                return 409, {"success": False, "message": "Stopping — movement is blocked until the robot confirms the stop."}
-            if self.posture_busy or time.monotonic() < self.settle_until:
-                return 409, {"success": False, "message": "Posture change in progress — wait a moment."}
+            if session in self.retired:
+                return 409, {"success": False, "error": "SESSION_RETIRED", "message": "That drive was stopped — press again."}
+            if session == self.session and seq <= self.seq:
+                return 409, {"success": False, "error": "SUPERSEDED", "message": "Older than the current setpoint."}
+            if self.stop_pending():
+                return 409, {"success": False, "error": "STOP_PENDING", "message": "Stopping — waiting for the robot to settle."}
+            if self.transition_busy or time.monotonic() < self.settle_until:
+                return 409, {"success": False, "error": "SETTLING", "message": "Posture change in progress — wait a moment."}
             p = telemetry_posture()
             if p != "standing":
-                return 409, {"success": False, "message": "Stand up before moving (robot reads %s)." % p}
+                return 409, {"success": False, "error": "NOT_STANDING", "message": "Stand up before moving (robot reads %s)." % p}
+            if self.session is not None and self.session != session:
+                self._retire(self.session)           # a new press supersedes an old one
+            self.session, self.seq = session, seq
             self.moving = True
             self.lease_until = time.monotonic() + MOVE_LEASE_S
             try:
                 rid, slot = d.send(API["Move"], {"x": vx, "y": vy, "z": vyaw})
-            except Exception as e:                       # noqa: BLE001
-                return 503, {"success": False, "message": "Move publish failed: %s" % e}
+            except Exception as e:                   # noqa: BLE001
+                return 503, {"success": False, "error": "PUBLISH_FAILED", "message": str(e)}
         code, _ = d.wait(rid, slot, MOVE_REPLY_TIMEOUT_S)
         return 200, {"success": code == 0, "code": code}
 
-    # -- posture / gestures ------------------------------------------------
-    def _ensure_stopped(self):
+    # -- transitions ---------------------------------------------------------
+    def _admit_transition(self):
         with self.lock:
-            clean = self.stop_confirmed and not self.moving
-        if clean:
-            return True
-        return self.stop("before posture command") == 0
+            if self.transition_busy:
+                return (429, {"success": False, "message": "Robot busy — wait for current command to finish"})
+            gap = time.time() - self.last_transition
+            if gap < CMD_MIN_GAP_S:
+                return (429, {"success": False, "message": "Command cooldown — wait %.1fs" % (CMD_MIN_GAP_S - gap)})
+            if time.monotonic() < self.settle_until:
+                return (429, {"success": False, "message": "Settling after the last command — wait a moment"})
+            self.transition_busy = True
+        return None
+
+    def _end_transition(self):
+        with self.lock:
+            self.transition_busy = False
+            self.last_transition = time.time()
+            self.settle_until = time.monotonic() + POSTURE_SETTLE_S
 
     def command(self, name):
         d = link()
         if d is None or not d.alive():
             return 503, {"success": False, "message": "Robot not connected (no DDS telemetry)"}
-        with self.lock:
-            if self.posture_busy:
-                return 429, {"success": False, "message": "Robot busy — wait for current command to finish"}
-            gap = time.time() - self.last_cmd_ts
-            if gap < CMD_MIN_GAP_S:
-                return 429, {"success": False, "message": "Command cooldown — wait %.1fs" % (CMD_MIN_GAP_S - gap)}
-            self.posture_busy = True
+        refused = self._admit_transition()
+        if refused:
+            return refused
         try:
-            if not self._ensure_stopped():
-                return 409, {"success": False, "message": "Could not confirm the robot stopped — command not sent."}
+            if not self.stop_and_wait():             # always from a FRESH verified rest
+                return 409, {"success": False, "message": "Could not verify the robot at rest — command not sent."}
             p = telemetry_posture()
             if name == "stand":
                 api = API["RiseSit"] if p == "low" else API["RecoveryStand"]
@@ -433,37 +489,32 @@ class Actuator:
             log("[Command] %s (api %s, robot read %s) -> code %s" % (name, api, p, code))
             return 200, {"success": ok, "message": msg, "raw_status": {"code": code}}
         finally:
-            with self.lock:
-                self.posture_busy = False
-                self.last_cmd_ts = time.time()
-                self.settle_until = time.monotonic() + POSTURE_SETTLE_S
+            self._end_transition()
 
     def motion_mode(self, mode):
         d = link()
         if d is None or not d.alive():
             return 503, {"success": False, "message": "Robot not connected"}
-        with self.lock:
-            if self.posture_busy:
-                return 429, {"success": False, "message": "Robot busy"}
-            self.posture_busy = True
+        refused = self._admit_transition()
+        if refused:
+            return refused
         try:
             code, data = d.request(MOTION_SWITCHER["CheckMode"], svc="motion_switcher")
-            current = None
+            if code != 0:
+                return 502, {"success": False, "message": "Could not read the current mode (code %s) — not changing it." % code}
             try:
                 current = (json.loads(data) if data else {}).get("name")
             except (ValueError, AttributeError):
-                pass
-            if code == 0 and current == mode:
+                return 502, {"success": False, "message": "Unreadable mode reply — not changing it."}
+            if current == mode:
                 return 200, {"success": True, "message": "already in '%s'" % mode, "code": 0}
-            if not self._ensure_stopped():
-                return 409, {"success": False, "message": "Could not confirm the robot stopped — mode not changed."}
+            if not self.stop_and_wait():
+                return 409, {"success": False, "message": "Could not verify the robot at rest — mode not changed."}
             code, data = d.request(MOTION_SWITCHER["SelectMode"], {"name": mode}, svc="motion_switcher")
             log("[MotionMode] %s -> %s (code %s)" % (current, mode, code))
             return 200, {"success": code == 0, "code": code, "message": data or ""}
         finally:
-            with self.lock:
-                self.posture_busy = False
-                self.settle_until = time.monotonic() + POSTURE_SETTLE_S
+            self._end_transition()
 
 
 act = Actuator()
@@ -567,7 +618,7 @@ def start_video():
 def status():
     d = link()
     with act.lock:
-        stop_ok = act.stop_confirmed
+        stop_ok = not act.stop_pending()
     return jsonify({
         "connected": link_ok(),
         "battery_soc": d.battery["soc"] if d else None,
@@ -613,6 +664,11 @@ def handle_command():
 @app.route("/move", methods=["POST"])
 def handle_move():
     d = request.get_json(silent=True) or {}
+    session, seq = d.get("session"), d.get("seq")
+    if not isinstance(session, str) or not (8 <= len(session) <= 64):
+        return jsonify({"success": False, "error": "BAD_SESSION", "message": "a drive session id is required"}), 400
+    if not isinstance(seq, int) or isinstance(seq, bool) or seq < 1:
+        return jsonify({"success": False, "error": "BAD_SEQ", "message": "seq must be a positive integer"}), 400
     vals = {}
     for k in ("vx", "vy", "vyaw"):
         try:
@@ -624,23 +680,18 @@ def handle_move():
         lo, hi = LIMITS[k]
         floor = MIN_VX_FWD if k == "vx" else MIN_VYAW if k == "vyaw" else 0
         vals[k] = snap(v, lo, hi, floor)
-    seq = d.get("seq")
-    if seq is not None and (not isinstance(seq, int) or isinstance(seq, bool)):
-        return jsonify({"success": False, "message": "seq must be an integer"}), 400
-    http, body = act.move(vals["vx"], vals["vy"], vals["vyaw"], seq)
-    body.setdefault("applied", vals)
+    http, body = act.move(vals["vx"], vals["vy"], vals["vyaw"], session, seq)
     return jsonify(body), http
 
 
 @app.route("/stop", methods=["POST"])
 def handle_stop():
-    # Never refused: no posture/busy gate. Unconfirmed stops keep being retried.
-    seq = (request.get_json(silent=True) or {}).get("seq")
-    code = act.stop("operator stop", seq if isinstance(seq, int) and not isinstance(seq, bool) else None)
-    if code is None and link() is None:
-        return jsonify({"success": False, "message": "DDS link not up — stop will be retried"}), 503
-    return jsonify({"success": code == 0, "code": code,
-                    "message": "Stop confirmed" if code == 0 else "Stop sent — retrying until confirmed"})
+    # Never refused. Retires the named drive session (or the active one) and
+    # waits briefly for a verified rest; unconfirmed stops keep being retried.
+    session = (request.get_json(silent=True) or {}).get("session")
+    ok = act.stop_and_wait(session if isinstance(session, str) else None, timeout=3.0)
+    return jsonify({"success": ok, "confirmed": ok,
+                    "message": "Stop verified at rest" if ok else "Stop sent — still verifying, retrying until confirmed"})
 
 
 @app.route("/motion_mode", methods=["POST"])

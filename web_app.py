@@ -2,7 +2,6 @@
 import cv2
 import time
 import os
-import itertools
 import math
 import atexit
 import signal
@@ -827,11 +826,11 @@ _go2_watchdog_running = False
 # go2_service.py): while a drive may be active and no input has arrived for
 # _GO2_MOVE_TIMEOUT, keep sending /stop until the robot confirms it.
 _GO2_MOVE_TIMEOUT = 0.8
-_go2_drive = {"possibly_moving": False, "last_input": 0.0}
+# gen counts drive inputs; a confirmed stop clears possibly_moving only if no
+# newer input arrived while it was in flight. Ordering between Moves and Stops is
+# enforced on the Orin by the browser's drive session + seq (Azimuth's model).
+_go2_drive = {"possibly_moving": False, "last_input": 0.0, "gen": 0, "session": None}
 _go2_drive_lock = threading.Lock()
-# Receipt-order sequence stamped on every move and stop, so the Orin can refuse
-# a Move that arrives after a newer Stop (Azimuth's superseded-setpoint rule).
-_go2_seq = itertools.count(int(time.time() * 1000))
 _GO2_COMMAND_COOLDOWN = 1.5
 _GO2_MAX_VX = 0.25
 _GO2_MAX_VY = 0.2
@@ -839,17 +838,23 @@ _GO2_MAX_VYAW = 0.5
 # Robot address is resolved at call time by robot_host (see robot_host.py).
 
 
-def _go2_send_stop(timeout=3):
-    """Send a stop; returns True only when the robot confirmed it (verified at rest)."""
+def _go2_send_stop(session=None, timeout=4):
+    """Send a stop (retiring the drive session); returns (ok, body). Clears the
+    drive-uncertainty flag only if the confirmed stop covers the newest input."""
+    with _go2_drive_lock:
+        gen = _go2_drive["gen"]
+        session = session or _go2_drive["session"]
     try:
-        r = requests.post(f'{robot_host.service_url()}/stop', json={'seq': next(_go2_seq)}, timeout=timeout)
-        ok = r.status_code == 200 and bool(r.json().get('success'))
-    except Exception:
-        ok = False
+        r = requests.post(f'{robot_host.service_url()}/stop', json={'session': session}, timeout=timeout)
+        body = r.json()
+        ok = r.status_code == 200 and bool(body.get('success'))
+    except Exception as e:
+        return False, {'success': False, 'message': str(e)}
     if ok:
         with _go2_drive_lock:
-            _go2_drive["possibly_moving"] = False
-    return ok
+            if _go2_drive["gen"] == gen:
+                _go2_drive["possibly_moving"] = False
+    return ok, body
 
 
 def _go2_watchdog_loop():
@@ -858,7 +863,7 @@ def _go2_watchdog_loop():
     while _go2_watchdog_running:
         with _go2_drive_lock:
             due = _go2_drive["possibly_moving"] and time.time() - _go2_drive["last_input"] > _GO2_MOVE_TIMEOUT
-        if due and not _go2_send_stop(timeout=2):
+        if due and not _go2_send_stop()[0]:
             logger.warning("[GO2 Watchdog] auto-stop not confirmed yet — retrying")
         time.sleep(0.2)
 
@@ -932,13 +937,17 @@ def go2_move():
     vx = max(-_GO2_MAX_VX, min(_GO2_MAX_VX, raw[0]))
     vy = max(-_GO2_MAX_VY, min(_GO2_MAX_VY, raw[1]))
     vyaw = max(-_GO2_MAX_VYAW, min(_GO2_MAX_VYAW, raw[2]))
-    seq = next(_go2_seq)                     # stamped at receipt, before forwarding
+    session, seq = data.get('session'), data.get('seq')   # generated in the browser, per press
+    if not isinstance(session, str) or not isinstance(seq, int) or isinstance(seq, bool):
+        return jsonify({'success': False, 'message': 'session and seq are required'}), 400
     with _go2_drive_lock:
-        _go2_drive["possibly_moving"] = True  # until a stop is confirmed, whatever happens below
+        _go2_drive["possibly_moving"] = True  # until a covering stop is confirmed
         _go2_drive["last_input"] = time.time()
+        _go2_drive["gen"] += 1
+        _go2_drive["session"] = session
     try:
         response = requests.post(f'{robot_host.service_url()}/move',
-            json={'vx': vx, 'vy': vy, 'vyaw': vyaw, 'seq': seq}, timeout=3)
+            json={'vx': vx, 'vy': vy, 'vyaw': vyaw, 'session': session, 'seq': seq}, timeout=3)
         return jsonify(response.json()), response.status_code
     except Exception as e:
         robot_host.report_failure()   # a venue change looks like a connection error
@@ -947,17 +956,10 @@ def go2_move():
 @app.route('/go2/stop', methods=['POST'])
 def go2_stop():
     _ensure_go2_watchdog()
-    try:
-        response = requests.post(f'{robot_host.service_url()}/stop',
-            json={'seq': next(_go2_seq)}, timeout=4)
-        body = response.json()
-        if response.status_code == 200 and body.get('success'):
-            with _go2_drive_lock:
-                _go2_drive["possibly_moving"] = False
-        # otherwise the deadman keeps retrying until the robot confirms
-        return jsonify(body), response.status_code
-    except Exception as e:
-        return jsonify({'success': False, 'message': str(e)}), 503
+    session = (request.get_json(silent=True) or {}).get('session')
+    ok, body = _go2_send_stop(session if isinstance(session, str) else None)
+    # if not confirmed, the deadman (here and on the Orin) keeps retrying
+    return jsonify(body), (200 if ok else 202)
 
 @app.route('/go2/motion_mode', methods=['POST'])
 def go2_motion_mode():
