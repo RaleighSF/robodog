@@ -22,6 +22,16 @@ RUN pip freeze | grep -iE '^(torch|torchvision|numpy|opencv[a-z-]*)==' > /tmp/ba
  && python3 -c "import torch, torchvision, cv2, ultralytics, flask, clip; \
 print('torch', torch.__version__, 'cv2', cv2.__version__, 'ultralytics', ultralytics.__version__)"
 
+# The vLLM base image's torch is compiled against cuDNN 9.18 but the image
+# ships the 9.17.1 system library first on the path, so every convolution
+# fails ("unable to find an engine"). vLLM never runs convs, YOLO always does:
+# install the matching cuDNN wheel and put it ahead of the system copy.
+RUN pip install "nvidia-cudnn-cu13==9.18.*" \
+ && python3 -c "import nvidia.cudnn, os; print(os.path.join(list(nvidia.cudnn.__path__)[0], 'lib'))" > /etc/cudnn-lib-path
+ENV LD_LIBRARY_PATH=/usr/local/lib/python3.12/dist-packages/nvidia/cudnn/lib:${LD_LIBRARY_PATH}
+RUN test "$(cat /etc/cudnn-lib-path)" = /usr/local/lib/python3.12/dist-packages/nvidia/cudnn/lib \
+ && python3 -c "import torch; v = torch.backends.cudnn.version(); print('cudnn', v); assert v >= 91800"
+
 COPY entrypoint.sh /usr/local/bin/watchdog-entrypoint
 RUN chmod +x /usr/local/bin/watchdog-entrypoint
 

@@ -17,9 +17,9 @@ services:
       WATCHDOG_CONFIG_OVERLAY: /app/deploy/thor/config.thor.yaml
       NVIDIA_VISIBLE_DEVICES: all
     volumes:
-      - ../..:/app                              # git checkout (code + *.pt weights)
+      - ../..:/app                              # git checkout (code + *.pt weights;
+                                                #  ultralytics caches CLIP in weights/clip)
       - watchdog-state:/state                   # writable config
-      - ${HOME}/.cache/clip:/root/.cache/clip   # YOLO-World CLIP text encoder
     networks:
       - default
       - elastic                                 # reach Cosmos at http://vllm:8000

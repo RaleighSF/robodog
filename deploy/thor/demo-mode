@@ -24,7 +24,7 @@ say() { printf '\033[1m[demo-mode]\033[0m %s\n' "$*"; }
 
 wait_http() {  # url, label, timeout-seconds
     local url=$1 label=$2 limit=${3:-180} t=0
-    until curl -fsS -o /dev/null --max-time 3 "$url"; do
+    until curl -fs -o /dev/null --max-time 3 "$url" 2>/dev/null; do
         (( t += 3 )); if (( t >= limit )); then say "$label did not come up within ${limit}s"; return 1; fi
         sleep 3
     done
@@ -48,7 +48,9 @@ remember() { mkdir -p "$(dirname "$STATE_FILE")"; echo "$1" > "$STATE_FILE"; }
 
 to_watchdog() {
     say "stopping Elastic-Vision app stack: ${EV_SERVICES[*]}"
-    ev stop "${EV_SERVICES[@]}"
+    # Generous grace period: Elasticsearch needs longer than Docker's 10 s
+    # default to flush and close its indices; SIGKILL risks corrupting them.
+    ev stop -t 60 "${EV_SERVICES[@]}"
     ensure_vllm
     say "starting Watch Dog"
     wd up -d
@@ -59,7 +61,7 @@ to_watchdog() {
 
 to_elastic() {
     say "stopping Watch Dog"
-    wd stop 2>/dev/null || true
+    wd stop -t 20 2>/dev/null || true
     ensure_vllm
     say "starting Elastic-Vision app stack: ${EV_SERVICES[*]}"
     ev start es minio discovery
