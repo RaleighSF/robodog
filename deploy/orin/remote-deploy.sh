@@ -6,8 +6,9 @@ read -r pw
 trap 'rm -rf "$RDIR"' EXIT
 exec 9>/tmp/watchdog-go2-deploy.lock
 flock -n 9 || { echo "another Watch Dog deploy is running on this Orin - try again after it finishes" >&2; exit 1; }
-# Under the lock: sweep staging left by interrupted deploys (never our own).
-find "$HOME" -maxdepth 1 -name "watchdog-go2.*" -type d ! -path "$RDIR" -exec rm -rf {} + 2>/dev/null || true
+# Under the lock: sweep staging left by interrupted deploys - never our own,
+# and only dirs untouched for an hour (a deploy still uploading is minutes old).
+find "$HOME" -maxdepth 1 -name "watchdog-go2.*" -type d ! -path "$RDIR" -mmin +60 -exec rm -rf {} + 2>/dev/null || true
 cd "$RDIR"
 ID="$(docker build -q .)"
 [ -n "$ID" ] || { echo "build produced no image" >&2; exit 1; }
@@ -22,9 +23,19 @@ fi
 
 # Rollback point: the image the RUNNING container uses (falling back to the
 # :latest tag if the service is down) and the installed unit file.
+# Fail closed: an upgrade proceeds only with BOTH captured. A first install
+# (no unit and no image yet) is the only case allowed without a rollback point.
+UNIT=/etc/systemd/system/go2_service.service
 PREV="$(docker inspect -f '{{.Image}}' watchdog-go2 2>/dev/null || docker image inspect -f '{{.Id}}' watchdog-go2:latest 2>/dev/null || true)"
-[ -n "$PREV" ] && docker tag "$PREV" watchdog-go2:previous
-cp /etc/systemd/system/go2_service.service "$RDIR/prev.service" 2>/dev/null || true
+if [ -z "$PREV" ] && [ ! -e "$UNIT" ]; then
+  echo "first install: no previous image or unit - no rollback point"
+else
+  [ -n "$PREV" ] || { echo "cannot identify the running image - refusing to upgrade without a rollback point" >&2; exit 1; }
+  docker tag "$PREV" watchdog-go2:previous || { echo "cannot tag rollback image - aborting" >&2; exit 1; }
+  printf "%s\n" "$pw" | sudo -S -p "" cat "$UNIT" > "$RDIR/prev.service" && [ -s "$RDIR/prev.service" ] \
+    || { echo "cannot back up $UNIT - refusing to upgrade without a rollback point" >&2; exit 1; }
+  echo "rollback point: $PREV + saved unit"
+fi
 
 sudo_do() { printf "%s\n" "$pw" | sudo -S -p "" bash -c "$1"; }
 install_and_restart() {   # $1 = unit file to install

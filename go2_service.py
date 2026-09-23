@@ -82,6 +82,14 @@ MOVE_LEASE_S = 0.4            # Azimuth's teleop lease: a Move authorizes this l
 # more than PERMIT_TTL_S after the permit it carries was issued, however it was
 # delayed (browser, Thor or network), and a released or stopped press's permits
 # are void.
+# What this does NOT promise: zero late motion or a stopping distance. A Move
+# admitted just inside the TTL authorizes one more MOVE_LEASE_S, so the
+# commanded-motion window after the last fresh permit is <= 0.5 + 0.4 s
+# (~0.29 m planar at the 0.32 m/s combined cap), plus scheduling, StopMove
+# delivery and physical braking. Known, accepted: a permit may authorize one
+# further higher-seq Move while it is the "previous" one, and a stale request
+# without a valid permit replaces the current grant (an extra handshake for the
+# live press, never extra motion). At most two permits are held.
 PERMIT_TTL_S = 0.5
 STOP_RETRY_S = 0.5
 POSTURE_SETTLE_S = 2.0        # after a posture command, telemetry must settle before moving
