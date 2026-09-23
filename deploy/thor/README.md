@@ -83,7 +83,7 @@ ssh thor 'docker exec watchdog python3 auth.py status'
   ```
 
   Lifetimes and upkeep:
-  - Device certificates expire about **2028-12-12** (820 days). The CA expires
+  - Device certificates expire on **2028-12-21** (820 days). The CA expires
     2031-09-22. Re-issue a device certificate before it expires, or when its
     IP changes: sign a new one with the CA, copy it to `/state/tls/` (Thor)
     or `tls/` (AGX), and restart the dashboard.
