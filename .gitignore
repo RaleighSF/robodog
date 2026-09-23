@@ -37,3 +37,7 @@ RTSP_CONTROL_GUIDE.md
 .resolver_backup/
 .movefix_backup/
 .ipfix_backup/
+
+# Operator UI state (active demo profile)
+ui_state.json
+ui_state.json.tmp

@@ -431,8 +431,41 @@ web_app = WebApp()
 
 @app.route('/')
 def index():
-    """Main page"""
-    return render_template('index.html')
+    """Main page. ?profile=<id> previews a skin without persisting it."""
+    import ui_profiles
+    profile = ui_profiles.resolve(request.args.get('profile'))
+    return render_template('index.html',
+                           profile=profile,
+                           profiles=ui_profiles.all_profiles(),
+                           profile_locked=bool(ui_profiles.locked_profile_id()),
+                           theme_css_version=ui_profiles.theme_css_version(),
+                           nvidia=ui_profiles.nvidia_badge())
+
+
+@app.route('/api/ui/profile', methods=['GET'])
+def get_ui_profile():
+    import ui_profiles
+    return jsonify({
+        'active': ui_profiles.get_active_profile_id(),
+        'locked': bool(ui_profiles.locked_profile_id()),
+        'profiles': [{'id': p['id'], 'label': p['label']} for p in ui_profiles.all_profiles().values()],
+    })
+
+
+@app.route('/api/ui/profile', methods=['POST'])
+def set_ui_profile():
+    import ui_profiles
+    if ui_profiles.locked_profile_id():
+        return jsonify({'success': False, 'error': 'profile is locked by config.yaml ui.lock_profile'}), 409
+    body = request.get_json(silent=True)
+    pid = body.get('profile') if isinstance(body, dict) else None
+    if not isinstance(pid, str) or pid not in ui_profiles.PROFILES:
+        return jsonify({'success': False, 'error': 'unknown profile'}), 400
+    try:
+        ui_profiles.set_active_profile_id(pid)
+    except OSError as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+    return jsonify({'success': True, 'active': pid})
 
 @app.route('/video_feed')
 def video_feed():
