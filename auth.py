@@ -51,8 +51,10 @@ _MAX_TRACKED_ADDRS = 1024
 _SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 
 _mem_lock = threading.Lock()
-_failures = {}                           # addr -> deque[timestamps]
-_global_failures = collections.deque()   # timestamps
+# Entries are (timestamp, attempt_id): each attempt owns exactly one entry in
+# each collection, so a success can release its own reservation and nothing else.
+_failures = {}                           # addr -> deque[(ts, id)]
+_global_failures = collections.deque()   # (ts, id)
 _snapshot_cache = {"sig": None, "data": {}}
 
 
@@ -158,11 +160,11 @@ def set_password(password):
 
 def _prune(now):
     cutoff = now - _WINDOW_SECONDS
-    while _global_failures and _global_failures[0] < cutoff:
+    while _global_failures and _global_failures[0][0] < cutoff:
         _global_failures.popleft()
     for addr in list(_failures):
         q = _failures[addr]
-        while q and q[0] < cutoff:
+        while q and q[0][0] < cutoff:
             q.popleft()
         if not q:
             del _failures[addr]
@@ -175,13 +177,29 @@ def _throttled(addr, now):
     return len(_failures.get(addr, ())) >= _PER_ADDR_FAILURES
 
 
-def _record_failure(addr, now):
-    _global_failures.append(now)
+def _record_failure(addr, entry):
+    _global_failures.append(entry)
     if addr not in _failures and len(_failures) >= _MAX_TRACKED_ADDRS:
         # Bounded memory: drop the address whose latest failure is oldest.
-        oldest = min(_failures, key=lambda a: _failures[a][-1])
+        oldest = min(_failures, key=lambda a: _failures[a][-1][0])
         del _failures[oldest]
-    _failures.setdefault(addr, collections.deque()).append(now)
+    _failures.setdefault(addr, collections.deque()).append(entry)
+
+
+def _release(addr, entry):
+    """Undo exactly one attempt's reservation (never anyone else's)."""
+    try:
+        _global_failures.remove(entry)
+    except ValueError:
+        pass
+    q = _failures.get(addr)
+    if q is not None:
+        try:
+            q.remove(entry)
+        except ValueError:
+            pass
+        if not q:
+            del _failures[addr]
 
 
 _hash_slots = threading.BoundedSemaphore(4)   # cap concurrent hash checks
@@ -192,13 +210,15 @@ def verify(addr, password):
     the hash was checked against.
 
     Each attempt reserves a failure slot atomically BEFORE the (slow) hash
-    check and gives it back only on success, so concurrent guesses cannot all
-    slip past the limit while earlier ones are still being hashed."""
+    check and gives back only its own slot on success, so concurrent guesses
+    cannot slip past the limit and one device's success never erases another
+    device's pending or past failures behind the same address."""
     now = time.time()
+    entry = (now, secrets.token_hex(8))
     with _mem_lock:
         if _throttled(addr, now):
             return False, "Too many attempts. Wait a minute and try again.", None
-        _record_failure(addr, now)                  # the reservation
+        _record_failure(addr, entry)                # the reservation
     ok = False
     try:
         data = snapshot()
@@ -217,11 +237,7 @@ def verify(addr, password):
     finally:
         if ok:
             with _mem_lock:
-                _failures.pop(addr, None)           # success clears this address
-                try:
-                    _global_failures.remove(now)    # and returns its global slot
-                except ValueError:
-                    pass
+                _release(addr, entry)
 
 
 # ── request helpers ───────────────────────────────────────────────────────
