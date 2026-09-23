@@ -1,136 +1,115 @@
-# Project Watch Dog  
-Intelligent visual patrol system that combines Unitree GO2 telemetry, Jetson-based RTSP feeds, and an AGX-hosted detection dashboard to monitor factory floors in real time.
+# Project Watch Dog
+
+Robot patrol demo: a Unitree Go2 walks a booth while an edge box detects
+people and objects, narrates the scene with Cosmos, answers hand gestures,
+and lets an operator drive the dog from a browser. Built by NTT DATA Physical
+AI ("AI that sees, reasons, acts").
 
 ---
 
-## 📸 What It Delivers
-- **Native GO2 WebRTC feed** proxied from the backpack Orin for ultra-low latency viewing.
-- **RTSP Color / IR / Depth feeds** pulled from the Jetson stack with automatic reconnection.
-- **Hybrid YOLO-E detections** (visual + prompt-driven) drawn over the live stream.
-- **Robot control hooks** (stand, crouch, sit, shake) with motion-mode keepalive logic.
-- **Battery + status telemetry** surfaced in the dashboard header and REST APIs.
+## What it delivers
+- **Live robot video** from the Go2's camera, with detection boxes drawn on it.
+  A clear `VIDEO LOST` overlay appears when the feed goes stale.
+- **Detection**: YOLO-E / YOLO11 hybrid, driven by new frames at the camera's
+  own rate (about 14 FPS).
+- **Scene narration** by Cosmos Reason 2 8B (NVIDIA vLLM), shared with
+  Elastic-Vision on the Thor.
+- **Gesture mode**: an open hand held close to the camera makes the dog shake
+  hands. MediaPipe detects it, with a 3 s cooldown. Detection is on only while
+  the Gesture tab is open.
+- **Driving and commands**: a D-pad, E-stop, and stand / crouch / sit / shake.
+  Every command is safety-gated (see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)).
+- **Vendor demo skins**: Default, Microsoft Azure (Ignite) and AWS (re:Invent),
+  plus a "Powered by NVIDIA" badge.
+  See [static/themes/README.md](static/themes/README.md).
+- **Operator sign-in over HTTPS**, using certificates from a private demo CA.
 
 ---
 
-## 🗺️ System Topology
+## Topology (current)
+
 ```
-GO2 Robot (192.168.50.75)
-        │ WebRTC (STA)
-        ▼
-Orin Backpack (192.168.50.207)
-    - ~/go2_service.py  → HTTP API :5001
-    - RTSP server :8554  (color/ir/depth)
-        │ HTTP/RTSP
-        ▼
-AGX Xavier (192.168.50.208)
-    - ~/dev/watch_dog/start_web_app.py :8000
-    - Runs YOLO detection, proxy endpoints, UI
-        │ HTTPS/Browser
-        ▼
-Operator Laptop
+Go2 robot (firmware 1.1.15, 192.168.123.161 internal)
+   │  DDS (commands + telemetry)  +  WebRTC video-only (AES key)
+   ▼
+Orin backpack  — go2_service.py in Docker (deploy/orin/)
+   HTTPS :5001, demo-CA certificate
+   public: /status /battery /video_feed    control: token + drive permits
+   │  HTTPS (CA-verified), keep-alive
+   ▼
+Jetson AGX Thor — watchdog container (deploy/thor/), https://<thor>:8443
+   detection · Cosmos narration (Elastic-Vision's vLLM) · gesture · auto-arm
+   │  HTTPS + operator login
+   ▼
+Operator laptop (browser)
 ```
+
+| Host | Addresses | Role |
+| --- | --- | --- |
+| Go2 Orin backpack | 192.168.50.207 (Cradlepoint), 10.0.0.57 (home), 192.168.193.111 (ZeroTier) | Robot link (`go2_service`) |
+| Jetson AGX Thor | 192.168.50.209 (Cradlepoint), 10.0.0.109 (home WiFi), 192.168.1.234 (ethernet) | Dashboard, AI, the only controller |
+| AGX Xavier (legacy) | 192.168.50.208 | Retired from driving. It can't reach the HTTPS robot link until it's updated. |
+
+The Thor runs Watch Dog **or** Elastic-Vision's app stack, never both. Switch
+between them with `demo-mode`. Azimuth and Watch Dog never drive the dog at the
+same time: their Orin systemd units declare `Conflicts=`.
 
 ---
 
-## 📁 Repo Layout (highlights)
+## Repo layout (highlights)
 | Path | Purpose |
 | --- | --- |
-| `go2_service.py` | GO2 WebRTC + command service (runs on Orin). |
-| `web_app.py` | Flask dashboard (runs on AGX). |
-| `camera.py` | Camera manager that switches Mac, RTSP, GO2 WebRTC sources. |
-| `templates/index.html` | Dashboard UI (Inter-based, dark theme). |
-| `config.yaml` | Sanitized template for detection + GO2 settings (fill secrets via env). |
-| `rtsp_proxy.py` | Utility to bridge Jetson RTSP → HTTP MJPEG if needed. |
-| `visual_prompts/` | Prompt images used by the detector. |
+| `web_app.py` | Flask dashboard, detection pipeline, robot proxy, gesture, deadman. |
+| `camera.py` | Camera manager (Go2 / RTSP / Mac), with frame seq/timestamps and a capture generation. |
+| `robot_host.py` | Robot-address resolver. It keeps separate HTTPS sessions: public (no token) and control (token). |
+| `go2_service.py` | Robot link on the Orin: DDS via go2dds, stop machine, permits, video. |
+| `hand_detector.py` | MediaPipe hand landmarker (primary) with a YOLO-World fallback. |
+| `scene_narrator.py` | Narrator (OpenAI-compatible backend, i.e. Cosmos on vLLM). |
+| `auth.py` | Operator login, CSRF, throttling, and the supervisor token. |
+| `ui_profiles.py`, `static/themes/` | Vendor demo skins. |
+| `deploy/thor/` | Thor container, `demo-mode`, compose, Thor overlay config. |
+| `deploy/orin/` | Orin image, systemd unit, and the safe `build.sh` deploy. |
+| `deploy/systemd/watchdog-autostart.sh` | Auto-arm supervisor (Thor container and legacy AGX). |
+| `docs/ARCHITECTURE.md` | Robot-link protocol and safety model. |
+| `docs/LEARNINGS.md` | What we learned the hard way. |
+| `DEMO_RUNBOOK.md` | Event-day runbook. **Local only** (gitignored, because it holds credentials). |
+
+The shared DDS library **go2dds** lives outside this repo, in
+`~/Development/go2dds`, a local git repo also meant for Azimuth. The Orin build
+ships the commit pinned in `deploy/orin/GO2DDS_REV`.
 
 ---
 
-## ⚙️ Prerequisites
-- macOS / Linux dev machine with Python 3.11+ for local edits.
-- Access to both hosts:
-  - `unitree@192.168.50.207` (password `123`) – Orin.
-  - `raleigh@192.168.50.208` (password `robodog#1`) – AGX.
-- GO2 robot reachable at `192.168.50.75` (STA mode).
-- Git LFS not required (large weights kept out of repo).
+## Everyday operation
 
----
-
-## 🚀 Quick Start
-
-### 1. Clone & Install (developer box)
 ```bash
-git clone https://github.com/RaleighSF/robodog.git
-cd watch_dog
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+ssh thor 'demo-mode status'      # which stack is up; is Cosmos serving
+ssh thor 'demo-mode watchdog'    # bring up Watch Dog (Elastic-Vision app stack down)
+ssh thor 'demo-mode elastic'     # back to Elastic-Vision
 ```
 
-### 2. Configure
-Edit `config.yaml` or provide env vars:
-```yaml
-vision:
-  source: rtsp://192.168.50.207:8554/color
-  openai_api_key: ""      # leave empty, set OPENAI_API_KEY env instead
-go2:
-  service_url: http://192.168.50.207:5001
-```
-```bash
-export OPENAI_API_KEY="sk-..."    # optional if using NLP prompts
-```
+Open `https://<thor-ip>:8443` and sign in. Trust the demo CA once per laptop
+to get a padlock (see [deploy/thor/README.md](deploy/thor/README.md)). After
+the dog powers on, the auto-arm supervisor starts detection on its own within
+about a minute.
 
-### 3. Deploy services
-#### Orin (192.168.50.207)
-```bash
-scp go2_service.py unitree@192.168.50.207:~
-ssh unitree@192.168.50.207 <<'EOF'
-pkill -f go2_service.py || true
-nohup python3 ~/go2_service.py > ~/go2_service.log 2>&1 &
-EOF
-```
+## Deploying
 
-#### AGX (192.168.50.208)
-```bash
-scp -r . raleigh@192.168.50.208:~/dev/watch_dog
-ssh raleigh@192.168.50.208 <<'EOF'
-cd ~/dev/watch_dog
-source venv/bin/activate
-pkill -f start_web_app.py || true
-nohup python start_web_app.py > web_app_agx.log 2>&1 &
-EOF
-```
-Dashboard becomes available at `http://192.168.50.208:8000`.
+- **Thor**: code is bind-mounted from `~/watch_dog`. Copy the changed files,
+  then `docker compose restart` in `deploy/thor`. Details are in
+  [deploy/thor/README.md](deploy/thor/README.md).
+- **Orin**: `SSHPASS=<orin password> deploy/orin/build.sh unitree@<orin-ip>`.
+  The script builds, runs a preflight, promotes, checks health and rolls back
+  automatically on failure. It needs the dog on, because the health check
+  requires both the robot link and video.
+  Details are in [deploy/orin/README.md](deploy/orin/README.md).
 
----
-
-## 🧭 Operating the Dashboard
-1. Open the site and choose **Native Go2 Camera** or any RTSP channel.
-2. Press **Start Patrol** to spin up the selected feed plus detector.
-3. Use the left panel to review detections, switch cameras, or stop patrol.
-4. Stop button now triggers `/go2/stream/unregister` to pause GO2 encoding and free RTSP bandwidth.
-
----
-
-## 🔧 Maintenance & Troubleshooting
-
-| Symptom | Checks |
-| --- | --- |
-| GO2 feed blank | `ssh unitree@... tail -f ~/go2_service.log` – confirm `[Stream] register route ...` messages. |
-| RTSP feeds take 30s to start | Ensure GO2 view is stopped so encoder gating disables the WebRTC channel. |
-| Dashboard unresponsive | `ssh raleigh@... tail -f ~/dev/watch_dog/web_app_agx.log` and restart service. |
-| Secret detected on push | Keep real keys out of `config.yaml`; store in env or secrets manager. |
-
----
-
-## 🔐 Security Notes
-- All secrets (OpenAI, etc.) must be injected via env vars (`export OPENAI_API_KEY=...`) or gitignored files.
-- Git history has been sanitized—future pushes with embedded keys will be blocked by GitHub push protection.
-
----
-
-## 🛣️ Future Enhancements
-- Automated GO2 encoder gating verification logs surfaced in UI.
-- Motion keepalive + auto crouch when idle.
-- Optional GitHub Actions deployment scripts.
-
-Happy patrolling! 🐕‍🦺
+## Security notes
+- This repository is **public**. No passwords, tokens, AES keys, WiFi keys,
+  `auth.json` or certificates/keys go in git. Device credentials live outside
+  the repo.
+- Secrets on the devices:
+  - Thor: `/state/auth.json`, `/state/robot_token`, `/state/tls/`.
+  - Orin: `/etc/go2_service.env`, `/etc/watchdog-go2/tls/`.
+- The demo CA key stays on Raleigh's Mac (`~/.watchdog-ca/`).
+- The Thor is the only controller. Only it holds the robot control token.

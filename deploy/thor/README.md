@@ -35,6 +35,36 @@ ssh thor 'cd ~/watch_dog/deploy/thor && docker compose restart'
 Rebuild (`docker compose build`) only when `Dockerfile` or
 `requirements-thor.txt` change. Every version is pinned to what was validated.
 
+Plain `rsync` to the Thor has failed intermittently. If it does, copy the
+changed files with `scp`. They land in the bind-mounted checkout, so a
+`docker restart watchdog` picks them up.
+
+## Robot link (the Thor is the only controller)
+
+The dog's Orin serves the robot link over HTTPS (`:5001`), with a certificate
+from the demo CA. It requires a control token for everything except
+status/battery/video. The protocol and safety model are in
+[docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md).
+
+State the Thor needs in the `watchdog-state` volume (never in git):
+
+| File | Env var (compose) | Purpose |
+| --- | --- | --- |
+| `/state/robot_token` | `WATCHDOG_ROBOT_TOKEN_FILE` | control token; must match `GO2_SERVICE_TOKEN` on the Orin |
+| `/state/tls/ca.pem` | `WATCHDOG_ROBOT_CA` | demo CA certificate, the only trust anchor for the robot link |
+
+```bash
+# install or refresh the CA on the Thor
+scp ~/.watchdog-ca/ca.pem thor:/tmp/watchdog-ca.pem
+ssh thor 'docker cp /tmp/watchdog-ca.pem watchdog:/state/tls/ca.pem && docker exec watchdog chmod 644 /state/tls/ca.pem'
+```
+
+- If the CA is missing, robot calls fail closed: no video, no control.
+- The robot address comes from the resolver candidates in `robot_host.py`
+  (Cradlepoint, home, ZeroTier). `ORIN_HOST` pins it.
+- The auto-arm supervisor probes the robot with `--cacert` and needs
+  `has_video: true`.
+
 ## Configuration
 
 - `config.yaml` (repo) is the base.
