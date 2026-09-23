@@ -27,6 +27,17 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+
+
+def _render_login(error, configured):
+    import ui_profiles
+    return render_template('login.html', error=error, configured=configured,
+                           profile=ui_profiles.resolve(),
+                           theme_css_version=ui_profiles.theme_css_version())
+
+
+import auth  # noqa: E402  operator login guard over every route
+auth.init_app(app, _render_login)
 camera_manager = CameraManager()
 detector = HybridDetector()
 detection_logger = DetectionLogger()

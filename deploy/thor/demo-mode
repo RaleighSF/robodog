@@ -40,15 +40,28 @@ CSTATE=""
 cstate() {
     local out
     if out=$(docker inspect -f '{{.State.Running}}' "$1" 2>&1); then
-        if [ "$out" = true ]; then CSTATE=running; else CSTATE=stopped; fi
-    elif grep -qi 'no such' <<<"$out"; then
-        CSTATE=absent
+        case "$out" in
+            true)  CSTATE=running ;;
+            false) CSTATE=stopped ;;
+            *)     die "unexpected docker inspect output for $1: $out" ;;
+        esac
+    elif [ "$out" = "error: no such object: $1" ] || \
+         [ "$out" = "Error: No such object: $1" ]; then
+        CSTATE=absent                  # exactly docker's missing-container reply
     else
-        die "cannot inspect $1: $out"
+        die "cannot inspect $1: $out"  # daemon/socket/API errors are fatal
     fi
 }
 running() { cstate "$1"; [ "$CSTATE" = running ]; }
-healthy() { [ "$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$1" 2>/dev/null)" = healthy ]; }
+
+# Docker health status of a container that must exist; errors are fatal.
+HSTATE=""
+hstate() {
+    local out
+    out=$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$1" 2>&1) \
+        || die "cannot inspect health of $1: $out"
+    HSTATE=$out
+}
 
 wait_http() {  # url, label, timeout-seconds
     local url=$1 label=$2 limit=${3:-180} t=0
@@ -115,18 +128,26 @@ remember() {  # atomic: a crash never leaves a half-written mode
     { echo "$1" > "$tmp" && mv -f "$tmp" "$STATE_FILE"; } || die "cannot record mode '$1'"
 }
 
+ev_ready() {  # one probe of every Elastic-Vision dependency; 0 = all ready
+    local svc
+    for svc in app discovery es minio; do
+        running "compose-$svc-1" || die "compose-$svc-1 is not running"
+    done
+    hstate compose-app-1; [ "$HSTATE" = healthy ] || return 1
+    # discovery inherits the app image's healthcheck (port 8080), so its Docker
+    # health says nothing about discovery itself: probe its own endpoint.
+    curl -fs -o /dev/null --max-time 3 http://localhost:8099/health/live 2>/dev/null || return 1
+    docker exec compose-es-1 curl -fs -o /dev/null --max-time 12 \
+        'http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=10s' 2>/dev/null || return 1
+    return 0
+}
+
 wait_ev_healthy() {  # the homepage alone does not prove the stack is usable
-    local t=0 svc
-    until healthy compose-app-1 && healthy compose-discovery-1 \
-            && running compose-es-1 && running compose-minio-1; do
-        for svc in es minio; do
-            running "compose-$svc-1" || die "compose-$svc-1 is not running"
-        done
-        (( t += 5 )); (( t >= 240 )) && die "Elastic-Vision not healthy after 240s"
+    local t=0
+    until ev_ready; do
+        (( t += 5 )); (( t >= 300 )) && die "Elastic-Vision not healthy after 300s"
         sleep 5
     done
-    docker exec compose-es-1 curl -fs --max-time 5 'http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=60s' >/dev/null \
-        || die "Elasticsearch cluster not healthy"
     say "Elastic-Vision stack healthy (app, discovery, Elasticsearch, MinIO)"
 }
 
@@ -136,7 +157,7 @@ to_watchdog() {
     say "starting Watch Dog"
     wd up -d || die "could not start Watch Dog"
     remember watchdog || die "could not record mode"
-    wait_http http://localhost:8000/ "Watch Dog dashboard" 240
+    wait_http http://localhost:8000/healthz "Watch Dog dashboard" 240
     say "dashboard: http://$(hostname -I | awk '{print $1}'):8000"
 }
 

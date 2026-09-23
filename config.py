@@ -6,6 +6,8 @@ Supports YOLO-E detector with flexible configuration
 import os
 import copy
 import json
+import tempfile
+import threading
 import yaml
 from typing import List, Dict, Any, Optional
 
@@ -139,20 +141,32 @@ class VisionConfig:
             else:
                 base_dict[key] = value
     
+    _save_lock = threading.Lock()
+
     def save_config(self):
         """Save current configuration to file"""
         try:
-            data = copy.deepcopy(self._base)
-            self._apply_diff(data, self._loaded, self.config)
-            tmp = self.config_path + '.tmp'
-            with open(tmp, 'w') as f:   # write-then-rename: never a half file
-                if self.config_path.endswith('.yaml') or self.config_path.endswith('.yml'):
-                    yaml.safe_dump(data, f, default_flow_style=False, indent=2)
-                else:
-                    json.dump(data, f, indent=2)
-            os.replace(tmp, self.config_path)
-            self._base = data
-            self._loaded = copy.deepcopy(self.config)
+            with self._save_lock:
+                # Diff one immutable snapshot and mark exactly that snapshot as
+                # synced: an edit landing mid-save stays pending for the next save.
+                snapshot = copy.deepcopy(self.config)
+                data = copy.deepcopy(self._base)
+                self._apply_diff(data, self._loaded, snapshot)
+                folder = os.path.dirname(os.path.abspath(self.config_path))
+                fd, tmp = tempfile.mkstemp(prefix='.config-', suffix='.tmp', dir=folder)
+                try:
+                    with os.fdopen(fd, 'w') as f:   # write-then-rename: never a half file
+                        if self.config_path.endswith('.yaml') or self.config_path.endswith('.yml'):
+                            yaml.safe_dump(data, f, default_flow_style=False, indent=2)
+                        else:
+                            json.dump(data, f, indent=2)
+                    os.replace(tmp, self.config_path)
+                except BaseException:
+                    if os.path.exists(tmp):
+                        os.unlink(tmp)
+                    raise
+                self._base = data
+                self._loaded = snapshot
             print(f"✅ Configuration saved to {self.config_path}")
         except Exception as e:
             print(f"❌ Error saving config: {e}")

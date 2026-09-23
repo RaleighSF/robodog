@@ -30,7 +30,9 @@ RUN pip install -c /tmp/constraints-thor.txt \
         nvidia-cudnn-cu13==9.18.1.3 nvidia-cublas==13.8.0.4 nvidia-cuda-nvrtc==13.4.92 \
  && python3 -c "import nvidia.cudnn, os; print(os.path.join(list(nvidia.cudnn.__path__)[0], 'lib'))" > /etc/cudnn-lib-path
 ENV LD_LIBRARY_PATH=/usr/local/lib/python3.12/dist-packages/nvidia/cudnn/lib:${LD_LIBRARY_PATH}
-RUN test "$(cat /etc/cudnn-lib-path)" = /usr/local/lib/python3.12/dist-packages/nvidia/cudnn/lib \
+# After the LAST install: torch/torchvision must still be the base image's.
+RUN pip list --format=freeze | grep -iE '^(torch|torchvision)==' | diff /tmp/base-torch.txt - \
+ && test "$(cat /etc/cudnn-lib-path)" = /usr/local/lib/python3.12/dist-packages/nvidia/cudnn/lib \
  && python3 -c "import torch; v = torch.backends.cudnn.version(); print('cudnn', v); assert v >= 91800"
 
 COPY entrypoint.sh /usr/local/bin/watchdog-entrypoint

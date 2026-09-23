@@ -405,6 +405,8 @@ class SceneNarrator:
                    max_tokens: int = 150, temperature: float = 0.3,
                    num_ctx: int = 4096) -> Optional[str]:
         """Send a single image+text query to the VLM. Serialized via _vlm_lock."""
+        if self._cancelled():
+            return None          # a stopped run admits no new queries
         if self.backend == "openai":
             return self._openai_query(system_prompt, user_prompt, image_b64,
                                       max_tokens, temperature)
@@ -509,10 +511,12 @@ class SceneNarrator:
                 "description": description,
                 "model": self.model,
             }
-            if self._cancelled():
-                return
-            with self._lock:
-                self._frame_log.append(entry)
+            # Validate + publish atomically with stop() (it holds this lock).
+            with self._lifecycle_lock:
+                if self._cancelled():
+                    return
+                with self._lock:
+                    self._frame_log.append(entry)
             # Also feed into scene aggregation buffer
             with self._scene_lock:
                 self._scene_observations.append({"timestamp": ts, "text": description})
@@ -567,10 +571,11 @@ class SceneNarrator:
         )
         if summary:
             ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
-            if self._cancelled():
-                return
-            with self._scene_lock:
-                self._scene_summary = summary
+            with self._lifecycle_lock:
+                if self._cancelled():
+                    return
+                with self._scene_lock:
+                    self._scene_summary = summary
                 self._scene_summary_ts = ts
             logger.info(f"[SceneNarrator:scene] Summary updated: {summary[:80]}...")
 
@@ -623,7 +628,9 @@ class SceneNarrator:
         self._consecutive_positives = 0
         logger.info(f"[SceneNarrator:gesture] CONFIRMED gesture #{self._gesture_count} — firing callback")
 
-        if self._gesture_callback and not self._cancelled():
+        with self._lifecycle_lock:   # atomic with stop(); callback is fast
+            fire = self._gesture_callback and not self._cancelled()
+        if fire:
             try:
                 self._gesture_callback("confirmed_squat")
             except Exception as e:

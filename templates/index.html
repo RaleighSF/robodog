@@ -1678,6 +1678,7 @@
             box-shadow: 0 4px 8px rgba(229, 72, 77, 0.35);
         }
 
+        .signout-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
         .rtsp-info { background-color: #e3f2fd; color: #1976d2; }
         .rtsp-ok   { background-color: #c8e6c9; color: #2e7d32; }
         .rtsp-warn { background-color: #fff3e0; color: #e65100; }
@@ -1933,6 +1934,10 @@
                     </div>
                 </div>
                 {% endif %}
+                <form method="post" action="/logout" class="signout-row">
+                    <span class="config-help-text" style="margin:0;">Signed in as operator on this browser.</span>
+                    <button type="submit" class="config-button config-button-secondary">Sign out</button>
+                </form>
 
                 <!-- Global Detection Mode Selector -->
                 <div class="config-section" style="margin-bottom: 20px; padding: 15px; background: rgba(255, 255, 255, 0.05); border-radius: 8px;">
