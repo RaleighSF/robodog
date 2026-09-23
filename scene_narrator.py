@@ -134,9 +134,14 @@ class SceneNarrator:
         self._frame_log: deque = deque(maxlen=MAX_LOG_ENTRIES)
         self._lock = threading.Lock()
         self._thread: Optional[threading.Thread] = None
+        # One Event per run: a loop from a previous start() can never be
+        # revived by a later clear(); stop() always ends the current run.
         self._stop_event = threading.Event()
+        self._lifecycle_lock = threading.Lock()
+        self._waiter: Optional[threading.Thread] = None
         self._frame_source: Optional[Callable] = None
         self.enabled = False
+        self.connecting = False
         self._model_available: Optional[bool] = None
 
         # VLM serialization lock — ensures only one VLM call at a time
@@ -218,6 +223,7 @@ class SceneNarrator:
         return {
             "mode": self.mode,
             "enabled": self.enabled,
+            "connecting": self.connecting,
             "paused": self.paused,
             "gesture_cooldown_seconds": self._gesture_cooldown,
             "gesture_cooldown_remaining": round(cooldown_remaining, 1),
@@ -268,33 +274,49 @@ class SceneNarrator:
     # ── Lifecycle ───────────────────────────────────────────────────
 
     def start(self):
-        if self._thread and self._thread.is_alive():
-            return
-        self._stop_event.clear()
-        if not self._check_backend():
+        with self._lifecycle_lock:
+            # A thread still winding down from a stopped run doesn't count.
+            if not self._stop_event.is_set() and (
+                    (self._thread and self._thread.is_alive()) or
+                    (self._waiter and self._waiter.is_alive())):
+                return
+            run = self._stop_event = threading.Event()
+            if self._check_backend():
+                self._launch(run)
+                return
             # The model server may simply boot after us (vLLM on the Thor takes
             # minutes to load). Keep retrying instead of disabling for good.
             logger.warning(f"[SceneNarrator] {self.backend} backend not reachable — retrying every 15s")
-            threading.Thread(target=self._wait_then_start, daemon=True,
-                             name="scene-narrator-wait").start()
+            self.connecting = True
+            self._waiter = threading.Thread(target=self._wait_then_start, args=(run,),
+                                            daemon=True, name="scene-narrator-wait")
+            self._waiter.start()
+
+    def _wait_then_start(self, run: threading.Event):
+        while not run.wait(timeout=15):
+            if not self._check_backend():
+                continue
+            with self._lifecycle_lock:
+                # stop() (or a newer run) may have happened during the probe.
+                if run.is_set() or run is not self._stop_event:
+                    return
+                self.connecting = False
+                self._launch(run)
             return
-        self._launch()
 
-    def _wait_then_start(self):
-        while not self._stop_event.wait(timeout=15):
-            if self._check_backend():
-                self._launch()
-                return
-
-    def _launch(self):
+    def _launch(self, run: threading.Event):
+        """Caller holds _lifecycle_lock."""
         self.enabled = True
-        self._thread = threading.Thread(target=self._loop, daemon=True, name="scene-narrator")
+        self._thread = threading.Thread(target=self._loop, args=(run,), daemon=True,
+                                        name="scene-narrator")
         self._thread.start()
         logger.info(f"[SceneNarrator] Started in '{self.mode}' mode — {self.backend} model={self.model}")
 
     def stop(self):
-        self._stop_event.set()
-        self.enabled = False
+        with self._lifecycle_lock:
+            self._stop_event.set()
+            self.enabled = False
+            self.connecting = False
 
     # ── Internals ───────────────────────────────────────────────────
 
@@ -330,11 +352,11 @@ class SceneNarrator:
             pass
         return False
 
-    def _loop(self):
-        while not self._stop_event.is_set():
+    def _loop(self, run: threading.Event):
+        while not run.is_set():
             # Check pause
             if self.paused:
-                self._stop_event.wait(timeout=0.5)
+                run.wait(timeout=0.5)
                 continue
 
             mode = self.mode
@@ -354,7 +376,7 @@ class SceneNarrator:
             target = self.casual_interval if mode == "casual" else GESTURE_INTERVAL
             elapsed = time.time() - tick_start
             remaining = max(0.1, target - elapsed)
-            self._stop_event.wait(timeout=remaining)
+            run.wait(timeout=remaining)
 
     def _encode_frame(self, max_dim: int = FRAME_MAX_DIM, quality: int = 85):
         """Grab a frame, resize, JPEG-encode, return base64 string or None."""

@@ -4,88 +4,158 @@
 #   demo-mode watchdog   Stop Elastic-Vision's app stack, start Watch Dog
 #   demo-mode elastic    Stop Watch Dog, start Elastic-Vision's app stack
 #   demo-mode status     Show the active mode and what is running
-#   demo-mode apply      Re-apply the last chosen mode (run at boot)
+#   demo-mode apply      Re-apply the last chosen mode (run at boot, retries)
 #
 # Cosmos Reason 2 (Elastic-Vision's `vllm` service) stays up in BOTH modes:
 # Elastic-Vision scores with it and Watch Dog narrates with it. Swapping only
 # the lighter services frees ~8 GB without reloading the 8B model.
+#
+# Ordering rule: vLLM claims a fixed share (0.8) of unified memory when it
+# starts, so it must start BEFORE Watch Dog grabs GPU memory. Whenever vLLM
+# is down, Watch Dog is stopped first and started only once vLLM serves.
 set -euo pipefail
 
 EV_DIR="${EV_DIR:-$HOME/elastic-vision}"
 EV_COMPOSE="$EV_DIR/deploy/compose/docker-compose.yml"
 EV_SERVICES=(app discovery es minio)
 WD_COMPOSE="${WD_COMPOSE:-$HOME/watch_dog/deploy/thor/docker-compose.yml}"
-STATE_FILE="${XDG_STATE_HOME:-$HOME/.local/state}/demo-mode/mode"
+WD_CONTAINER="watchdog"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/demo-mode"
+STATE_FILE="$STATE_DIR/mode"
+LOCK_FILE="$STATE_DIR/lock"
 VLLM_CONTAINER="compose-vllm-1"
+VLLM_MODEL="nvidia/cosmos-reason2-8b"
+VLLM_TIMEOUT="${VLLM_TIMEOUT:-900}"     # cold 8B load can take many minutes
 
 ev()  { (cd "$EV_DIR" && docker compose -f "$EV_COMPOSE" "$@"); }
 wd()  { docker compose -f "$WD_COMPOSE" "$@"; }
 say() { printf '\033[1m[demo-mode]\033[0m %s\n' "$*"; }
+die() { say "ERROR: $*"; exit 1; }
+
+running() { [ "$(docker inspect -f '{{.State.Running}}' "$1" 2>/dev/null)" = "true" ]; }
+exists()  { docker inspect "$1" >/dev/null 2>&1; }
 
 wait_http() {  # url, label, timeout-seconds
     local url=$1 label=$2 limit=${3:-180} t=0
     until curl -fs -o /dev/null --max-time 3 "$url" 2>/dev/null; do
-        (( t += 3 )); if (( t >= limit )); then say "$label did not come up within ${limit}s"; return 1; fi
+        (( t += 3 )); (( t >= limit )) && die "$label did not come up within ${limit}s"
         sleep 3
     done
     say "$label is up ($url)"
 }
 
+vllm_ready() {  # serving the expected model, not merely running
+    docker exec "$VLLM_CONTAINER" python3 -c "
+import json, sys, urllib.request
+ids = [m['id'] for m in json.load(urllib.request.urlopen('http://localhost:8000/v1/models', timeout=3))['data']]
+sys.exit(0 if '$VLLM_MODEL' in ids else 1)" >/dev/null 2>&1
+}
+
+wait_vllm() {
+    local t=0
+    until vllm_ready; do
+        running "$VLLM_CONTAINER" || die "Cosmos vLLM container exited (docker logs $VLLM_CONTAINER)"
+        (( t += 5 )); (( t >= VLLM_TIMEOUT )) && die "Cosmos vLLM not serving $VLLM_MODEL after ${VLLM_TIMEOUT}s"
+        (( t % 60 == 0 )) && say "waiting for Cosmos to load... ${t}s"
+        sleep 5
+    done
+    say "Cosmos vLLM serving $VLLM_MODEL"
+}
+
 ensure_vllm() {
-    if [ "$(docker inspect -f '{{.State.Running}}' "$VLLM_CONTAINER" 2>/dev/null)" != "true" ]; then
+    if running "$VLLM_CONTAINER" && vllm_ready; then return; fi
+    if ! running "$VLLM_CONTAINER"; then
+        # Free GPU memory first so vLLM can claim its reservation.
+        stop_watchdog
         say "starting Cosmos vLLM (the 8B model takes a few minutes to load)"
-        docker start "$VLLM_CONTAINER" >/dev/null
+        docker start "$VLLM_CONTAINER" >/dev/null || die "could not start $VLLM_CONTAINER"
     fi
+    wait_vllm
 }
 
-vllm_ready() {
-    docker exec "$VLLM_CONTAINER" python3 -c \
-        "import urllib.request; urllib.request.urlopen('http://localhost:8000/v1/models', timeout=3)" \
-        >/dev/null 2>&1
+stop_watchdog() {
+    exists "$WD_CONTAINER" || return 0
+    running "$WD_CONTAINER" || return 0
+    say "stopping Watch Dog"
+    wd stop -t 20 || die "docker compose stop failed for Watch Dog"
+    running "$WD_CONTAINER" && die "Watch Dog is still running after stop"
+    return 0
 }
 
-remember() { mkdir -p "$(dirname "$STATE_FILE")"; echo "$1" > "$STATE_FILE"; }
-
-to_watchdog() {
+stop_elastic() {
     say "stopping Elastic-Vision app stack: ${EV_SERVICES[*]}"
     # Generous grace period: Elasticsearch needs longer than Docker's 10 s
     # default to flush and close its indices; SIGKILL risks corrupting them.
-    ev stop -t 60 "${EV_SERVICES[@]}"
+    ev stop -t 60 "${EV_SERVICES[@]}" || die "could not stop Elastic-Vision services"
+    local svc
+    for svc in "${EV_SERVICES[@]}"; do
+        running "compose-$svc-1" && die "compose-$svc-1 still running after stop"
+    done
+    return 0
+}
+
+remember() {  # atomic: a crash never leaves a half-written mode
+    local tmp; tmp=$(mktemp "$STATE_DIR/mode.XXXXXX")
+    echo "$1" > "$tmp" && mv -f "$tmp" "$STATE_FILE"
+}
+
+to_watchdog() {
+    stop_elastic
     ensure_vllm
     say "starting Watch Dog"
-    wd up -d
+    wd up -d || die "could not start Watch Dog"
     remember watchdog
     wait_http http://localhost:8000/ "Watch Dog dashboard" 240
     say "dashboard: http://$(hostname -I | awk '{print $1}'):8000"
 }
 
 to_elastic() {
-    say "stopping Watch Dog"
-    wd stop -t 20 2>/dev/null || true
+    stop_watchdog
     ensure_vllm
     say "starting Elastic-Vision app stack: ${EV_SERVICES[*]}"
-    ev start es minio discovery
-    ev start app
+    ev start es minio discovery || die "could not start Elastic-Vision dependencies"
+    ev start app || die "could not start Elastic-Vision app"
     remember elastic
     wait_http http://localhost:8080/ "Elastic-Vision" 240
+}
+
+wait_docker() {  # at boot the daemon may not be ready yet
+    local t=0
+    until docker info >/dev/null 2>&1; do
+        (( t += 5 )); (( t >= 300 )) && die "docker daemon not available after 300s"
+        sleep 5
+    done
 }
 
 status() {
     local mode; mode=$(cat "$STATE_FILE" 2>/dev/null || echo "unset")
     say "mode: $mode"
     docker ps -a --format '{{.Names}}\t{{.Status}}' \
-        | grep -E '^(watchdog|compose-(app|vllm|es|minio|discovery)-1)\b' | sort | column -t -s $'\t'
-    if vllm_ready; then say "Cosmos vLLM: serving"; else say "Cosmos vLLM: not ready"; fi
+        | grep -E "^($WD_CONTAINER|compose-(app|vllm|es|minio|discovery)-1)\b" | sort | column -t -s $'\t'
+    if vllm_ready; then say "Cosmos vLLM: serving $VLLM_MODEL"; else say "Cosmos vLLM: not ready"; fi
     free -g | awk '/Mem:/ {printf "[demo-mode] memory: %s GB available of %s GB\n", $7, $2}'
 }
 
-case "${1:-status}" in
-    watchdog|wd)      to_watchdog ;;
-    elastic|ev)       to_elastic ;;
-    status)           status ;;
+cmd="${1:-status}"
+[ "$cmd" = status ] && { status; exit 0; }
+
+mkdir -p "$STATE_DIR"
+exec 9>"$LOCK_FILE"
+flock -w 900 9 || die "another demo-mode switch is still running"
+
+case "$cmd" in
+    watchdog|wd) to_watchdog ;;
+    elastic|ev)  to_elastic ;;
     apply)
+        wait_docker
         mode=$(cat "$STATE_FILE" 2>/dev/null || echo elastic)
-        say "re-applying last mode: $mode"
-        if [ "$mode" = watchdog ]; then to_watchdog; else to_elastic; fi ;;
-    *) sed -n '2,12p' "$0"; exit 2 ;;
+        for attempt in 1 2 3; do
+            say "re-applying last mode: $mode (attempt $attempt/3)"
+            if ( if [ "$mode" = watchdog ]; then to_watchdog; else to_elastic; fi ); then
+                exit 0
+            fi
+            sleep 30
+        done
+        die "could not re-apply $mode after 3 attempts" ;;
+    *) sed -n '2,15p' "$0"; exit 2 ;;
 esac

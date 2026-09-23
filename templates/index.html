@@ -3917,9 +3917,20 @@
         function poll() {
             // Mode + pause status
             fetch('/api/scene/mode').then(r => r.json()).then(modeData => {
-                if (!modeData.enabled) { section.style.display = 'none'; return; }
-                section.style.display = '';
                 if (modeData.model_label) modelLabel = modeData.model_label;
+                if (!modeData.enabled) {
+                    if (modeData.connecting) {
+                        // Model server still loading: keep the panel, say so.
+                        section.style.display = '';
+                        dot.classList.add('offline');
+                        statusText.textContent = 'Connecting to ' + modelLabel + '…';
+                        active = false;
+                    } else {
+                        section.style.display = 'none';
+                    }
+                    return;
+                }
+                section.style.display = '';
                 if (modeData.interval_seconds) intervalSec = modeData.interval_seconds;
                 if (active && !vlmPaused && currentMode === 'casual') statusText.textContent = activeText();
                 if (modeData.mode !== currentMode) setModeUI(modeData.mode);
