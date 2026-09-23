@@ -118,16 +118,31 @@ _GESTURE_YES = re.compile(r"^\s*YES\s*$", re.IGNORECASE | re.MULTILINE)
 class SceneNarrator:
     """VLM-powered frame observation + scene aggregation engine."""
 
-    def __init__(self, ollama_url=None, model=None, scene_context=None):
+    def __init__(self, ollama_url=None, model=None, scene_context=None,
+                 backend="ollama", api_url=None, model_label=None,
+                 casual_interval=None):
+        # backend "ollama" speaks Ollama's /api/chat (AGX, local qwen2.5-VL).
+        # backend "openai" speaks /v1/chat/completions (vLLM on the Thor
+        # serving Cosmos Reason 2). Prompts are shared; only transport differs.
+        self.backend = backend if backend in ("ollama", "openai") else "ollama"
         self.ollama_url = ollama_url or DEFAULT_OLLAMA_URL
+        self.api_url = (api_url or "").rstrip("/")
         self.model = model or DEFAULT_MODEL
+        self.model_label = model_label or self.model
+        self.casual_interval = float(casual_interval or CASUAL_INTERVAL)
         self.scene_context = scene_context
         self._frame_log: deque = deque(maxlen=MAX_LOG_ENTRIES)
         self._lock = threading.Lock()
         self._thread: Optional[threading.Thread] = None
+        # One Event per run: a loop from a previous start() can never be
+        # revived by a later clear(); stop() always ends the current run.
         self._stop_event = threading.Event()
+        self._lifecycle_lock = threading.Lock()
+        self._waiter: Optional[threading.Thread] = None
         self._frame_source: Optional[Callable] = None
         self.enabled = False
+        self.connecting = False
+        self._tls = threading.local()   # the run owning the current thread
         self._model_available: Optional[bool] = None
 
         # VLM serialization lock — ensures only one VLM call at a time
@@ -209,12 +224,16 @@ class SceneNarrator:
         return {
             "mode": self.mode,
             "enabled": self.enabled,
+            "connecting": self.connecting,
             "paused": self.paused,
             "gesture_cooldown_seconds": self._gesture_cooldown,
             "gesture_cooldown_remaining": round(cooldown_remaining, 1),
             "gesture_count": self._gesture_count,
             "gesture_confirmations": self._consecutive_positives,
             "gesture_required": self._required_confirmations,
+            "model": self.model,
+            "model_label": self.model_label,
+            "interval_seconds": self.casual_interval,
         }
 
     def get_frame_log(self, since=None):
@@ -256,22 +275,69 @@ class SceneNarrator:
     # ── Lifecycle ───────────────────────────────────────────────────
 
     def start(self):
-        if self._thread and self._thread.is_alive():
+        with self._lifecycle_lock:
+            # A thread still winding down from a stopped run doesn't count.
+            if not self._stop_event.is_set() and (
+                    (self._thread and self._thread.is_alive()) or
+                    (self._waiter and self._waiter.is_alive())):
+                return
+            run = self._stop_event = threading.Event()
+            if self._check_backend():
+                self._launch(run)
+                return
+            # The model server may simply boot after us (vLLM on the Thor takes
+            # minutes to load). Keep retrying instead of disabling for good.
+            logger.warning(f"[SceneNarrator] {self.backend} backend not reachable — retrying every 15s")
+            self.connecting = True
+            self._waiter = threading.Thread(target=self._wait_then_start, args=(run,),
+                                            daemon=True, name="scene-narrator-wait")
+            self._waiter.start()
+
+    def _wait_then_start(self, run: threading.Event):
+        while not run.wait(timeout=15):
+            if not self._check_backend():
+                continue
+            with self._lifecycle_lock:
+                # stop() (or a newer run) may have happened during the probe.
+                if run.is_set() or run is not self._stop_event:
+                    return
+                self.connecting = False
+                self._launch(run)
             return
-        if not self._check_ollama():
-            logger.warning("[SceneNarrator] Ollama not reachable — narrator disabled")
-            return
+
+    def _launch(self, run: threading.Event):
+        """Caller holds _lifecycle_lock."""
         self.enabled = True
-        self._stop_event.clear()
-        self._thread = threading.Thread(target=self._loop, daemon=True, name="scene-narrator")
+        self._thread = threading.Thread(target=self._loop, args=(run,), daemon=True,
+                                        name="scene-narrator")
         self._thread.start()
-        logger.info(f"[SceneNarrator] Started in '{self.mode}' mode — model={self.model}")
+        logger.info(f"[SceneNarrator] Started in '{self.mode}' mode — {self.backend} model={self.model}")
 
     def stop(self):
-        self._stop_event.set()
-        self.enabled = False
+        with self._lifecycle_lock:
+            self._stop_event.set()
+            self.enabled = False
+            self.connecting = False
 
     # ── Internals ───────────────────────────────────────────────────
+
+    def _check_backend(self) -> bool:
+        if self.backend == "openai":
+            return self._check_openai()
+        return self._check_ollama()
+
+    def _check_openai(self) -> bool:
+        try:
+            resp = requests.get(f"{self.api_url}/models", timeout=3)
+            if resp.status_code == 200:
+                ids = [m.get("id") for m in resp.json().get("data", [])]
+                self._model_available = self.model in ids
+                if not self._model_available:
+                    logger.warning(f"[SceneNarrator] Model '{self.model}' not served. Available: {ids}")
+                return self._model_available
+        except Exception:
+            pass
+        return False
 
     def _check_ollama(self) -> bool:
         try:
@@ -287,11 +353,18 @@ class SceneNarrator:
             pass
         return False
 
-    def _loop(self):
-        while not self._stop_event.is_set():
+    def _cancelled(self) -> bool:
+        """True if this worker's run was stopped: a worker that outlived its
+        run (stop() mid-query) must not publish or start further queries."""
+        run = getattr(self._tls, "run", None)
+        return run is not None and run.is_set()
+
+    def _loop(self, run: threading.Event):
+        self._tls.run = run
+        while not run.is_set():
             # Check pause
             if self.paused:
-                self._stop_event.wait(timeout=0.5)
+                run.wait(timeout=0.5)
                 continue
 
             mode = self.mode
@@ -300,7 +373,8 @@ class SceneNarrator:
                 if mode == "casual":
                     self._casual_tick()
                     # Check if scene summary is due (piggyback on casual loop)
-                    if (tick_start - self._last_scene_tick_ts) >= SCENE_SUMMARY_INTERVAL:
+                    if not run.is_set() and \
+                            (tick_start - self._last_scene_tick_ts) >= SCENE_SUMMARY_INTERVAL:
                         self._scene_tick()
                         self._last_scene_tick_ts = time.time()
                 else:
@@ -308,10 +382,10 @@ class SceneNarrator:
             except Exception as e:
                 logger.error(f"[SceneNarrator] Error in {mode} tick: {e}")
 
-            target = CASUAL_INTERVAL if mode == "casual" else GESTURE_INTERVAL
+            target = self.casual_interval if mode == "casual" else GESTURE_INTERVAL
             elapsed = time.time() - tick_start
             remaining = max(0.1, target - elapsed)
-            self._stop_event.wait(timeout=remaining)
+            run.wait(timeout=remaining)
 
     def _encode_frame(self, max_dim: int = FRAME_MAX_DIM, quality: int = 85):
         """Grab a frame, resize, JPEG-encode, return base64 string or None."""
@@ -330,8 +404,15 @@ class SceneNarrator:
     def _vlm_query(self, system_prompt: str, user_prompt: str, image_b64: str,
                    max_tokens: int = 150, temperature: float = 0.3,
                    num_ctx: int = 4096) -> Optional[str]:
-        """Send a single image+text query to Ollama. Serialized via _vlm_lock."""
+        """Send a single image+text query to the VLM. Serialized via _vlm_lock."""
+        if self._cancelled():
+            return None          # a stopped run admits no new queries
+        if self.backend == "openai":
+            return self._openai_query(system_prompt, user_prompt, image_b64,
+                                      max_tokens, temperature)
         with self._vlm_lock:
+            if self._cancelled():
+                return None      # stopped while queued behind another query
             try:
                 resp = requests.post(
                     f"{self.ollama_url}/api/chat",
@@ -361,6 +442,43 @@ class SceneNarrator:
                 logger.warning(f"[SceneNarrator] Ollama returned {resp.status_code}")
             except requests.exceptions.Timeout:
                 logger.warning("[SceneNarrator] Ollama request timed out")
+            except Exception as e:
+                logger.error(f"[SceneNarrator] Request failed: {e}")
+        return None
+
+    def _openai_query(self, system_prompt, user_prompt, image_b64,
+                      max_tokens, temperature) -> Optional[str]:
+        """OpenAI-compatible chat call (vLLM serving Cosmos Reason 2)."""
+        with self._vlm_lock:
+            if self._cancelled():
+                return None      # stopped while queued behind another query
+            try:
+                resp = requests.post(
+                    f"{self.api_url}/chat/completions",
+                    json={
+                        "model": self.model,
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": [
+                                {"type": "image_url",
+                                 "image_url": {"url": "data:image/jpeg;base64," + image_b64}},
+                                {"type": "text", "text": user_prompt},
+                            ]},
+                        ],
+                        "max_tokens": max_tokens,
+                        "temperature": temperature,
+                        "top_p": 0.9,
+                    },
+                    timeout=30,
+                )
+                if resp.status_code == 200:
+                    content = resp.json()["choices"][0]["message"].get("content") or ""
+                    # Cosmos Reason can emit <think>...</think> before the answer.
+                    content = re.sub(r"<think>.*?</think>", "", content, flags=re.S)
+                    return content.strip() or None
+                logger.warning(f"[SceneNarrator] VLM returned {resp.status_code}: {resp.text[:200]}")
+            except requests.exceptions.Timeout:
+                logger.warning("[SceneNarrator] VLM request timed out")
             except Exception as e:
                 logger.error(f"[SceneNarrator] Request failed: {e}")
         return None
@@ -397,11 +515,15 @@ class SceneNarrator:
                 "description": description,
                 "model": self.model,
             }
-            with self._lock:
-                self._frame_log.append(entry)
-            # Also feed into scene aggregation buffer
-            with self._scene_lock:
-                self._scene_observations.append({"timestamp": ts, "text": description})
+            # Validate + publish atomically with stop() (it holds this lock).
+            with self._lifecycle_lock:
+                if self._cancelled():
+                    return
+                with self._lock:
+                    self._frame_log.append(entry)
+                # Also feed into scene aggregation buffer
+                with self._scene_lock:
+                    self._scene_observations.append({"timestamp": ts, "text": description})
             logger.info(f"[SceneNarrator:frame] {description[:80]}...")
 
     # ── Scene summary (aggregation) ────────────────────────────────
@@ -453,8 +575,11 @@ class SceneNarrator:
         )
         if summary:
             ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
-            with self._scene_lock:
-                self._scene_summary = summary
+            with self._lifecycle_lock:
+                if self._cancelled():
+                    return
+                with self._scene_lock:
+                    self._scene_summary = summary
                 self._scene_summary_ts = ts
             logger.info(f"[SceneNarrator:scene] Summary updated: {summary[:80]}...")
 
@@ -507,11 +632,14 @@ class SceneNarrator:
         self._consecutive_positives = 0
         logger.info(f"[SceneNarrator:gesture] CONFIRMED gesture #{self._gesture_count} — firing callback")
 
-        if self._gesture_callback:
-            try:
-                self._gesture_callback("confirmed_squat")
-            except Exception as e:
-                logger.error(f"[SceneNarrator:gesture] Callback error: {e}")
+        # Admission and firing are atomic with stop(). (The VLM gesture callback
+        # is not wired to the robot today; YOLO Pose owns the shake trigger.)
+        with self._lifecycle_lock:
+            if self._gesture_callback and not self._cancelled():
+                try:
+                    self._gesture_callback("confirmed_squat")
+                except Exception as e:
+                    logger.error(f"[SceneNarrator:gesture] Callback error: {e}")
 
 
 # ── Module-level singleton ──────────────────────────────────────────
@@ -523,7 +651,8 @@ def get_narrator() -> Optional[SceneNarrator]:
     return _narrator
 
 
-def init_narrator(ollama_url=None, model=None, scene_context=None) -> SceneNarrator:
+def init_narrator(ollama_url=None, model=None, scene_context=None, **kwargs) -> SceneNarrator:
     global _narrator
-    _narrator = SceneNarrator(ollama_url=ollama_url, model=model, scene_context=scene_context)
+    _narrator = SceneNarrator(ollama_url=ollama_url, model=model,
+                              scene_context=scene_context, **kwargs)
     return _narrator

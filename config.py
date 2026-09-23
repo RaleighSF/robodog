@@ -4,17 +4,32 @@ Configuration management for Watch Dog Vision System
 Supports YOLO-E detector with flexible configuration
 """
 import os
+import copy
 import json
+import tempfile
+import threading
 import yaml
 from typing import List, Dict, Any, Optional
 
 class VisionConfig:
     """Vision system configuration with YOLO-E support"""
     
-    def __init__(self, config_path: str = "config.yaml"):
-        self.config_path = config_path
+    def __init__(self, config_path: Optional[str] = None):
+        # WATCHDOG_CONFIG lets a containerised deployment keep its writable
+        # config outside the git checkout (saves never dirty the repo), and
+        # WATCHDOG_CONFIG_OVERLAY layers per-device settings (e.g. the Thor's
+        # Cosmos backend) on top without forking config.yaml.
+        self.config_path = config_path or os.environ.get("WATCHDOG_CONFIG", "config.yaml")
+        self.overlay_path = os.environ.get("WATCHDOG_CONFIG_OVERLAY", "")
         self.config = self._load_default_config()
         self._load_config_file()
+        # Persistence model: _base is what gets written (defaults + file, no
+        # overlay); _loaded is the effective config as last synced. A save
+        # writes _base plus exactly what changed since, so overlay values are
+        # never baked in and operator edits always are.
+        self._base = copy.deepcopy(self.config)
+        self._load_overlay()
+        self._loaded = copy.deepcopy(self.config)
         
     def _load_default_config(self) -> Dict[str, Any]:
         """Load default configuration"""
@@ -86,6 +101,38 @@ class VisionConfig:
         else:
             print(f"📄 No config file found at {self.config_path}, using defaults")
     
+    def _load_overlay(self):
+        """Apply the per-device overlay last so it always wins."""
+        if not self.overlay_path:
+            return
+        try:
+            with open(self.overlay_path, 'r') as f:
+                overlay = yaml.safe_load(f) or {}
+            if isinstance(overlay, dict):
+                self._deep_merge(self.config, overlay)
+                print(f"✅ Applied config overlay {self.overlay_path}")
+        except Exception as e:
+            print(f"⚠️ Could not apply config overlay {self.overlay_path}: {e}")
+
+    @classmethod
+    def _apply_diff(cls, target: Dict, old: Dict, new: Dict):
+        """Replay onto target every change between two effective configs:
+        added, removed and changed keys, including structural changes."""
+        for key, value in new.items():
+            if key in old and value == old[key]:
+                continue            # untouched subtree: never materialise it
+            if key not in old:
+                target[key] = copy.deepcopy(value)
+            elif isinstance(value, dict) and isinstance(old[key], dict):
+                if not isinstance(target.get(key), dict):
+                    target[key] = {}
+                cls._apply_diff(target[key], old[key], value)
+            elif value != old[key]:
+                target[key] = copy.deepcopy(value)
+        for key in old:
+            if key not in new:
+                target.pop(key, None)
+
     def _deep_merge(self, base_dict: Dict, update_dict: Dict):
         """Deep merge two dictionaries"""
         for key, value in update_dict.items():
@@ -94,14 +141,32 @@ class VisionConfig:
             else:
                 base_dict[key] = value
     
+    _save_lock = threading.Lock()
+
     def save_config(self):
         """Save current configuration to file"""
         try:
-            with open(self.config_path, 'w') as f:
-                if self.config_path.endswith('.yaml') or self.config_path.endswith('.yml'):
-                    yaml.safe_dump(self.config, f, default_flow_style=False, indent=2)
-                else:
-                    json.dump(self.config, f, indent=2)
+            with self._save_lock:
+                # Diff one immutable snapshot and mark exactly that snapshot as
+                # synced: an edit landing mid-save stays pending for the next save.
+                snapshot = copy.deepcopy(self.config)
+                data = copy.deepcopy(self._base)
+                self._apply_diff(data, self._loaded, snapshot)
+                folder = os.path.dirname(os.path.abspath(self.config_path))
+                fd, tmp = tempfile.mkstemp(prefix='.config-', suffix='.tmp', dir=folder)
+                try:
+                    with os.fdopen(fd, 'w') as f:   # write-then-rename: never a half file
+                        if self.config_path.endswith('.yaml') or self.config_path.endswith('.yml'):
+                            yaml.safe_dump(data, f, default_flow_style=False, indent=2)
+                        else:
+                            json.dump(data, f, indent=2)
+                    os.replace(tmp, self.config_path)
+                except BaseException:
+                    if os.path.exists(tmp):
+                        os.unlink(tmp)
+                    raise
+                self._base = data
+                self._loaded = snapshot
             print(f"✅ Configuration saved to {self.config_path}")
         except Exception as e:
             print(f"❌ Error saving config: {e}")

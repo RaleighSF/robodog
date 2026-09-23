@@ -42,10 +42,8 @@ _RECHECK_SECONDS = 60.0
 def _config_candidates():
     """Optional operator override list from config.yaml (go2.host_candidates)."""
     try:
-        import yaml
-        here = os.path.dirname(os.path.abspath(__file__))
-        with open(os.path.join(here, "config.yaml"), encoding="utf-8") as f:
-            cfg = yaml.safe_load(f) or {}
+        from config import get_config  # honours WATCHDOG_CONFIG / overlay
+        cfg = get_config().config or {}
         c = (cfg.get("go2") or {}).get("host_candidates")
         if isinstance(c, list) and c:
             return [str(x) for x in c]

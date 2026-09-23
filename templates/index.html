@@ -1678,6 +1678,7 @@
             box-shadow: 0 4px 8px rgba(229, 72, 77, 0.35);
         }
 
+        .signout-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
         .rtsp-info { background-color: #e3f2fd; color: #1976d2; }
         .rtsp-ok   { background-color: #c8e6c9; color: #2e7d32; }
         .rtsp-warn { background-color: #fff3e0; color: #e65100; }
@@ -1933,6 +1934,10 @@
                     </div>
                 </div>
                 {% endif %}
+                <form method="post" action="/logout" class="signout-row">
+                    <span class="config-help-text" style="margin:0;">Signed in as operator on this browser.</span>
+                    <button type="submit" class="config-button config-button-secondary">Sign out</button>
+                </form>
 
                 <!-- Global Detection Mode Selector -->
                 <div class="config-section" style="margin-bottom: 20px; padding: 15px; background: rgba(255, 255, 255, 0.05); border-radius: 8px;">
@@ -3804,6 +3809,12 @@
         let currentMode = 'casual';
         let currentTab = 'frame';
         let vlmPaused = false;
+        let modelLabel = 'VLM';
+        let intervalSec = 20;
+
+        function activeText() {
+            return modelLabel + ' — observing every ~' + Math.round(intervalSec) + 's';
+        }
 
         function formatTime(iso) {
             const d = new Date(iso);
@@ -3856,7 +3867,7 @@
                     statusText.textContent = 'VLM paused';
                     dot.classList.add('offline');
                 } else {
-                    statusText.textContent = 'VLM active — observing every ~20s';
+                    statusText.textContent = activeText();
                     dot.classList.remove('offline');
                 }
             });
@@ -3887,7 +3898,7 @@
                 }
             } else {
                 if (!vlmPaused) {
-                    statusText.textContent = active ? 'VLM active — observing every ~20s' : 'Connecting to VLM...';
+                    statusText.textContent = active ? activeText() : 'Connecting to VLM...';
                 }
                 if (currentTab === 'frame') frameTabContent.style.display = '';
                 if (existingBanner) existingBanner.remove();
@@ -3911,8 +3922,22 @@
         function poll() {
             // Mode + pause status
             fetch('/api/scene/mode').then(r => r.json()).then(modeData => {
-                if (!modeData.enabled) { section.style.display = 'none'; return; }
+                if (modeData.model_label) modelLabel = modeData.model_label;
+                if (!modeData.enabled) {
+                    if (modeData.connecting) {
+                        // Model server still loading: keep the panel, say so.
+                        section.style.display = '';
+                        dot.classList.add('offline');
+                        statusText.textContent = 'Connecting to ' + modelLabel + '…';
+                        active = false;
+                    } else {
+                        section.style.display = 'none';
+                    }
+                    return;
+                }
                 section.style.display = '';
+                if (modeData.interval_seconds) intervalSec = modeData.interval_seconds;
+                if (active && !vlmPaused && currentMode === 'casual') statusText.textContent = activeText();
                 if (modeData.mode !== currentMode) setModeUI(modeData.mode);
                 if (modeData.paused !== undefined && modeData.paused !== vlmPaused) {
                     vlmPaused = modeData.paused;
@@ -3939,7 +3964,7 @@
                         active = true;
                         if (!vlmPaused) {
                             dot.classList.remove('offline');
-                            statusText.textContent = 'VLM active — observing every ~20s';
+                            statusText.textContent = activeText();
                         }
                     }
                     if (data.entries && data.entries.length > 0) {

@@ -1,0 +1,235 @@
+#!/usr/bin/env bash
+# demo-mode — switch the Jetson AGX Thor between demo stacks.
+#
+#   demo-mode watchdog   Stop Elastic-Vision's app stack, start Watch Dog
+#   demo-mode elastic    Stop Watch Dog, start Elastic-Vision's app stack
+#   demo-mode status     Show the active mode and what is running
+#   demo-mode apply      Re-apply the last chosen mode (run at boot, retries)
+#   demo-mode install-boot   Install the @reboot crontab entry (idempotent)
+#
+# Cosmos Reason 2 (Elastic-Vision's `vllm` service) stays up in BOTH modes:
+# Elastic-Vision scores with it and Watch Dog narrates with it. Swapping only
+# the lighter services frees ~8 GB without reloading the 8B model.
+#
+# Ordering rule: vLLM claims a fixed share (0.8) of unified memory when it
+# starts, so it must start BEFORE Watch Dog grabs GPU memory. Whenever vLLM
+# is down, Watch Dog is stopped first and started only once vLLM serves.
+set -euo pipefail
+
+EV_DIR="${EV_DIR:-$HOME/elastic-vision}"
+EV_COMPOSE="$EV_DIR/deploy/compose/docker-compose.yml"
+EV_SERVICES=(app discovery es minio)
+WD_COMPOSE="${WD_COMPOSE:-$HOME/watch_dog/deploy/thor/docker-compose.yml}"
+WD_CONTAINER="watchdog"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/demo-mode"
+STATE_FILE="$STATE_DIR/mode"
+LOCK_FILE="$STATE_DIR/lock"
+VLLM_CONTAINER="compose-vllm-1"
+VLLM_MODEL="nvidia/cosmos-reason2-8b"
+VLLM_TIMEOUT="${VLLM_TIMEOUT:-900}"     # cold 8B load can take many minutes
+
+# Every docker call has an outer timeout: a stalled daemon RPC must fail the
+# switch, not hang it past its deadline.
+ev()  { (cd "$EV_DIR" && timeout 240 docker compose -f "$EV_COMPOSE" "$@"); }
+wd()  { timeout 240 docker compose -f "$WD_COMPOSE" "$@"; }
+say() { printf '\033[1m[demo-mode]\033[0m %s\n' "$*"; }
+die() { say "ERROR: $*"; exit 1; }
+
+# Supports the docker CLI wording of 25.x-29.x ("error: no such object: NAME";
+# older "Error: No such object: NAME"). Other wording fails closed.
+# Container state -> $CSTATE (running | stopped | absent). Called directly,
+# never via $(...), so that die() on an unknown docker error exits the whole
+# script: an unknown state must never be read as "safely stopped".
+CSTATE=""
+cstate() {
+    local out
+    if out=$(timeout 15 docker inspect -f '{{.State.Running}}' "$1" 2>&1); then
+        case "$out" in
+            true)  CSTATE=running ;;
+            false) CSTATE=stopped ;;
+            *)     die "unexpected docker inspect output for $1: $out" ;;
+        esac
+    elif [ "$out" = "error: no such object: $1" ] || \
+         [ "$out" = "Error: No such object: $1" ]; then
+        CSTATE=absent                  # exactly docker's missing-container reply
+    else
+        die "cannot inspect $1: $out"  # daemon/socket/API errors are fatal
+    fi
+}
+running() { cstate "$1"; [ "$CSTATE" = running ]; }
+
+# Docker health status of a container that must exist; errors are fatal.
+HSTATE=""
+hstate() {
+    local out
+    out=$(timeout 15 docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$1" 2>&1) \
+        || die "cannot inspect health of $1: $out"
+    HSTATE=$out
+}
+
+# Deadlines are wall-clock (bash $SECONDS), so slow probes and docker calls
+# count against the budget instead of stretching it.
+wait_http() {  # url, label, timeout-seconds
+    local url=$1 label=$2 limit=${3:-180}
+    local deadline=$(( SECONDS + limit ))
+    until curl -fsk -o /dev/null --max-time 3 "$url" 2>/dev/null; do
+        (( SECONDS >= deadline )) && die "$label did not come up within ${limit}s"
+        sleep 3
+    done
+    say "$label is up ($url)"
+}
+
+vllm_ready() {  # serving the expected model, not merely running
+    timeout 15 docker exec "$VLLM_CONTAINER" python3 -c "
+import json, sys, urllib.request
+ids = [m['id'] for m in json.load(urllib.request.urlopen('http://localhost:8000/v1/models', timeout=3))['data']]
+sys.exit(0 if '$VLLM_MODEL' in ids else 1)" >/dev/null 2>&1
+}
+
+wait_vllm() {
+    local start=$SECONDS next_note=$(( SECONDS + 60 ))
+    until vllm_ready; do
+        running "$VLLM_CONTAINER" || die "Cosmos vLLM container exited (docker logs $VLLM_CONTAINER)"
+        (( SECONDS - start >= VLLM_TIMEOUT )) && die "Cosmos vLLM not serving $VLLM_MODEL after ${VLLM_TIMEOUT}s"
+        if (( SECONDS >= next_note )); then
+            say "waiting for Cosmos to load... $(( SECONDS - start ))s"; next_note=$(( SECONDS + 60 ))
+        fi
+        sleep 5
+    done
+    say "Cosmos vLLM serving $VLLM_MODEL"
+}
+
+ensure_vllm() {
+    if running "$VLLM_CONTAINER" && vllm_ready; then return; fi
+    # vLLM is down or still loading: release Watch Dog's GPU memory first so
+    # vLLM can claim its reservation either way.
+    stop_watchdog
+    if ! running "$VLLM_CONTAINER"; then
+        say "starting Cosmos vLLM (the 8B model takes a few minutes to load)"
+        timeout 60 docker start "$VLLM_CONTAINER" >/dev/null || die "could not start $VLLM_CONTAINER"
+    fi
+    wait_vllm
+}
+
+stop_watchdog() {
+    running "$WD_CONTAINER" || return 0
+    say "stopping Watch Dog"
+    wd stop -t 20 || die "docker compose stop failed for Watch Dog"
+    running "$WD_CONTAINER" && die "Watch Dog is still running after stop"
+    return 0
+}
+
+stop_elastic() {
+    say "stopping Elastic-Vision app stack: ${EV_SERVICES[*]}"
+    # Generous grace period: Elasticsearch needs longer than Docker's 10 s
+    # default to flush and close its indices; SIGKILL risks corrupting them.
+    ev stop -t 60 "${EV_SERVICES[@]}" || die "could not stop Elastic-Vision services"
+    local svc
+    for svc in "${EV_SERVICES[@]}"; do
+        running "compose-$svc-1" && die "compose-$svc-1 still running after stop"
+    done
+    return 0
+}
+
+remember() {  # atomic: a crash never leaves a half-written mode
+    local tmp
+    tmp=$(mktemp "$STATE_DIR/mode.XXXXXX") || die "cannot create state file in $STATE_DIR"
+    { echo "$1" > "$tmp" && mv -f "$tmp" "$STATE_FILE"; } || die "cannot record mode '$1'"
+}
+
+ev_ready() {  # one probe of every Elastic-Vision dependency; 0 = all ready
+    local svc
+    for svc in app discovery es minio; do
+        running "compose-$svc-1" || die "compose-$svc-1 is not running"
+    done
+    hstate compose-app-1; [ "$HSTATE" = healthy ] || return 1
+    # discovery inherits the app image's healthcheck (port 8080), so its Docker
+    # health says nothing about discovery itself: probe its own endpoint.
+    curl -fs -o /dev/null --max-time 3 http://localhost:8099/health/live 2>/dev/null || return 1
+    timeout 20 docker exec compose-es-1 curl -fs -o /dev/null --max-time 12 \
+        'http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=10s' 2>/dev/null || return 1
+    return 0
+}
+
+wait_ev_healthy() {  # the homepage alone does not prove the stack is usable
+    local deadline=$(( SECONDS + 300 ))
+    until ev_ready; do
+        (( SECONDS >= deadline )) && die "Elastic-Vision not healthy after 300s"
+        sleep 5
+    done
+    say "Elastic-Vision stack healthy (app, discovery, Elasticsearch, MinIO)"
+}
+
+to_watchdog() {
+    stop_elastic
+    ensure_vllm
+    say "starting Watch Dog"
+    wd up -d || die "could not start Watch Dog"
+    remember watchdog || die "could not record mode"
+    wait_http https://localhost:8443/healthz "Watch Dog dashboard" 240
+    say "dashboard: https://$(hostname -I | awk '{print $1}'):8443"
+}
+
+to_elastic() {
+    stop_watchdog
+    ensure_vllm
+    say "starting Elastic-Vision app stack: ${EV_SERVICES[*]}"
+    ev start es minio discovery || die "could not start Elastic-Vision dependencies"
+    ev start app || die "could not start Elastic-Vision app"
+    remember elastic || die "could not record mode"
+    wait_http http://localhost:8080/ "Elastic-Vision" 240
+    wait_ev_healthy
+}
+
+wait_docker() {  # at boot the daemon may not be ready yet
+    local deadline=$(( SECONDS + 300 ))
+    until timeout 10 docker info >/dev/null 2>&1; do
+        (( SECONDS >= deadline )) && die "docker daemon not available after 300s"
+        sleep 5
+    done
+}
+
+status() {
+    local mode; mode=$(cat "$STATE_FILE" 2>/dev/null || echo "unset")
+    say "mode: $mode"
+    timeout 15 docker ps -a --format '{{.Names}}\t{{.Status}}' \
+        | grep -E "^($WD_CONTAINER|compose-(app|vllm|es|minio|discovery)-1)\b" | sort | column -t -s $'\t'
+    if vllm_ready; then say "Cosmos vLLM: serving $VLLM_MODEL"; else say "Cosmos vLLM: not ready"; fi
+    free -g | awk '/Mem:/ {printf "[demo-mode] memory: %s GB available of %s GB\n", $7, $2}'
+}
+
+install_boot() {
+    # cron runs with a minimal environment: give it an explicit PATH so
+    # docker, curl, flock and column resolve, and an absolute script path.
+    local self; self=$(readlink -f "$0")
+    local entry="@reboot export PATH=/usr/local/bin:/usr/bin:/bin; sleep 60 && $self apply >> $STATE_DIR/boot.log 2>&1"
+    mkdir -p "$STATE_DIR"
+    { crontab -l 2>/dev/null | grep -v 'demo-mode apply' || true; echo "$entry"; } | crontab - \
+        || die "could not install crontab"
+    say "boot entry installed:"; crontab -l | grep 'demo-mode apply'
+}
+
+cmd="${1:-status}"
+[ "$cmd" = status ] && { status; exit 0; }
+[ "$cmd" = install-boot ] && { install_boot; exit 0; }
+
+mkdir -p "$STATE_DIR"
+exec 9>"$LOCK_FILE"
+flock -w 900 9 || die "another demo-mode switch is still running"
+
+case "$cmd" in
+    watchdog|wd) to_watchdog ;;
+    elastic|ev)  to_elastic ;;
+    apply)
+        wait_docker
+        mode=$(cat "$STATE_FILE" 2>/dev/null || echo elastic)
+        for attempt in 1 2 3; do
+            say "re-applying last mode: $mode (attempt $attempt/3)"
+            if ( if [ "$mode" = watchdog ]; then to_watchdog; else to_elastic; fi ); then
+                exit 0
+            fi
+            sleep 30
+        done
+        die "could not re-apply $mode after 3 attempts" ;;
+    *) sed -n '2,15p' "$0"; exit 2 ;;
+esac
