@@ -540,7 +540,7 @@ class CameraManager:
             except Exception as e:
                 print(f"[GO2 Capture] Connection error: {e}, reconnecting in {reconnect_delay}s...")
             finally:
-                if response:
+                if response is not None:
                     try:
                         response.close()
                     except Exception:

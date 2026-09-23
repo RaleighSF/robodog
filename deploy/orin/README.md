@@ -7,19 +7,44 @@ replacement copies the transport Azimuth proved on the same robot:
   `/lf/lowstate`, `/lf/sportmodestate`) with lease 0.
 - **Video goes over a video-only WebRTC link** that uses the per-device AES key.
 
-The HTTP contract on `:5001` is unchanged, so the dashboards (AGX and Thor)
-and the auto-arm supervisor need no changes.
+The DDS layer comes from the shared **go2dds** library (`../go2dds`, used by
+Azimuth too). `build.sh` ships the revision pinned in `GO2DDS_REV`, exported
+with `git archive`, so uncommitted edits in the go2dds checkout never ship.
+
+**HTTP contract on `:5001` (HTTPS only):**
+- The server certificate is issued by the Watch Dog demo CA. The Thor verifies
+  it against `/state/tls/ca.pem`.
+- `status`, `battery` and `video_feed` are public reads.
+- Every other endpoint needs `Authorization: Bearer <GO2_SERVICE_TOKEN>`,
+  which only the Thor holds.
+- An unauthenticated `/stop` is still honoured as an E-stop.
+- `/move` requires a drive `session` and `seq` from the browser. Older
+  dashboards (the AGX's) are refused and are view-only.
 
 Only one of the Watch Dog link and Azimuth's `azimuth-edge` runs at a time.
 Both systemd units declare `Conflicts=`, so starting one stops the other.
 
+**Prerequisites on the Orin (one time, never committed):**
+
 ```bash
-# on the Orin (unitree@<orin>), from a copy of this folder plus ../../go2_service.py
-docker build -t watchdog-go2:latest .
-sudo install -m 600 /dev/null /etc/go2_service.env      # then put GO2_AES_KEY=<key> in it
-sudo install -m 644 go2_service.service /etc/systemd/system/go2_service.service
-sudo systemctl daemon-reload && sudo systemctl enable --now go2_service
+sudo install -m 600 /dev/null /etc/go2_service.env
+# add: GO2_AES_KEY=<per-device key>  and  GO2_SERVICE_TOKEN=<>=32 random chars, no spaces>
+sudo install -d -m 755 /etc/watchdog-go2/tls
+# cert.pem (0644) + key.pem (0600): issued on the Mac by ~/.watchdog-ca
+# with SANs for every Orin address (10.0.0.57, 192.168.50.207, 192.168.123.18, 127.0.0.1).
 ```
+
+Put the same token in the Thor's state volume at `/state/robot_token`, and the
+demo CA at `/state/tls/ca.pem`.
+
+**Deploy (from the Mac):**
+
+```bash
+SSHPASS=<orin password> deploy/orin/build.sh unitree@10.0.0.57
+```
+
+The script refuses to restart the service if the env file or the TLS files are
+missing, because the service fails closed without them.
 
 Command mapping:
 
@@ -32,5 +57,7 @@ Command mapping:
 | move | Move 1008, clamped to vx -0.15..0.25, vy ±0.2, vyaw ±0.5 |
 | stop | StopMove 1003, always sent |
 
-The image is built FROM `azimuth-edge:dev`. The Azimuth lockdown script
-deletes that image, so rebuild both after a restore.
+The image is built FROM a pinned image ID of Azimuth's edge build, which is
+also tagged `watchdog-go2-base:2026-09-23` on the Orin. If the Azimuth lockdown
+script removes it, re-tag that base (or rebuild it and update the pinned
+Dockerfile `FROM`) before running `build.sh`.

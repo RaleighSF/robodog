@@ -1036,9 +1036,16 @@ def go2_move():
         _go2_drive["last_input"] = time.time()
         _go2_drive["gen"] += 1
     try:
-        response = robot_host.http().post(f'{robot_host.service_url()}/move',
+        url = robot_host.cached_service_url()     # no discovery inside the drive deadline
+        if url is None:
+            return jsonify({'success': False, 'message': 'robot link unreachable'}), 503
+        # Bounded end to end: <=0.3 s to (re)connect + <=0.3 s for the one small
+        # reply read. On a reused keep-alive a Move answers in ~45 ms; a late one
+        # is useless (the robot's 0.4 s lease has moved on) and the browser has
+        # already given up at 0.7 s.
+        response = robot_host.http().post(f'{url}/move',
             json={'vx': vx, 'vy': vy, 'vyaw': vyaw, 'session': session, 'seq': seq},
-            timeout=(1.0, 0.35))     # a Move answers in ms on a reused keep-alive; a late one is useless
+            timeout=(0.3, 0.3))
         return jsonify(response.json()), response.status_code
     except Exception as e:
         robot_host.report_failure()   # a venue change looks like a connection error

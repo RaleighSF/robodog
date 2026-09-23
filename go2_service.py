@@ -344,10 +344,21 @@ class Actuator:
             except Exception as e:                   # noqa: BLE001
                 log("[Supervisor] %s" % e)
 
-    def wait_current_stop(self, timeout=3.0):
-        """Wait for the stop already outstanding (anonymous stops coalesce onto it)."""
+    def anonymous_stop(self):
+        """Operator stop from an unauthenticated caller. Check-and-create is one
+        atomic step: joins an outstanding stop instead of publishing another,
+        but ALWAYS counts as an operator stop, so a posture command waiting on
+        that stop is still cancelled. Returns the stop number to wait for."""
         with self.lock:
-            n = self.stop_req
+            if self.stop_pending():
+                self.op_stops += 1
+                self.lease_until = 0.0
+                self._retire(self.session)
+                self.wake.set()
+                return self.stop_req
+            return self._request_stop(None, True, True)
+
+    def wait_stop(self, n, timeout=3.0):
         t = time.monotonic()
         while time.monotonic() - t < timeout:
             with self.lock:
@@ -677,6 +688,9 @@ def handle_move():
     return jsonify(body), http
 
 
+_ANON_WAITERS = threading.BoundedSemaphore(4)
+
+
 @app.route("/stop", methods=["POST"])
 def handle_stop():
     # Never refused. Retires the named drive session (or the active one) and
@@ -689,17 +703,17 @@ def handle_stop():
     # here. Without it a named stop is a D-pad release: only that press retires.
     everything = bool(body.get("all")) or session is None
     if request.environ.get("watchdog.anonymous_stop"):
-        with act.lock:
-            if act.stop_pending():
-                act.lease_until = 0.0
-                act._retire(act.session)
-                already = True
-            else:
-                already = False
-        if already:                          # coalesce: no new stop per anonymous call
-            ok = bool(act.wait_current_stop(timeout=3.0))
-            return jsonify({"success": ok, "confirmed": ok,
-                            "message": "Stop verified at rest" if ok else "Stop sent — still verifying"})
+        n = act.anonymous_stop()             # coalesced: never a new DDS stop per call
+        # Waiting is a courtesy; the stop itself is already in force. Only a few
+        # anonymous callers may hold a server thread for it at once.
+        if not _ANON_WAITERS.acquire(blocking=False):
+            return jsonify({"success": False, "confirmed": False, "message": "Stop requested — still verifying"}), 202
+        try:
+            ok = bool(act.wait_stop(n, timeout=3.0))
+        finally:
+            _ANON_WAITERS.release()
+        return jsonify({"success": ok, "confirmed": ok,
+                        "message": "Stop verified at rest" if ok else "Stop sent — still verifying"})
     ok = bool(act.stop_and_wait(session, timeout=3.0, retire_active=everything))
     return jsonify({"success": ok, "confirmed": ok,
                     "message": "Stop verified at rest" if ok else "Stop sent — still verifying, retrying until confirmed"})

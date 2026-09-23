@@ -68,6 +68,7 @@ class RobotHost:
         self._lock = threading.Lock()
         self._host = None
         self._checked = 0.0
+        self._reprobing = False
 
     def candidates(self):
         pinned = os.environ.get("ORIN_HOST", "").strip()
@@ -129,6 +130,27 @@ class RobotHost:
 
     def service_url(self):
         return f"{SERVICE_SCHEME}://{self.resolve()}:{SERVICE_PORT}"
+
+    def cached_service_url(self):
+        """URL of the last resolved robot WITHOUT probing (None if none yet), for
+        the drive path: discovery never runs inside a Move's deadline. A due
+        re-check is started in the background instead."""
+        with self._lock:
+            host = self._host
+            due = time.time() - self._checked >= _RECHECK_SECONDS
+            start = (due or host is None) and not self._reprobing
+            if start:
+                self._reprobing = True
+        if start:
+            threading.Thread(target=self._background_resolve, daemon=True, name="robot-resolve").start()
+        return f"{SERVICE_SCHEME}://{host}:{SERVICE_PORT}" if host else None
+
+    def _background_resolve(self):
+        try:
+            self.resolve()
+        finally:
+            with self._lock:
+                self._reprobing = False
 
     def rtsp_url(self, channel="color"):
         return f"rtsp://{self.resolve()}:{RTSP_PORT}/{channel}"
