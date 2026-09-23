@@ -3547,6 +3547,9 @@
             }
 
             function startMove(btn) {
+                // No new press while an E-stop is still confirming; after it, the
+                // operator must press again (a fresh engagement).
+                if (window.__estopPending) return;
                 const previous = _session;
                 clearLocal();
                 if (previous) sendStop(previous);            // retire the old press; the new one is separate
@@ -3669,6 +3672,7 @@
 
         // Emergency stop — always accessible
         async function emergencyStop() {
+            window.__estopPending = true;
             const local = (typeof window.__dpadCancel === 'function') ? window.__dpadCancel() : null;
             try {
                 // all: stop the robot and retire BOTH this page's press and whatever
@@ -3676,7 +3680,10 @@
                 await fetch('/go2/stop', { method: 'POST', headers: {'Content-Type': 'application/json'},
                                            body: JSON.stringify({ session: local, all: true }) });
                 showStatus('Emergency stop sent', 'warning');
-            } catch(e) {}
+            } catch(e) {
+            } finally {
+                window.__estopPending = false;
+            }
         }
 
         function showStatus(message, type) {

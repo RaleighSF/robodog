@@ -392,11 +392,13 @@ class Actuator:
                 verified = (at - att["held_since"] >= STILL_HOLD_S and att["samples"] >= STILL_MIN_SAMPLES)
             else:
                 att["held_since"] = None; att["samples"] = 0
-        # Azimuth's verdict rule (edge/commands.py verdict_for): a stop is verified
-        # by PHYSICAL REST, whatever the reply code. A lying dog rejects StopMove
-        # (nothing to stop) yet is plainly still; requiring code 0 left stops
-        # pending forever and blocked every later command.
-        if verified:
+        # A stop needs BOTH delivery (the robot replied — any code: a lying dog
+        # answers -1 because there is nothing to stop) and PHYSICAL REST on fresh
+        # samples (Azimuth's verdict_for). An unanswered StopMove never counts,
+        # however still the body looks: that would hide a dead command channel.
+        if verified and att["code"] is not None:
+            with d.lock:
+                d.pending.pop(att["rid"], None)         # done with this request either way
             with self.lock:
                 self.stop_ok = max(self.stop_ok, att["target"])
                 if not self.stop_pending():
