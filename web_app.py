@@ -2,6 +2,8 @@
 import cv2
 import time
 import os
+import itertools
+import math
 import atexit
 import signal
 import queue
@@ -818,15 +820,18 @@ def _check_outstretched_hand(frame):
         _gesture_shake_callback(f"outstretched_hand_{result['arm']}")
 
 
-_go2_last_move_ts = 0.0
 _go2_last_command_ts = 0.0
 _go2_watchdog_thread = None
 _go2_watchdog_running = False
-_GO2_MOVE_TIMEOUT = 0.6
-# True while a /move request is awaiting the robot. The first Move includes a
-# BalanceStand and can take ~3s; the watchdog must not fire /stop during it.
-_go2_move_inflight = False
-_go2_move_inflight_lock = threading.Lock()
+# Backup deadman (the authoritative one runs on the Orin next to the robot, see
+# go2_service.py): while a drive may be active and no input has arrived for
+# _GO2_MOVE_TIMEOUT, keep sending /stop until the robot confirms it.
+_GO2_MOVE_TIMEOUT = 0.8
+_go2_drive = {"possibly_moving": False, "last_input": 0.0}
+_go2_drive_lock = threading.Lock()
+# Receipt-order sequence stamped on every move and stop, so the Orin can refuse
+# a Move that arrives after a newer Stop (Azimuth's superseded-setpoint rule).
+_go2_seq = itertools.count(int(time.time() * 1000))
 _GO2_COMMAND_COOLDOWN = 1.5
 _GO2_MAX_VX = 0.25
 _GO2_MAX_VY = 0.2
@@ -834,18 +839,27 @@ _GO2_MAX_VYAW = 0.5
 # Robot address is resolved at call time by robot_host (see robot_host.py).
 
 
+def _go2_send_stop(timeout=3):
+    """Send a stop; returns True only when the robot confirmed it (verified at rest)."""
+    try:
+        r = requests.post(f'{robot_host.service_url()}/stop', json={'seq': next(_go2_seq)}, timeout=timeout)
+        ok = r.status_code == 200 and bool(r.json().get('success'))
+    except Exception:
+        ok = False
+    if ok:
+        with _go2_drive_lock:
+            _go2_drive["possibly_moving"] = False
+    return ok
+
+
 def _go2_watchdog_loop():
     global _go2_watchdog_running
     _go2_watchdog_running = True
     while _go2_watchdog_running:
-        with _go2_move_inflight_lock:
-            _inflight = _go2_move_inflight
-        if (not _inflight) and _go2_last_move_ts > 0 and (time.time() - _go2_last_move_ts) > _GO2_MOVE_TIMEOUT:
-            try:
-                requests.post(f'{robot_host.service_url()}/stop', json={}, timeout=1)
-                logger.debug("[GO2 Watchdog] Auto-stop — no move command received")
-            except Exception:
-                pass
+        with _go2_drive_lock:
+            due = _go2_drive["possibly_moving"] and time.time() - _go2_drive["last_input"] > _GO2_MOVE_TIMEOUT
+        if due and not _go2_send_stop(timeout=2):
+            logger.warning("[GO2 Watchdog] auto-stop not confirmed yet — retrying")
         time.sleep(0.2)
 
 
@@ -860,7 +874,7 @@ def _ensure_go2_watchdog():
 
 @app.route('/go2/command', methods=['POST'])
 def go2_command():
-    global _go2_last_command_ts, _go2_last_move_ts
+    global _go2_last_command_ts
     try:
         data = request.get_json()
         command = data.get('command')
@@ -875,10 +889,8 @@ def go2_command():
 
         logger.info(f"Sending GO2 command: {command}")
         _go2_last_command_ts = now
-
-        # Kill the move watchdog when issuing posture commands — the watchdog
-        # sends /stop repeatedly which triggers BalanceStand on a standing robot
-        _go2_last_move_ts = 0.0
+        # Posture commands are stop-gated on the Orin (it stops and verifies
+        # rest first), so the drive state is left to the deadman here.
 
         response = requests.post(f'{robot_host.service_url()}/command',
                                 json={'command': command},
@@ -909,45 +921,41 @@ def go2_command():
 
 @app.route('/go2/move', methods=['POST'])
 def go2_move():
-    global _go2_last_move_ts
     _ensure_go2_watchdog()
+    data = request.get_json(silent=True) or {}
     try:
-        data = request.get_json()
-        vx = max(-_GO2_MAX_VX, min(_GO2_MAX_VX, float(data.get('vx', 0))))
-        vy = max(-_GO2_MAX_VY, min(_GO2_MAX_VY, float(data.get('vy', 0))))
-        vyaw = max(-_GO2_MAX_VYAW, min(_GO2_MAX_VYAW, float(data.get('vyaw', 0))))
-
-        _go2_last_move_ts = time.time()
-        global _go2_move_inflight
-        with _go2_move_inflight_lock:
-            _go2_move_inflight = True
-        try:
-            # Must exceed the Orin's own 3.0s move-result timeout, or this proxy
-            # gives up before the robot can answer.
-            response = requests.post(f'{robot_host.service_url()}/move',
-                json={'vx': vx, 'vy': vy, 'vyaw': vyaw},
-                timeout=4
-            )
-        finally:
-            with _go2_move_inflight_lock:
-                _go2_move_inflight = False
-            _go2_last_move_ts = time.time()
+        raw = [float(data.get(k, 0)) for k in ('vx', 'vy', 'vyaw')]
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'message': 'vx/vy/vyaw must be numbers'}), 400
+    if not all(math.isfinite(v) for v in raw):
+        return jsonify({'success': False, 'message': 'velocities must be finite'}), 400
+    vx = max(-_GO2_MAX_VX, min(_GO2_MAX_VX, raw[0]))
+    vy = max(-_GO2_MAX_VY, min(_GO2_MAX_VY, raw[1]))
+    vyaw = max(-_GO2_MAX_VYAW, min(_GO2_MAX_VYAW, raw[2]))
+    seq = next(_go2_seq)                     # stamped at receipt, before forwarding
+    with _go2_drive_lock:
+        _go2_drive["possibly_moving"] = True  # until a stop is confirmed, whatever happens below
+        _go2_drive["last_input"] = time.time()
+    try:
+        response = requests.post(f'{robot_host.service_url()}/move',
+            json={'vx': vx, 'vy': vy, 'vyaw': vyaw, 'seq': seq}, timeout=3)
         return jsonify(response.json()), response.status_code
     except Exception as e:
-        _go2_last_move_ts = 0.0
         robot_host.report_failure()   # a venue change looks like a connection error
         return jsonify({'success': False, 'message': str(e)}), 503
 
 @app.route('/go2/stop', methods=['POST'])
 def go2_stop():
-    global _go2_last_move_ts
-    _go2_last_move_ts = 0.0
+    _ensure_go2_watchdog()
     try:
         response = requests.post(f'{robot_host.service_url()}/stop',
-            json={},
-            timeout=3
-        )
-        return jsonify(response.json()), response.status_code
+            json={'seq': next(_go2_seq)}, timeout=4)
+        body = response.json()
+        if response.status_code == 200 and body.get('success'):
+            with _go2_drive_lock:
+                _go2_drive["possibly_moving"] = False
+        # otherwise the deadman keeps retrying until the robot confirms
+        return jsonify(body), response.status_code
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 503
 

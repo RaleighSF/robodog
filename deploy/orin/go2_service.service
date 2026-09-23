@@ -3,8 +3,10 @@ Description=Watch Dog Go2 link (DDS commands/telemetry + WebRTC video) on :5001
 After=docker.service network-online.target
 Requires=docker.service
 Wants=network-online.target
-# Watch Dog and Azimuth never drive the dog at the same time.
+# Watch Dog and Azimuth never drive the dog at the same time. Conflicts= stops the
+# other unit; After= makes that stop COMPLETE before this one starts (no overlap).
 Conflicts=azimuth-edge.service
+After=azimuth-edge.service
 
 [Service]
 # GO2_AES_KEY (per-device WebRTC key, secret) and optional GO2_ROBOT_IP.

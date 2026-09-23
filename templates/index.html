@@ -3515,7 +3515,8 @@
         (function initDpad() {
             let _moveInterval = null;
             let _moveInFlight = false;
-            const MOVE_RATE_MS = 300;
+            // Renew well inside the Orin's 0.4 s motion lease (Azimuth's cadence).
+            const MOVE_RATE_MS = 150;
 
             function startMove(btn) {
                 stopMove();
@@ -3550,13 +3551,13 @@
                     if (!resp.ok) {
                         let msg = 'Move rejected';
                         try { const j = await resp.json(); if (j && j.message) msg = j.message; } catch (_) {}
-                        if (resp.status === 409) msg = 'Crouch first \u2014 movement is blocked while standing';
                         if (typeof showStatus === 'function') showStatus(msg, 'warning');
                         stopMove();
                     }
                 } catch (e) {
-                    // A slow tick (first Move includes BalanceStand) must not end the
-                    // drive session. Skip it and let the repeat interval retry.
+                    // A slow or lost tick must not end the drive session: skip it and
+                    // let the repeat interval retry (the Orin's lease stops the dog
+                    // if renewals really stop arriving).
                 } finally {
                     _moveInFlight = false;
                 }
