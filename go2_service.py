@@ -720,17 +720,23 @@ def handle_stop():
     # late is refused (SESSION_RETIRED) instead of starting motion.
     retire = body.get("retire") if isinstance(body.get("retire"), list) else []
     retire = [s for s in retire[:32] if isinstance(s, str) and 8 <= len(s) <= 64]
+    retire_only = bool(retire) and session is None and body.get("all") is False
+    # Retirement and the stop it needs are ONE atomic step: no other press can be
+    # admitted between them (and then be caught by this stop).
     with act.lock:
-        active_hit = act.session in retire and act.moving
+        active_hit = act.session is not None and act.session in retire and act.moving
         for s in retire:
             act._retire(s)
-    if retire and session is None and body.get("all") is False:
-        # retire-only: never stops a different, live press
-        if not active_hit:
-            return jsonify({"success": True, "confirmed": True, "retired": len(retire),
-                            "message": "Released drives retired"})
-        everything = False
-    ok = bool(act.stop_and_wait(session, timeout=3.0, retire_active=everything))
+        if retire_only:
+            # never stops a different, live press: stop only if the active drive
+            # was one of the listed (now retired) sessions
+            n = act._request_stop(None, retire_active=False) if active_hit else None
+        else:
+            n = act._request_stop(session, retire_active=everything)
+    if n is None:
+        return jsonify({"success": True, "confirmed": True, "retired": len(retire),
+                        "message": "Released drives retired"})
+    ok = bool(act.wait_stop(n, timeout=3.0))
     return jsonify({"success": ok, "confirmed": ok, "retired": len(retire),
                     "message": "Stop verified at rest" if ok else "Stop sent — still verifying, retrying until confirmed"})
 
