@@ -11,7 +11,7 @@ ssh thor 'demo-mode watchdog'   # Watch Dog up, Elastic-Vision app stack down
 ssh thor 'demo-mode elastic'    # the reverse
 ```
 
-Dashboard: `http://<thor-ip>:8000`.
+Dashboard: `https://<thor-ip>:8443` (HTTPS only; see Operator sign-in).
 
 The two modes are exclusive because vLLM holds 80% of the Thor's memory.
 Elastic-Vision's app, discovery, Elasticsearch and MinIO services only fit
@@ -57,21 +57,38 @@ Rebuild (`docker compose build`) only when `Dockerfile` or
 ## Operator sign-in
 
 Every page, video stream and API call (robot control included) needs a
-signed-in operator. Sign in once per browser; the session lasts 30 days.
-Sign out is in Settings.
+signed-in operator. Open endpoints: `/login`, `/logout`, `/healthz` (returns
+only "ok") and static assets. Sign in once per browser; the session lasts
+30 days. Sign out is in Settings.
 
 ```bash
 ssh -t thor 'docker exec -it watchdog python3 auth.py set-password'   # change it
 ssh thor 'docker exec watchdog python3 auth.py status'
 ```
 
-The password hash and session key are stored in `/state/auth.json` (the
-`watchdog-state` volume, mode 0600), never in git. Changing the password signs
-out every browser immediately. With no password set, the dashboard stays locked.
+- **HTTPS only.** On first boot the container generates a self-signed
+  certificate into the state volume (`/state/tls`). Each browser shows a
+  one-time "not private" warning; the traffic is encrypted either way.
+  Replace `cert.pem`/`key.pem` with a CA-issued pair to remove the warning.
+- **Password change revokes sessions.** Every session is bound to a credential
+  generation that rotates with the password, so an old session is refused on
+  its next request, including one that was in flight during the change.
+- **CSRF:** requests that change state must come from this host:port.
+- **Throttling:** 5 failures per address and 30 overall per minute. This
+  state is in memory, so it resets when the container restarts. Clients
+  behind one NAT share the per-address limit.
+- **Loopback:** trusted on the AGX, for its on-box auto-arm supervisor.
+  Disabled in the Thor container (`WATCHDOG_TRUST_LOOPBACK=0`).
+- With no password set, the dashboard stays locked. The hash, signing key
+  and generation live in `/state/auth.json` (mode 0600), never in git.
+- `demo-mode` treats only the docker CLI's exact missing-container reply
+  (`no such object: NAME`, docker 25–29 wording) as "absent". Any other
+  docker error stops the switch.
 
 ## Remaining hardening (not done)
 
 The container runs as root with the checkout mounted read-write, because the
 app writes detection logs, UI state and the CLIP cache inside it. The next step
 is a non-root user plus a read-only code mount with separate data directories.
-The dashboard is plain HTTP, so keep it on the demo network (Cradlepoint).
+Cosmos's vLLM server has no authentication of its own. It is reachable only on
+Elastic-Vision's internal Docker network (no published port).
