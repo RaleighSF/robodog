@@ -715,8 +715,23 @@ def handle_stop():
             _ANON_WAITERS.release()
         return jsonify({"success": ok, "confirmed": ok,
                         "message": "Stop verified at rest" if ok else "Stop sent — still verifying"})
+    # retire: released presses the controller has not yet had confirmed. Retired
+    # here even if no Move of theirs ever arrived, so a Move of theirs that lands
+    # late is refused (SESSION_RETIRED) instead of starting motion.
+    retire = body.get("retire") if isinstance(body.get("retire"), list) else []
+    retire = [s for s in retire[:32] if isinstance(s, str) and 8 <= len(s) <= 64]
+    with act.lock:
+        active_hit = act.session in retire and act.moving
+        for s in retire:
+            act._retire(s)
+    if retire and session is None and body.get("all") is False:
+        # retire-only: never stops a different, live press
+        if not active_hit:
+            return jsonify({"success": True, "confirmed": True, "retired": len(retire),
+                            "message": "Released drives retired"})
+        everything = False
     ok = bool(act.stop_and_wait(session, timeout=3.0, retire_active=everything))
-    return jsonify({"success": ok, "confirmed": ok,
+    return jsonify({"success": ok, "confirmed": ok, "retired": len(retire),
                     "message": "Stop verified at rest" if ok else "Stop sent — still verifying, retrying until confirmed"})
 
 

@@ -21,7 +21,11 @@ cp "$HERE/Dockerfile" "$HERE/entrypoint.sh" "$HERE/go2_service.service" "$REPO/g
 git -C "$GO2DDS_DIR" archive "$REV" go2dds | tar -x -C "$STAGE"
 echo "$REV" > "$STAGE/go2dds/REVISION"
 # Private staging dir per deploy on the Orin (no shared mutable paths).
-RDIR="$(sshpass -e ssh "${SSH_OPTS[@]}" "$HOST" 'mktemp -d "$HOME/watchdog-go2.XXXXXX"')"
+# Stale dirs from interrupted deploys (connection lost before any cleanup ran)
+# are swept here, before allocating a new one.
+RDIR="$(sshpass -e ssh "${SSH_OPTS[@]}" "$HOST" 'find "$HOME" -maxdepth 1 -name "watchdog-go2.*" -type d -mmin +60 -exec rm -rf {} + 2>/dev/null; mktemp -d "$HOME/watchdog-go2.XXXXXX"')"
+# From allocation on, this side removes it too (covers scp/ssh/password failures).
+trap 'rm -rf "$STAGE"; sshpass -e ssh "${SSH_OPTS[@]}" "$HOST" "rm -rf $(printf %q "$RDIR")" 2>/dev/null || true' EXIT
 sshpass -e scp -r "${SSH_OPTS[@]}" "$STAGE"/* "$HOST":"$RDIR"/
 # Build, then run THAT image's --preflight (by image ID, never a shared tag)
 # with exactly the environment the unit will get (systemd-run applies
@@ -46,8 +50,34 @@ if ! printf "%s\n" "$pw" | sudo -S -p "" systemd-run --quiet --wait --pipe --col
         -v /etc/watchdog-go2/tls:/tls:ro "$ID" --preflight; then
   echo "preflight failed - running service left untouched (see deploy/orin/README.md)" >&2; exit 1
 fi
+# Keep the running image under a rollback tag (never prune-eligible), promote,
+# then require the new service to come up healthy (HTTPS status with a live DDS
+# link) or put the previous image back.
+PREV="$(docker image inspect -f '{{.Id}}' watchdog-go2:latest 2>/dev/null || true)"
+[ -n "$PREV" ] && docker tag "$PREV" watchdog-go2:previous
+restart() {
+  printf "%s\n" "$pw" | sudo -S -p "" bash -c "install -m 644 go2_service.service /etc/systemd/system/go2_service.service && systemctl daemon-reload && systemctl restart go2_service"
+}
+healthy() {
+  for _ in $(seq 1 30); do
+    # loopback, so the certificate name is not checked here; the Thor verifies it
+    curl -ksf -m2 https://127.0.0.1:5001/status | grep -q '"connected":true' && return 0
+    sleep 2
+  done
+  return 1
+}
 docker tag "$ID" watchdog-go2:latest
-printf "%s\n" "$pw" | sudo -S -p "" bash -c "install -m 644 go2_service.service /etc/systemd/system/go2_service.service && systemctl daemon-reload && systemctl restart go2_service"
+restart
+if healthy; then
+  echo "new service healthy ($ID)"
+else
+  echo "new service NOT healthy within 60s" >&2
+  if [ -n "$PREV" ]; then
+    docker tag "$PREV" watchdog-go2:latest && restart
+    healthy && echo "rolled back to $PREV (healthy)" >&2 || echo "rolled back to $PREV - STILL NOT HEALTHY, check the robot" >&2
+  fi
+  exit 1
+fi
 REMOTE
 )"
 printf '%s\n' "$SSHPASS" | sshpass -e ssh "${SSH_OPTS[@]}" "$HOST" "RDIR=$(printf %q "$RDIR") bash -c $(printf %q "$REMOTE_SCRIPT")"

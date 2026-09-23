@@ -920,6 +920,24 @@ _GO2_MOVE_TIMEOUT = 0.8
 # enforced on the Orin by the browser's drive session + seq (Azimuth's model).
 _go2_drive = {"possibly_moving": False, "last_input": 0.0, "gen": 0}
 _go2_drive_lock = threading.Lock()
+# Released presses. `_go2_unretired`: sessions the operator released whose
+# retirement the Orin has not confirmed yet - re-sent with every stop (and by the
+# backup deadman) until confirmed, so a lost release can never let a delayed
+# Move of that press start motion later. `_go2_released`: every recently
+# released press; Moves for them are refused here before reaching the robot.
+from collections import OrderedDict
+_go2_unretired = OrderedDict()
+_go2_released = OrderedDict()
+_GO2_RELEASED_MAX = 256
+
+
+def _go2_mark_released(session):
+    with _go2_drive_lock:
+        for d in (_go2_unretired, _go2_released):
+            d[session] = time.time()
+            d.move_to_end(session)
+            while len(d) > _GO2_RELEASED_MAX:
+                d.popitem(last=False)
 _GO2_COMMAND_COOLDOWN = 1.5
 _GO2_MAX_VX = 0.25
 _GO2_MAX_VY = 0.2
@@ -954,11 +972,19 @@ def _go2_send_stop(session=None, timeout=4, everything=False):
     confirmed stop covers the newest input."""
     with _go2_drive_lock:
         gen = _go2_drive["gen"]
+        retire = list(_go2_unretired)[-32:]
+    payload = {'session': session, 'all': bool(everything or not session)}
+    if retire:
+        payload['retire'] = retire
     try:
-        r = robot_host.http().post(f'{robot_host.service_url()}/stop',
-                          json={'session': session, 'all': bool(everything or not session)}, timeout=timeout)
+        r = robot_host.http().post(f'{robot_host.service_url()}/stop', json=payload, timeout=timeout)
         body = r.json()
         ok = r.status_code == 200 and bool(body.get('success'))
+        # The Orin retires the listed sessions on receipt (before any stop wait).
+        if r.status_code == 200 and body.get('retired') == len(retire):
+            with _go2_drive_lock:
+                for s in retire:
+                    _go2_unretired.pop(s, None)
     except Exception as e:
         logger.warning(f"[GO2] stop request failed: {e}")
         return False, {'success': False, 'message': 'robot link unreachable'}
@@ -969,6 +995,27 @@ def _go2_send_stop(session=None, timeout=4, everything=False):
     return ok, body
 
 
+def _go2_retire_released():
+    """Retire-only call: never stops a different, live press."""
+    with _go2_drive_lock:
+        retire = list(_go2_unretired)[-32:]
+    if not retire:
+        return True
+    try:
+        r = robot_host.http().post(f'{robot_host.service_url()}/stop',
+                                   json={'session': None, 'all': False, 'retire': retire}, timeout=2)
+        body = r.json()
+    except Exception as e:
+        logger.warning(f"[GO2] retire request failed: {e}")
+        return False
+    if r.status_code == 200 and body.get('retired') == len(retire):
+        with _go2_drive_lock:
+            for s in retire:
+                _go2_unretired.pop(s, None)
+        return True
+    return False
+
+
 def _go2_watchdog_loop():
     global _go2_watchdog_running
     _go2_watchdog_running = True
@@ -977,6 +1024,8 @@ def _go2_watchdog_loop():
             due = _go2_drive["possibly_moving"] and time.time() - _go2_drive["last_input"] > _GO2_MOVE_TIMEOUT
         if due and not _go2_send_stop()[0]:
             logger.warning("[GO2 Watchdog] auto-stop not confirmed yet — retrying")
+        elif not due and _go2_unretired and not _go2_retire_released():
+            logger.warning("[GO2 Watchdog] released press not yet retired on the robot — retrying")
         time.sleep(0.2)
 
 
@@ -1053,6 +1102,11 @@ def go2_move():
     if not isinstance(session, str) or not isinstance(seq, int) or isinstance(seq, bool):
         return jsonify({'success': False, 'message': 'session and seq are required'}), 400
     with _go2_drive_lock:
+        released = session in _go2_released
+    if released:
+        return jsonify({'success': False, 'error': 'SESSION_RETIRED',
+                        'message': 'That drive was stopped — press again.'}), 409
+    with _go2_drive_lock:
         _go2_drive["possibly_moving"] = True  # until a covering stop is confirmed
         _go2_drive["last_input"] = time.time()
         _go2_drive["gen"] += 1
@@ -1098,8 +1152,10 @@ def go2_stop():
     _ensure_go2_watchdog()
     data = request.get_json(silent=True) or {}
     session = data.get('session')
-    ok, body = _go2_send_stop(session if isinstance(session, str) else None,
-                              everything=bool(data.get('all')))
+    session = session if isinstance(session, str) and 8 <= len(session) <= 64 else None
+    if session:
+        _go2_mark_released(session)          # retried until the Orin confirms retirement
+    ok, body = _go2_send_stop(session, everything=bool(data.get('all')))
     # if not confirmed, the deadman (here and on the Orin) keeps retrying
     return jsonify(body), (200 if ok else 202)
 
