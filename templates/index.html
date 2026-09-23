@@ -3529,7 +3529,7 @@
             // a delayed Move from it can never restart motion. The Orin's 0.4 s lease
             // stops the dog if renewals stop arriving; renew well inside it.
             const MOVE_RATE_MS = 150;
-            const KEEP_TRYING = new Set(['STOP_PENDING', 'SETTLING', 'BUSY']);   // transient: keep renewing
+            const KEEP_TRYING = new Set(['STOP_PENDING', 'SETTLING', 'BUSY', 'DEADLINE']);   // transient: keep renewing
             let _moveInterval = null;
             let _inFlight = null;          // session whose request is outstanding
             let _session = null;
@@ -3588,9 +3588,10 @@
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
                         body: JSON.stringify({ vx, vy, vyaw, session, seq: ++_seq }),
-                        // A Move older than the robot's 0.4 s lease is worthless: give up
-                        // quickly so the next renewal isn't held behind a stalled one.
-                        signal: AbortSignal.timeout(700)
+                        // The server answers within 0.3 s (its own deadline); give up
+                        // just after, so a stalled tick never holds back the next
+                        // renewal past the robot's 0.4 s lease.
+                        signal: AbortSignal.timeout(400)
                     });
                     if (!resp.ok && session === _session) {
                         let j = {};

@@ -43,8 +43,12 @@ demo CA at `/state/tls/ca.pem`.
 SSHPASS=<orin password> deploy/orin/build.sh unitree@10.0.0.57
 ```
 
-The script refuses to restart the service if the env file or the TLS files are
-missing, because the service fails closed without them.
+`build.sh` builds a candidate image and runs `go2_service.py --preflight`
+inside it, with the unit's real environment (via `systemd-run -p
+EnvironmentFile=`) and the TLS mount. The preflight applies the service's own
+token rules, loads the certificate/key pair (so a mismatch or a corrupt file
+fails) and rejects a certificate expiring within a day. The running service is
+replaced only if the preflight passes.
 
 Command mapping:
 

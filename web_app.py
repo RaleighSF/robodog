@@ -7,6 +7,7 @@ import math
 import atexit
 import signal
 import queue
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from flask import Flask, render_template, Response, jsonify, request, send_file
 from hybrid_detector import HybridDetector
 from camera import CameraManager
@@ -926,6 +927,17 @@ _GO2_MAX_VYAW = 0.5
 # Robot address is resolved at call time by robot_host (see robot_host.py).
 
 
+# Move proxy deadline. requests' (connect, read) timeouts bound inactivity, not
+# the whole call, so the overall deadline is enforced here: the proxy answers
+# within _GO2_MOVE_DEADLINE_S no matter what the socket does. A Move that misses
+# it is abandoned (it may still land; the Orin rejects it if its session was
+# retired meanwhile). Deliberate fail-stop: if renewals stall past the robot's
+# 0.4 s lease, the Orin stops the dog and retires the press, and the operator
+# presses again. The deadman is never lengthened to hide a stall.
+_GO2_MOVE_DEADLINE_S = 0.3
+_go2_move_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="go2-move")
+
+
 def _go2_send_stop(session=None, timeout=4, everything=False):
     """Send a stop; returns (ok, body). A session-less stop (E-stop, deadman)
     stops the robot and retires whatever drive is active ON THE ORIN — never a
@@ -1039,13 +1051,15 @@ def go2_move():
         url = robot_host.cached_service_url()     # no discovery inside the drive deadline
         if url is None:
             return jsonify({'success': False, 'message': 'robot link unreachable'}), 503
-        # Bounded end to end: <=0.3 s to (re)connect + <=0.3 s for the one small
-        # reply read. On a reused keep-alive a Move answers in ~45 ms; a late one
-        # is useless (the robot's 0.4 s lease has moved on) and the browser has
-        # already given up at 0.7 s.
-        response = robot_host.http().post(f'{url}/move',
+        # ~45 ms on a reused keep-alive; the overall deadline is the future's.
+        fut = _go2_move_pool.submit(lambda: robot_host.http().post(f'{url}/move',
             json={'vx': vx, 'vy': vy, 'vyaw': vyaw, 'session': session, 'seq': seq},
-            timeout=(0.3, 0.3))
+            timeout=(0.3, 0.3)))
+        try:
+            response = fut.result(timeout=_GO2_MOVE_DEADLINE_S)
+        except FutureTimeout:
+            return jsonify({'success': False, 'error': 'DEADLINE',
+                            'message': 'robot link slow — renewing'}), 504
         return jsonify(response.json()), response.status_code
     except Exception as e:
         robot_host.report_failure()   # a venue change looks like a connection error

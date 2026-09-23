@@ -37,6 +37,7 @@ import math
 import os
 import queue
 import threading
+import sys
 import time
 
 import cv2
@@ -728,7 +729,42 @@ def motion_mode():
     return jsonify(body), http
 
 
+def preflight():
+    """Validate exactly what the service will use (same token rules, the real
+    TLS pair). Exit 0 = safe to restart onto; used by deploy/orin/build.sh."""
+    import ssl
+    problems = []
+    if _TOKEN_REJECTED:
+        problems.append("GO2_SERVICE_TOKEN malformed (need >= 32 ASCII chars, no whitespace)")
+    elif not CONTROL_TOKEN:
+        problems.append("GO2_SERVICE_TOKEN not set")
+    if not AES_KEY:
+        problems.append("GO2_AES_KEY not set (no video)")
+    cert, key = os.environ.get("GO2_TLS_CERT"), os.environ.get("GO2_TLS_KEY")
+    if not (cert and key):
+        problems.append("GO2_TLS_CERT / GO2_TLS_KEY not set")
+    else:
+        try:
+            ssl.create_default_context(ssl.Purpose.CLIENT_AUTH).load_cert_chain(cert, key)
+        except Exception as e:                       # noqa: BLE001
+            problems.append("TLS certificate/key unusable or mismatched: %s" % e)
+        else:
+            try:
+                info = ssl._ssl._test_decode_cert(cert)
+                if ssl.cert_time_to_seconds(info["notAfter"]) < time.time() + 86400:
+                    problems.append("TLS certificate expires within a day (%s)" % info["notAfter"])
+            except Exception as e:                   # noqa: BLE001
+                problems.append("TLS certificate unreadable: %s" % e)
+    for p in problems:
+        print("[preflight] FAIL: " + p)
+    if not problems:
+        print("[preflight] ok")
+    raise SystemExit(1 if problems else 0)
+
+
 if __name__ == "__main__":
+    if "--preflight" in sys.argv:
+        preflight()
     # HTTP/1.1 so the controller's pooled connections stay open (Werkzeug's
     # default HTTP/1.0 closes every connection, adding a handshake per Move).
     from werkzeug.serving import WSGIRequestHandler
