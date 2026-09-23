@@ -137,7 +137,7 @@
             display: block;
         }
         .partner-logo-img.is-tile {
-            /* Bridgestone's black body vanishes against the dark nav, so mount it
+            /* Dark-bodied partner marks vanish against the dark nav, so mount them
                on a white tile. border-box keeps the tile a fixed height. */
             padding: 5px;
             background: #fff;
@@ -1723,11 +1723,12 @@
                     </div>
                 </div>
             </div>
-            <div class="partner-section">
-                <span class="partner-label" id="partnerLabel">{{ profile.partner.label }}</span>
-                <img class="partner-logo-img{% if profile.partner.tile %} is-tile{% endif %}" id="partnerLogo"
-                     src="{{ profile.partner.logo if profile.partner.has_logo else '' }}" alt="{{ profile.partner.alt }}"{% if not profile.partner.has_logo %} hidden{% endif %}>
-                <span class="partner-wordmark" id="partnerWordmark"{% if profile.partner.has_logo %} hidden{% endif %}>{{ profile.partner.wordmark or '' }}</span>
+            {% set partner = profile.partner or {} %}
+            <div class="partner-section" id="partnerSection"{% if not profile.partner %} hidden{% endif %}>
+                <span class="partner-label" id="partnerLabel">{{ partner.label or '' }}</span>
+                <img class="partner-logo-img{% if partner.tile %} is-tile{% endif %}" id="partnerLogo"
+                     src="{{ partner.logo if partner.has_logo else '' }}" alt="{{ partner.alt or '' }}"{% if not partner.has_logo %} hidden{% endif %}>
+                <span class="partner-wordmark" id="partnerWordmark"{% if partner.has_logo or not partner.wordmark %} hidden{% endif %}>{{ partner.wordmark or '' }}</span>
             </div>
         </div>
     </nav>
@@ -4125,6 +4126,9 @@
                 font.disabled = true;
             }
             // Approved artwork when present on the edge, else a text reference.
+            const section = document.getElementById('partnerSection');
+            section.hidden = !p.partner;
+            if (!p.partner) return;
             const logo = document.getElementById('partnerLogo');
             logo.hidden = !p.partner.has_logo;
             logo.src = p.partner.has_logo ? p.partner.logo : '';

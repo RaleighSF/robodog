@@ -21,12 +21,7 @@ PROFILES = {
         'label': 'Default — NTT DATA',
         'title': 'Project Watch Dog - Factory Patrol Monitoring | NTT DATA',
         'font_href': 'https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap',
-        'partner': {
-            'label': 'In partnership with',
-            'logo': '/static/bridgestone-logo.png',
-            'alt': 'Bridgestone',
-            'tile': True,
-        },
+        'partner': None,   # no co-brand on the house look
     },
     'azure': {
         'id': 'azure',
@@ -164,9 +159,10 @@ def nvidia_badge():
 
 def _with_assets(profile):
     p = dict(profile)
-    partner = dict(p['partner'])
-    partner['has_logo'] = asset_exists(partner.get('logo'))
-    p['partner'] = partner
+    if p.get('partner'):
+        partner = dict(p['partner'])
+        partner['has_logo'] = asset_exists(partner.get('logo'))
+        p['partner'] = partner
     return p
 
 
