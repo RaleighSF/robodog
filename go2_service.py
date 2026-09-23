@@ -43,6 +43,11 @@ import cv2
 from flask import Flask, Response, jsonify, request
 
 ROBOT_IP = os.environ.get("GO2_ROBOT_IP", "192.168.123.161")
+# Control token: every command endpoint requires "Authorization: Bearer <token>".
+# Only the controlling dashboard (the Thor) holds it; others are view-only.
+# Fail closed: with no token configured, commands are refused (stop excepted).
+CONTROL_TOKEN = (os.environ.get("GO2_SERVICE_TOKEN") or "").strip()
+OPEN_ENDPOINTS = {"status", "battery", "video_feed"}   # read-only
 AES_KEY = (os.environ.get("GO2_AES_KEY") or "").strip() or None
 JPEG_QUALITY = int(os.environ.get("GO2_JPEG_QUALITY", "80"))
 JPEG_PARAMS = [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY]
@@ -81,6 +86,24 @@ STILL_MIN_SAMPLES = 4
 STILL_DEADLINE_S = 2.5
 
 app = Flask(__name__)
+
+
+@app.before_request
+def _require_control_token():
+    import hmac
+    if request.endpoint in OPEN_ENDPOINTS:
+        return None
+    sent = request.headers.get("Authorization", "")
+    ok = bool(CONTROL_TOKEN) and hmac.compare_digest(sent, "Bearer " + CONTROL_TOKEN)
+    if ok:
+        return None
+    if request.endpoint == "handle_stop":
+        # A stop is never refused (anyone may stop the dog), but without the token
+        # it cannot name or retire sessions: it stops and retires the active drive.
+        request.environ["watchdog.anonymous_stop"] = True
+        return None
+    return jsonify({"success": False, "error": "UNAUTHORIZED",
+                    "message": "control token required (this dashboard is view-only)"}), 401
 
 
 @app.after_request
@@ -445,6 +468,11 @@ class Actuator:
         with self.lock:
             if session in self.retired:
                 return 409, {"success": False, "error": "SESSION_RETIRED", "message": "That drive was stopped — press again."}
+            if (self.session is not None and session != self.session and self.moving
+                    and time.monotonic() < self.lease_until):
+                # One controller at a time (Azimuth's rule): a live drive is never
+                # taken over by another press/client; it must release or lapse.
+                return 409, {"success": False, "error": "BUSY", "message": "Another drive is active."}
             if session == self.session and seq <= self.seq:
                 return 409, {"success": False, "error": "SUPERSEDED", "message": "Older than the current setpoint."}
             if self.stop_pending():
@@ -729,6 +757,8 @@ def handle_stop():
     # Never refused. Retires the named drive session (or the active one) and
     # waits briefly for a verified rest; unconfirmed stops keep being retried.
     body = request.get_json(silent=True) or {}
+    if request.environ.get("watchdog.anonymous_stop"):
+        body = {"all": True}
     session = body.get("session") if isinstance(body.get("session"), str) else None
     # 'all' (E-stop): retire the caller's own press AND whatever drive is active
     # here. Without it a named stop is a D-pad release: only that press retires.
@@ -748,6 +778,12 @@ def motion_mode():
 
 
 if __name__ == "__main__":
+    # HTTP/1.1 so the controller's pooled connections stay open (Werkzeug's
+    # default HTTP/1.0 closes every connection, adding a handshake per Move).
+    from werkzeug.serving import WSGIRequestHandler
+    WSGIRequestHandler.protocol_version = "HTTP/1.1"
+    if not CONTROL_TOKEN:
+        log("[Auth] GO2_SERVICE_TOKEN not set — all command endpoints refuse (fail closed)")
     threading.Thread(target=dds_supervisor, name="dds-supervisor", daemon=True).start()
     threading.Thread(target=act.supervise, name="deadman", daemon=True).start()
     threading.Thread(target=encoder, name="jpeg-encoder", daemon=True).start()

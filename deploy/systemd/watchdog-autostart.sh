@@ -46,17 +46,29 @@ log(){ echo "[autostart] $(date '+%H:%M:%S') $*"; }
 
 log "supervisor started (interval ${INTERVAL}s)"
 armed_note=0
+stale_ticks=0
 while true; do
-  if dash -m6 "$DASH/status" 2>/dev/null | grep -q '"is_running":true'; then
-    armed_note=0
-    sleep "$INTERVAL"; continue
+  st=$(dash -m6 "$DASH/status" 2>/dev/null)
+  # Healthy = detection running AND fresh video. "Running" on a dead feed is not
+  # healthy: after two stale checks in a row the pipeline is re-armed below.
+  if grep -q '"is_running":true' <<<"$st"; then
+    if grep -q '"video_fresh":false' <<<"$st"; then
+      stale_ticks=$((stale_ticks + 1))
+      if [ "$stale_ticks" -lt 2 ]; then sleep 15; continue; fi
+      log "detection running but video stale — re-arming"
+    else
+      stale_ticks=0; armed_note=0
+      sleep "$INTERVAL"; continue
+    fi
   fi
   if ! dash -m6 "$DASH/status" >/dev/null 2>&1; then
     sleep "$INTERVAL"; continue
   fi
   ROBOT=$(resolve_robot) || { [ "$armed_note" -eq 0 ] && { log "no robot on any known address"; armed_note=1; }; sleep "$INTERVAL"; continue; }
   # Require a real WebRTC connection, not merely an open port.
-  if ! curl -sf -m6 "$ROBOT/status" 2>/dev/null | grep -q '"connected":true'; then
+  # Require a live robot link AND video from it (DDS can be up with no camera).
+  rs=$(curl -sf -m6 "$ROBOT/status" 2>/dev/null)
+  if ! grep -q '"connected":true' <<<"$rs" || grep -q '"has_video":false' <<<"$rs"; then
     [ "$armed_note" -eq 0 ] && { log "waiting for robot"; armed_note=1; }
     sleep "$INTERVAL"; continue
   fi
@@ -67,7 +79,7 @@ while true; do
   sleep 8
   if dash -m6 "$DASH/status" 2>/dev/null | grep -q '"is_running":true'; then
     log "detection RUNNING"
-    armed_note=0
+    armed_note=0; stale_ticks=0
   else
     log "arm did not take - retrying next tick"
   fi

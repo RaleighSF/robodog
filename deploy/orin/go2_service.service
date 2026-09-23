@@ -9,11 +9,12 @@ Conflicts=azimuth-edge.service
 After=azimuth-edge.service
 
 [Service]
-# GO2_AES_KEY (per-device WebRTC key, secret) and optional GO2_ROBOT_IP.
+# GO2_AES_KEY (per-device WebRTC key) and GO2_SERVICE_TOKEN (control token held
+# only by the Thor) — both secrets — and optional GO2_ROBOT_IP.
 EnvironmentFile=/etc/go2_service.env
 ExecStartPre=-/usr/bin/docker rm -f watchdog-go2
 ExecStart=/usr/bin/docker run --rm --name watchdog-go2 --network host --ipc host \
-  -e GO2_AES_KEY -e GO2_ROBOT_IP watchdog-go2:latest
+  -e GO2_AES_KEY -e GO2_ROBOT_IP -e GO2_SERVICE_TOKEN watchdog-go2:latest
 ExecStop=/usr/bin/docker stop -t 10 watchdog-go2
 Restart=always
 RestartSec=5

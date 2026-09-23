@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import cv2
+import numpy as np
 import time
 import os
 import math
@@ -82,9 +83,6 @@ class WebApp:
         self._last_detections = []
         self._last_detection_ts = 0.0
         # Retuned 2026-09-02 for GPU. Was 0.25 (~4 FPS), a CPU-era compromise.
-        # YOLO11m @1280 measures ~59 ms on the Orin GPU, so 0.1 s (~10 FPS) leaves
-        # roughly 40% headroom for the VLM, JPEG encode and telemetry.
-        self._detection_interval = 0.1   # seconds between detector invocations (~10 FPS)
         # Source frames are 1280x720; 1280 means no downscale at all. The old 800 px
         # cap existed only to make CPU inference tractable and cost small-object recall.
         self._max_detection_width = 1280 # native width — no downscale on GPU
@@ -95,7 +93,6 @@ class WebApp:
         self._detection_queue = queue.Queue(maxsize=1)
         self._detection_thread = None
         self._detection_stop_event = threading.Event()
-        self._last_detection_enqueue_ts = 0.0
         self._last_detection_frame_size = (0, 0)
         self._feeder_thread = None
         self._feeder_stop_event = threading.Event()
@@ -168,40 +165,34 @@ class WebApp:
             self._feeder_thread = None
 
     def _detection_feeder_loop(self):
+        """One detection per NEW camera frame (the source rate, ~14 fps from the
+        dog) instead of a fixed interval tuned for the AGX. The queue is a
+        single latest-frame slot: if the worker is behind, the waiting frame is
+        replaced by the newer one, so detection never lags the camera."""
         frame_count = 0
-        none_frame_count = 0
-        loop_iterations = 0
-        print(f"[DetectionFeeder] Starting feeder loop...")
+        last_seq = 0
+        print("[DetectionFeeder] Starting feeder loop (new-frame driven)...")
         while not self._feeder_stop_event.is_set():
-            loop_iterations += 1
-            if loop_iterations <= 5:  # Log first 5 iterations for debugging
-                print(f"[DetectionFeeder] Iteration {loop_iterations}: is_running={self.is_running}, camera_available={camera_manager.is_camera_available()}")
-
-            if self.is_running and camera_manager.is_camera_available():
-                frame = camera_manager.get_frame()
-                if frame is not None:
-                    now = time.time()
-                    if ((now - self._last_detection_enqueue_ts) >= self._detection_interval
-                            and not self._detection_queue.full()):
-                        try:
-                            self._detection_queue.put(frame.copy(), timeout=0.01)
-                            self._last_detection_enqueue_ts = now
-                            self._last_detection_frame_size = (frame.shape[1], frame.shape[0])
-                            frame_count += 1
-                            if frame_count == 1 or frame_count % 20 == 0:  # Log first frame and every 20 frames
-                                print(f"[DetectionFeeder] Enqueued {frame_count} frames for detection")
-                        except queue.Full:
-                            pass
-                else:
-                    none_frame_count += 1
-                    if none_frame_count <= 10 or none_frame_count % 100 == 0:  # Log first 10 and every 100
-                        print(f"[DetectionFeeder] Frame is None (count: {none_frame_count})")
-                    time.sleep(0.01)
-            else:
-                if loop_iterations <= 5:
-                    print(f"[DetectionFeeder] Not running or camera not available, sleeping...")
+            if not self.is_running:
                 time.sleep(0.05)
-        print(f"[DetectionFeeder] Exiting - enqueued {frame_count} total frames, got {none_frame_count} None frames, {loop_iterations} iterations")
+                continue
+            frame, seq, _ts = camera_manager.wait_for_new_frame(last_seq, timeout=0.5)
+            if frame is None:
+                continue
+            last_seq = seq
+            try:
+                self._detection_queue.get_nowait()          # drop the unprocessed older frame
+                self._detection_queue.task_done()
+            except queue.Empty:
+                pass
+            try:
+                self._detection_queue.put_nowait(frame)
+            except queue.Full:
+                continue
+            self._last_detection_frame_size = (frame.shape[1], frame.shape[0])
+            frame_count += 1
+            if frame_count == 1 or frame_count % 100 == 0:
+                print(f"[DetectionFeeder] Enqueued {frame_count} frames for detection")
 
     def _detection_worker_loop(self):
         """Background worker that runs detection so streaming thread stays responsive."""
@@ -288,7 +279,7 @@ class WebApp:
                 # person, so gating on `detections` meant the check never ran in
                 # exactly the situation it exists for.
                 if _gesture_enabled:
-                    _check_outstretched_hand(frame)
+                    _offer_gesture_frame(frame)      # own worker: never slows detection
 
                 if self._config_manager.is_alert_logging_enabled():
                     now = time.time()
@@ -417,6 +408,27 @@ class WebApp:
                                    b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
                     else:
                         time.sleep(0.01)  # Reduced sleep when waiting for frames
+                elif has_activity and camera_manager.camera_source == "go2_webrtc":
+                    # The robot camera went stale: say so on the picture itself
+                    # (a frozen frame would mislead the operator), ~1 fps.
+                    if time.time() - last_emit_ts >= 1.0:
+                        last_emit_ts = time.time()
+                        lost = camera_manager.get_frame()
+                        if lost is None:
+                            lost = np.zeros((720, 1280, 3), np.uint8)
+                        lost = (lost * 0.35).astype(np.uint8)
+                        h, w = lost.shape[:2]
+                        age = camera_manager.frame_age()
+                        cv2.putText(lost, "VIDEO LOST - reconnecting", (int(w * 0.18), h // 2),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 1.4, (80, 80, 255), 3, cv2.LINE_AA)
+                        if age is not None:
+                            cv2.putText(lost, "last frame %.0fs ago" % age, (int(w * 0.18), h // 2 + 50),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, (200, 200, 200), 2, cv2.LINE_AA)
+                        ok, buf = cv2.imencode('.jpg', lost, jpeg_params)
+                        if ok:
+                            yield (b'--frame\r\n'
+                                   b'Content-Type: image/jpeg\r\n\r\n' + buf.tobytes() + b'\r\n')
+                    time.sleep(0.1)
                 else:
                     # Detection stopped - exit gracefully instead of looping.
                     # Must consider PPE too: during a mode switch is_running goes
@@ -650,6 +662,7 @@ def get_status():
     return jsonify({
         'is_running': web_app.is_running and camera_manager.is_running,
         'camera_available': camera_manager.is_camera_available(),
+        'video_fresh': bool(camera_status.get('video_fresh', camera_manager.is_camera_available())),
         'camera_status': camera_status,
         'current_model': detector.get_current_model()
     })
@@ -658,7 +671,7 @@ def get_status():
 def go2_battery():
     """Proxy endpoint for GO2 battery data to avoid CORS issues"""
     try:
-        response = requests.get(f'{robot_host.service_url()}/battery', timeout=2)
+        response = robot_host.http().get(f'{robot_host.service_url()}/battery', timeout=2)
         if response.status_code == 200:
             return jsonify(response.json())
         else:
@@ -673,7 +686,7 @@ def go2_video_passthrough():
     """Zero-copy proxy that relays the GO2 MJPEG stream for low-latency viewing."""
     def proxy():
         try:
-            with requests.get(f'{robot_host.service_url()}/video_feed', stream=True, timeout=(3, 30)) as resp:
+            with robot_host.http().get(f'{robot_host.service_url()}/video_feed', stream=True, timeout=(3, 30)) as resp:
                 resp.raise_for_status()
                 for chunk in resp.iter_content(chunk_size=8192):
                     if chunk:
@@ -806,6 +819,42 @@ def _ppe_worker_loop():
     logger.info("[PPE] Worker thread stopped")
 
 
+_gesture_slot = {"frame": None, "ts": 0.0}
+_gesture_slot_lock = threading.Condition()
+_gesture_thread = None
+_GESTURE_MAX_FRAME_AGE_S = 0.5     # never decide a shake on an old picture
+
+
+def _offer_gesture_frame(frame):
+    """Latest-frame slot for the gesture worker (older unprocessed frame dropped)."""
+    global _gesture_thread
+    with _gesture_slot_lock:
+        _gesture_slot["frame"] = frame
+        _gesture_slot["ts"] = time.monotonic()
+        _gesture_slot_lock.notify()
+    if _gesture_thread is None or not _gesture_thread.is_alive():
+        _gesture_thread = threading.Thread(target=_gesture_worker, name="gesture-worker", daemon=True)
+        _gesture_thread.start()
+
+
+def _gesture_worker():
+    while True:
+        with _gesture_slot_lock:
+            while _gesture_slot["frame"] is None:
+                _gesture_slot_lock.wait(1.0)
+            frame, ts = _gesture_slot["frame"], _gesture_slot["ts"]
+            _gesture_slot["frame"] = None
+        if time.monotonic() - ts > _GESTURE_MAX_FRAME_AGE_S:
+            continue                           # stale: skip, a fresher frame will come
+        age = camera_manager.frame_age()
+        if age is None or age > _GESTURE_MAX_FRAME_AGE_S:
+            continue                           # the camera itself has gone stale
+        try:
+            _check_outstretched_hand(frame)
+        except Exception as e:
+            logger.warning("[Gesture] worker error: %s", e)
+
+
 def _check_outstretched_hand(frame):
     """Run YOLO Pose keypoint detection for outstretched hand and fire shake.
 
@@ -875,7 +924,7 @@ def _go2_send_stop(session=None, timeout=4, everything=False):
     with _go2_drive_lock:
         gen = _go2_drive["gen"]
     try:
-        r = requests.post(f'{robot_host.service_url()}/stop',
+        r = robot_host.http().post(f'{robot_host.service_url()}/stop',
                           json={'session': session, 'all': bool(everything or not session)}, timeout=timeout)
         body = r.json()
         ok = r.status_code == 200 and bool(body.get('success'))
@@ -928,7 +977,7 @@ def go2_command():
         # Posture commands are stop-gated on the Orin (it stops and verifies
         # rest first), so the drive state is left to the deadman here.
 
-        response = requests.post(f'{robot_host.service_url()}/command',
+        response = robot_host.http().post(f'{robot_host.service_url()}/command',
                                 json={'command': command},
                                 timeout=5)
 
@@ -976,8 +1025,8 @@ def go2_move():
         _go2_drive["last_input"] = time.time()
         _go2_drive["gen"] += 1
     try:
-        response = requests.post(f'{robot_host.service_url()}/move',
-            json={'vx': vx, 'vy': vy, 'vyaw': vyaw, 'session': session, 'seq': seq}, timeout=3)
+        response = robot_host.http().post(f'{robot_host.service_url()}/move',
+            json={'vx': vx, 'vy': vy, 'vyaw': vyaw, 'session': session, 'seq': seq}, timeout=0.8)
         return jsonify(response.json()), response.status_code
     except Exception as e:
         robot_host.report_failure()   # a venue change looks like a connection error
@@ -1002,7 +1051,7 @@ def go2_motion_mode():
 
         logger.info(f"Setting GO2 motion mode to: {mode}")
 
-        response = requests.post(f'{robot_host.service_url()}/motion_mode',
+        response = robot_host.http().post(f'{robot_host.service_url()}/motion_mode',
                                  json={'mode': mode},
                                  timeout=5)
 
@@ -1647,7 +1696,7 @@ def rtsp_stop():
 def _refresh_robot_state():
     """Fetch battery/status from go2_service and cache for telemetry."""
     try:
-        resp = requests.get(f'{robot_host.service_url()}/battery', timeout=2)
+        resp = robot_host.http().get(f'{robot_host.service_url()}/battery', timeout=2)
         if resp.status_code == 200:
             data = resp.json()
             web_app._cached_robot_state.update({
@@ -1672,7 +1721,7 @@ def _build_heartbeat_event():
     # Check if go2_service is reachable
     go2_reachable = False
     try:
-        r = requests.get(f'{robot_host.service_url()}/status', timeout=2)
+        r = robot_host.http().get(f'{robot_host.service_url()}/status', timeout=2)
         go2_reachable = r.status_code == 200
     except Exception:
         pass
@@ -1722,7 +1771,7 @@ def _gesture_shake_callback(gesture_text: str):
     def _send():
         try:
             logger.info(f"[Gesture] Sending GO2 shake — triggered by: '{gesture_text}'")
-            resp = requests.post(
+            resp = robot_host.http().post(
                 f'{robot_host.service_url()}/command',
                 json={'command': 'shake'},
                 timeout=8,

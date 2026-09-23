@@ -123,3 +123,43 @@ class RobotHost:
 
 
 robot_host = RobotHost()
+
+
+# ── Authenticated, keep-alive HTTP to the robot link (go2_service on the Orin) ──
+# Command endpoints on the Orin require a control token (only the Thor holds it,
+# so other dashboards are view-only). One pooled session keeps TCP connections
+# alive, so a D-pad Move doesn't pay a new handshake every 150 ms.
+_session = None
+_session_lock = threading.Lock()
+
+
+def _control_token():
+    tok = os.environ.get("WATCHDOG_ROBOT_TOKEN", "").strip()
+    path = os.environ.get("WATCHDOG_ROBOT_TOKEN_FILE", "")
+    if not tok and path:
+        try:
+            with open(path) as f:
+                tok = f.read().strip()
+        except OSError:
+            tok = ""
+    return tok
+
+
+def http():
+    """Shared requests.Session with the control token (if configured)."""
+    global _session
+    with _session_lock:
+        if _session is None:
+            import requests
+            from requests.adapters import HTTPAdapter
+            s = requests.Session()
+            s.mount("http://", HTTPAdapter(pool_connections=4, pool_maxsize=16, max_retries=0))
+            tok = _control_token()
+            if tok:
+                s.headers["Authorization"] = "Bearer " + tok
+            _session = s
+        return _session
+
+
+# Reachable from the shared resolver object too (web_app imports the instance).
+RobotHost.http = staticmethod(http)

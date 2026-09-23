@@ -24,6 +24,7 @@ services:
       WATCHDOG_AUTOARM: "1"
       WATCHDOG_DASH: https://127.0.0.1:8000
       WATCHDOG_SUPERVISOR_TOKEN_FILE: /state/auth.json
+      WATCHDOG_ROBOT_TOKEN_FILE: /state/robot_token   # control token for the robot link (Thor only)
       NVIDIA_VISIBLE_DEVICES: all
     volumes:
       - ../..:/app                              # git checkout (code + *.pt weights;
