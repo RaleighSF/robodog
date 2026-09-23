@@ -142,6 +142,7 @@ class SceneNarrator:
         self._frame_source: Optional[Callable] = None
         self.enabled = False
         self.connecting = False
+        self._tls = threading.local()   # the run owning the current thread
         self._model_available: Optional[bool] = None
 
         # VLM serialization lock — ensures only one VLM call at a time
@@ -352,7 +353,14 @@ class SceneNarrator:
             pass
         return False
 
+    def _cancelled(self) -> bool:
+        """True if this worker's run was stopped: a worker that outlived its
+        run (stop() mid-query) must not publish or start further queries."""
+        run = getattr(self._tls, "run", None)
+        return run is not None and run.is_set()
+
     def _loop(self, run: threading.Event):
+        self._tls.run = run
         while not run.is_set():
             # Check pause
             if self.paused:
@@ -365,7 +373,8 @@ class SceneNarrator:
                 if mode == "casual":
                     self._casual_tick()
                     # Check if scene summary is due (piggyback on casual loop)
-                    if (tick_start - self._last_scene_tick_ts) >= SCENE_SUMMARY_INTERVAL:
+                    if not run.is_set() and \
+                            (tick_start - self._last_scene_tick_ts) >= SCENE_SUMMARY_INTERVAL:
                         self._scene_tick()
                         self._last_scene_tick_ts = time.time()
                 else:
@@ -500,6 +509,8 @@ class SceneNarrator:
                 "description": description,
                 "model": self.model,
             }
+            if self._cancelled():
+                return
             with self._lock:
                 self._frame_log.append(entry)
             # Also feed into scene aggregation buffer
@@ -556,6 +567,8 @@ class SceneNarrator:
         )
         if summary:
             ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            if self._cancelled():
+                return
             with self._scene_lock:
                 self._scene_summary = summary
                 self._scene_summary_ts = ts
@@ -610,7 +623,7 @@ class SceneNarrator:
         self._consecutive_positives = 0
         logger.info(f"[SceneNarrator:gesture] CONFIRMED gesture #{self._gesture_count} — firing callback")
 
-        if self._gesture_callback:
+        if self._gesture_callback and not self._cancelled():
             try:
                 self._gesture_callback("confirmed_squat")
             except Exception as e:

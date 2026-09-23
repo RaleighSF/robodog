@@ -11,13 +11,14 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
-# Pin the CUDA-built packages to exactly what the base image ships so no
-# dependency can swap them for a generic wheel.
-COPY requirements-thor.txt /tmp/requirements-thor.txt
-RUN pip freeze | grep -iE '^(torch|torchvision|numpy|opencv[a-z-]*)==' > /tmp/base-pins.txt \
- && cat /tmp/base-pins.txt \
- && pip install -c /tmp/base-pins.txt -r /tmp/requirements-thor.txt \
- && pip install --no-deps -c /tmp/base-pins.txt ultralytics==8.4.160 \
+# Every install is constrained to the complete validated resolution
+# (constraints-thor.txt), which also pins the base image's CUDA-built torch,
+# torchvision, numpy and OpenCV so no dependency can swap them out.
+COPY requirements-thor.txt constraints-thor.txt /tmp/
+RUN pip list --format=freeze | grep -iE '^(torch|torchvision)==' > /tmp/base-torch.txt \
+ && pip install -c /tmp/constraints-thor.txt -r /tmp/requirements-thor.txt \
+ && pip install --no-deps -c /tmp/constraints-thor.txt ultralytics==8.4.160 \
+ && pip list --format=freeze | grep -iE '^(torch|torchvision)==' | diff /tmp/base-torch.txt - \
  && python3 -c "import torch, torchvision, cv2, ultralytics, flask, clip; \
 print('torch', torch.__version__, 'cv2', cv2.__version__, 'ultralytics', ultralytics.__version__)"
 
@@ -25,7 +26,7 @@ print('torch', torch.__version__, 'cv2', cv2.__version__, 'ultralytics', ultraly
 # ships the 9.17.1 system library first on the path, so every convolution
 # fails ("unable to find an engine"). vLLM never runs convs, YOLO always does:
 # install the matching cuDNN wheel and put it ahead of the system copy.
-RUN pip install -c /tmp/base-pins.txt \
+RUN pip install -c /tmp/constraints-thor.txt \
         nvidia-cudnn-cu13==9.18.1.3 nvidia-cublas==13.8.0.4 nvidia-cuda-nvrtc==13.4.92 \
  && python3 -c "import nvidia.cudnn, os; print(os.path.join(list(nvidia.cudnn.__path__)[0], 'lib'))" > /etc/cudnn-lib-path
 ENV LD_LIBRARY_PATH=/usr/local/lib/python3.12/dist-packages/nvidia/cudnn/lib:${LD_LIBRARY_PATH}

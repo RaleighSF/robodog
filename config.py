@@ -19,10 +19,15 @@ class VisionConfig:
         # Cosmos backend) on top without forking config.yaml.
         self.config_path = config_path or os.environ.get("WATCHDOG_CONFIG", "config.yaml")
         self.overlay_path = os.environ.get("WATCHDOG_CONFIG_OVERLAY", "")
-        self._overlay_shadow = []   # (path, value before overlay, overlay value)
         self.config = self._load_default_config()
         self._load_config_file()
+        # Persistence model: _base is what gets written (defaults + file, no
+        # overlay); _loaded is the effective config as last synced. A save
+        # writes _base plus exactly what changed since, so overlay values are
+        # never baked in and operator edits always are.
+        self._base = copy.deepcopy(self.config)
         self._load_overlay()
+        self._loaded = copy.deepcopy(self.config)
         
     def _load_default_config(self) -> Dict[str, Any]:
         """Load default configuration"""
@@ -102,47 +107,29 @@ class VisionConfig:
             with open(self.overlay_path, 'r') as f:
                 overlay = yaml.safe_load(f) or {}
             if isinstance(overlay, dict):
-                self._remember_overlay(overlay, ())
                 self._deep_merge(self.config, overlay)
                 print(f"✅ Applied config overlay {self.overlay_path}")
         except Exception as e:
             print(f"⚠️ Could not apply config overlay {self.overlay_path}: {e}")
 
-    _MISSING = object()
-
-    def _remember_overlay(self, overlay: Dict, prefix: tuple):
-        """Record each overlaid leaf's underlying value so saves can undo it."""
-        for key, value in overlay.items():
-            path = prefix + (key,)
-            if isinstance(value, dict):
-                self._remember_overlay(value, path)
-                continue
-            node = self.config
-            for part in path[:-1]:
-                node = node.get(part, {}) if isinstance(node, dict) else {}
-            before = node.get(path[-1], self._MISSING) if isinstance(node, dict) else self._MISSING
-            if before is not self._MISSING:
-                before = copy.deepcopy(before)   # never copy the sentinel itself
-            self._overlay_shadow.append((path, before, copy.deepcopy(value)))
-
-    def _without_overlay(self) -> Dict:
-        """The config to persist: overlay values are put back to what the file
-        had, unless the operator changed them since (then their edit wins)."""
-        out = copy.deepcopy(self.config)
-        for path, before, overlaid in self._overlay_shadow:
-            node = out
-            for part in path[:-1]:
-                if not isinstance(node, dict) or part not in node:
-                    node = None
-                    break
-                node = node[part]
-            if not isinstance(node, dict) or node.get(path[-1], self._MISSING) != overlaid:
-                continue
-            if before is self._MISSING:
-                node.pop(path[-1], None)
-            else:
-                node[path[-1]] = before
-        return out
+    @classmethod
+    def _apply_diff(cls, target: Dict, old: Dict, new: Dict):
+        """Replay onto target every change between two effective configs:
+        added, removed and changed keys, including structural changes."""
+        for key, value in new.items():
+            if key in old and value == old[key]:
+                continue            # untouched subtree: never materialise it
+            if key not in old:
+                target[key] = copy.deepcopy(value)
+            elif isinstance(value, dict) and isinstance(old[key], dict):
+                if not isinstance(target.get(key), dict):
+                    target[key] = {}
+                cls._apply_diff(target[key], old[key], value)
+            elif value != old[key]:
+                target[key] = copy.deepcopy(value)
+        for key in old:
+            if key not in new:
+                target.pop(key, None)
 
     def _deep_merge(self, base_dict: Dict, update_dict: Dict):
         """Deep merge two dictionaries"""
@@ -155,12 +142,17 @@ class VisionConfig:
     def save_config(self):
         """Save current configuration to file"""
         try:
-            with open(self.config_path, 'w') as f:
-                data = self._without_overlay()
+            data = copy.deepcopy(self._base)
+            self._apply_diff(data, self._loaded, self.config)
+            tmp = self.config_path + '.tmp'
+            with open(tmp, 'w') as f:   # write-then-rename: never a half file
                 if self.config_path.endswith('.yaml') or self.config_path.endswith('.yml'):
                     yaml.safe_dump(data, f, default_flow_style=False, indent=2)
                 else:
                     json.dump(data, f, indent=2)
+            os.replace(tmp, self.config_path)
+            self._base = data
+            self._loaded = copy.deepcopy(self.config)
             print(f"✅ Configuration saved to {self.config_path}")
         except Exception as e:
             print(f"❌ Error saving config: {e}")

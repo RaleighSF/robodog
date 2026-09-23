@@ -5,6 +5,7 @@
 #   demo-mode elastic    Stop Watch Dog, start Elastic-Vision's app stack
 #   demo-mode status     Show the active mode and what is running
 #   demo-mode apply      Re-apply the last chosen mode (run at boot, retries)
+#   demo-mode install-boot   Install the @reboot crontab entry (idempotent)
 #
 # Cosmos Reason 2 (Elastic-Vision's `vllm` service) stays up in BOTH modes:
 # Elastic-Vision scores with it and Watch Dog narrates with it. Swapping only
@@ -32,8 +33,22 @@ wd()  { docker compose -f "$WD_COMPOSE" "$@"; }
 say() { printf '\033[1m[demo-mode]\033[0m %s\n' "$*"; }
 die() { say "ERROR: $*"; exit 1; }
 
-running() { [ "$(docker inspect -f '{{.State.Running}}' "$1" 2>/dev/null)" = "true" ]; }
-exists()  { docker inspect "$1" >/dev/null 2>&1; }
+# Container state -> $CSTATE (running | stopped | absent). Called directly,
+# never via $(...), so that die() on an unknown docker error exits the whole
+# script: an unknown state must never be read as "safely stopped".
+CSTATE=""
+cstate() {
+    local out
+    if out=$(docker inspect -f '{{.State.Running}}' "$1" 2>&1); then
+        if [ "$out" = true ]; then CSTATE=running; else CSTATE=stopped; fi
+    elif grep -qi 'no such' <<<"$out"; then
+        CSTATE=absent
+    else
+        die "cannot inspect $1: $out"
+    fi
+}
+running() { cstate "$1"; [ "$CSTATE" = running ]; }
+healthy() { [ "$(docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$1" 2>/dev/null)" = healthy ]; }
 
 wait_http() {  # url, label, timeout-seconds
     local url=$1 label=$2 limit=${3:-180} t=0
@@ -64,9 +79,10 @@ wait_vllm() {
 
 ensure_vllm() {
     if running "$VLLM_CONTAINER" && vllm_ready; then return; fi
+    # vLLM is down or still loading: release Watch Dog's GPU memory first so
+    # vLLM can claim its reservation either way.
+    stop_watchdog
     if ! running "$VLLM_CONTAINER"; then
-        # Free GPU memory first so vLLM can claim its reservation.
-        stop_watchdog
         say "starting Cosmos vLLM (the 8B model takes a few minutes to load)"
         docker start "$VLLM_CONTAINER" >/dev/null || die "could not start $VLLM_CONTAINER"
     fi
@@ -74,7 +90,6 @@ ensure_vllm() {
 }
 
 stop_watchdog() {
-    exists "$WD_CONTAINER" || return 0
     running "$WD_CONTAINER" || return 0
     say "stopping Watch Dog"
     wd stop -t 20 || die "docker compose stop failed for Watch Dog"
@@ -95,8 +110,24 @@ stop_elastic() {
 }
 
 remember() {  # atomic: a crash never leaves a half-written mode
-    local tmp; tmp=$(mktemp "$STATE_DIR/mode.XXXXXX")
-    echo "$1" > "$tmp" && mv -f "$tmp" "$STATE_FILE"
+    local tmp
+    tmp=$(mktemp "$STATE_DIR/mode.XXXXXX") || die "cannot create state file in $STATE_DIR"
+    { echo "$1" > "$tmp" && mv -f "$tmp" "$STATE_FILE"; } || die "cannot record mode '$1'"
+}
+
+wait_ev_healthy() {  # the homepage alone does not prove the stack is usable
+    local t=0 svc
+    until healthy compose-app-1 && healthy compose-discovery-1 \
+            && running compose-es-1 && running compose-minio-1; do
+        for svc in es minio; do
+            running "compose-$svc-1" || die "compose-$svc-1 is not running"
+        done
+        (( t += 5 )); (( t >= 240 )) && die "Elastic-Vision not healthy after 240s"
+        sleep 5
+    done
+    docker exec compose-es-1 curl -fs --max-time 5 'http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=60s' >/dev/null \
+        || die "Elasticsearch cluster not healthy"
+    say "Elastic-Vision stack healthy (app, discovery, Elasticsearch, MinIO)"
 }
 
 to_watchdog() {
@@ -104,7 +135,7 @@ to_watchdog() {
     ensure_vllm
     say "starting Watch Dog"
     wd up -d || die "could not start Watch Dog"
-    remember watchdog
+    remember watchdog || die "could not record mode"
     wait_http http://localhost:8000/ "Watch Dog dashboard" 240
     say "dashboard: http://$(hostname -I | awk '{print $1}'):8000"
 }
@@ -115,8 +146,9 @@ to_elastic() {
     say "starting Elastic-Vision app stack: ${EV_SERVICES[*]}"
     ev start es minio discovery || die "could not start Elastic-Vision dependencies"
     ev start app || die "could not start Elastic-Vision app"
-    remember elastic
+    remember elastic || die "could not record mode"
     wait_http http://localhost:8080/ "Elastic-Vision" 240
+    wait_ev_healthy
 }
 
 wait_docker() {  # at boot the daemon may not be ready yet
@@ -136,8 +168,20 @@ status() {
     free -g | awk '/Mem:/ {printf "[demo-mode] memory: %s GB available of %s GB\n", $7, $2}'
 }
 
+install_boot() {
+    # cron runs with a minimal environment: give it an explicit PATH so
+    # docker, curl, flock and column resolve, and an absolute script path.
+    local self; self=$(readlink -f "$0")
+    local entry="@reboot export PATH=/usr/local/bin:/usr/bin:/bin; sleep 60 && $self apply >> $STATE_DIR/boot.log 2>&1"
+    mkdir -p "$STATE_DIR"
+    { crontab -l 2>/dev/null | grep -v 'demo-mode apply' || true; echo "$entry"; } | crontab - \
+        || die "could not install crontab"
+    say "boot entry installed:"; crontab -l | grep 'demo-mode apply'
+}
+
 cmd="${1:-status}"
 [ "$cmd" = status ] && { status; exit 0; }
+[ "$cmd" = install-boot ] && { install_boot; exit 0; }
 
 mkdir -p "$STATE_DIR"
 exec 9>"$LOCK_FILE"
