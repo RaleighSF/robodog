@@ -1099,6 +1099,7 @@ def go2_move():
     vy = max(-_GO2_MAX_VY, min(_GO2_MAX_VY, raw[1]))
     vyaw = max(-_GO2_MAX_VYAW, min(_GO2_MAX_VYAW, raw[2]))
     session, seq = data.get('session'), data.get('seq')   # generated in the browser, per press
+    permit = data.get('permit') if isinstance(data.get('permit'), str) and len(data.get('permit')) <= 64 else None
     if not isinstance(session, str) or not isinstance(seq, int) or isinstance(seq, bool):
         return jsonify({'success': False, 'message': 'session and seq are required'}), 400
     with _go2_drive_lock:
@@ -1124,7 +1125,7 @@ def go2_move():
             if time.monotonic() >= expires:
                 return None                          # expired before sending: never published
             return robot_host.http().post(f'{url}/move',
-                json={'vx': vx, 'vy': vy, 'vyaw': vyaw, 'session': session, 'seq': seq},
+                json={'vx': vx, 'vy': vy, 'vyaw': vyaw, 'session': session, 'seq': seq, 'permit': permit},
                 timeout=(0.3, 0.3))
         try:
             fut = _go2_move_pool.submit(send)

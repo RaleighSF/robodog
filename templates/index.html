@@ -3528,12 +3528,16 @@
             // increasing seq). Release stops AND retires the session on the robot, so
             // a delayed Move from it can never restart motion. The Orin's 0.4 s lease
             // stops the dog if renewals stop arriving; renew well inside it.
+            // Drive permits: the robot only moves for a Move carrying a permit it
+            // issued < 0.5 s earlier. The first Move of a press fetches one (no
+            // motion) and is resent at once; every accepted Move returns the next.
             const MOVE_RATE_MS = 150;
             const KEEP_TRYING = new Set(['STOP_PENDING', 'SETTLING', 'BUSY', 'DEADLINE']);   // transient: keep renewing
             let _moveInterval = null;
             let _inFlight = null;          // session whose request is outstanding
             let _session = null;
             let _seq = 0;
+            let _permit = null;            // {session, id} - newest permit for the live press
 
             function newSession() {
                 const b = new Uint8Array(12);
@@ -3583,21 +3587,27 @@
             async function sendMoveCmd(vx, vy, vyaw, session) {
                 if (_inFlight === session || session !== _session) return;
                 _inFlight = session;
+                let resendNow = false;
                 try {
+                    const permit = (_permit && _permit.session === session) ? _permit.id : null;
                     const resp = await fetch('/go2/move', {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ vx, vy, vyaw, session, seq: ++_seq }),
+                        body: JSON.stringify({ vx, vy, vyaw, session, seq: ++_seq, permit }),
                         // The server answers within 0.3 s (its own deadline); give up
                         // just after, so a stalled tick never holds back the next
                         // renewal past the robot's 0.4 s lease.
                         signal: AbortSignal.timeout(400)
                     });
-                    if (!resp.ok && session === _session) {
-                        let j = {};
-                        try { j = await resp.json(); } catch (_) {}
+                    let j = {};
+                    try { j = await resp.json(); } catch (_) {}
+                    if (session === _session && typeof j.permit === 'string') {
+                        _permit = { session, id: j.permit };
+                        resendNow = (j.error === 'PERMIT');     // granted: drive now, not next tick
+                    }
+                    if (!resp.ok && session === _session && j.error !== 'PERMIT') {
                         // A stale reply from an older press must never stop a newer one.
-                        if (session === _session && !KEEP_TRYING.has(j.error)) {
+                        if (!KEEP_TRYING.has(j.error)) {
                             if (typeof showStatus === 'function') showStatus(j.message || 'Move rejected', 'warning');
                             stopMove();
                         }
@@ -3608,6 +3618,7 @@
                 } finally {
                     if (_inFlight === session) _inFlight = null;
                 }
+                if (resendNow && session === _session) sendMoveCmd(vx, vy, vyaw, session);
             }
 
             document.querySelectorAll('.dpad-btn:not(.dpad-center)').forEach(btn => {

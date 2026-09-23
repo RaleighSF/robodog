@@ -32,10 +32,12 @@ Same HTTP contract as the old WebRTC service on :5001:
   GET /status /battery /video_feed   POST /command /move /stop /motion_mode
 """
 import asyncio
+import hmac
 import json
 import math
 import os
 import queue
+import secrets
 import threading
 import sys
 import time
@@ -72,6 +74,15 @@ REQUEST_TIMEOUT_S = 5.0
 MOVE_REPLY_TIMEOUT_S = 1.0
 STOP_REPLY_TIMEOUT_S = 1.0
 MOVE_LEASE_S = 0.4            # Azimuth's teleop lease: a Move authorizes this long, then the deadman stops it
+# Drive permits (robot-side freshness). A Move moves the dog only if it carries a
+# permit THIS process issued to that press less than PERMIT_TTL_S ago (on the
+# Orin's own clock) and that permit is the current or the immediately previous
+# one. Every accepted Move returns the next permit; a Move without a valid one
+# gets a permit back but never moves. So no Move can cause motion if it arrives
+# more than PERMIT_TTL_S after the permit it carries was issued, however it was
+# delayed (browser, Thor or network), and a released or stopped press's permits
+# are void.
+PERMIT_TTL_S = 0.5
 STOP_RETRY_S = 0.5
 POSTURE_SETTLE_S = 2.0        # after a posture command, telemetry must settle before moving
 TELEMETRY_STALE_S = 1.5
@@ -255,6 +266,8 @@ class Actuator:
         self.session = None          # active drive session id
         self.seq = 0
         self.retired = set()         # process lifetime, like Azimuth (a few bytes per press)
+        self.permit_cur = None       # {"id", "session", "exp"} - newest permit issued
+        self.permit_prev = None      # the one before it (a lost reply must not end a press)
         # transitions
         self.transition_busy = False
         self.settle_until = 0.0
@@ -266,6 +279,25 @@ class Actuator:
             self.retired.add(session)
         if self.session == session:
             self.session = None
+        for attr in ("permit_cur", "permit_prev"):
+            p = getattr(self, attr)
+            if p is not None and (session is None or p["session"] == session):
+                setattr(self, attr, None)
+
+    def _permit_ok(self, session, permit, now):
+        if not isinstance(permit, str):
+            return False
+        for p in (self.permit_cur, self.permit_prev):
+            if (p is not None and p["session"] == session and now < p["exp"]
+                    and hmac.compare_digest(p["id"].encode(), permit.encode())):
+                return True
+        return False
+
+    def _issue_permit(self, session, now, rotate):
+        new = {"id": secrets.token_hex(12), "session": session, "exp": now + PERMIT_TTL_S}
+        self.permit_prev = self.permit_cur if rotate else None
+        self.permit_cur = new
+        return new["id"]
 
     def _request_stop(self, retire_session=None, retire_active=True, operator=True):
         """retire_session: a drive the caller knows about (the browser's own press,
@@ -391,7 +423,7 @@ class Actuator:
             return d.send(api, parameter, svc)
 
     # -- move -------------------------------------------------------------
-    def move(self, vx, vy, vyaw, session, seq):
+    def move(self, vx, vy, vyaw, session, seq, permit=None):
         d = link()
         if d is None or not d.alive():
             return 503, {"success": False, "error": "NOT_CONNECTED", "message": "Robot not connected (no DDS telemetry)"}
@@ -418,8 +450,16 @@ class Actuator:
             p = telemetry_posture()
             if p != "standing":
                 return 409, {"success": False, "error": "NOT_STANDING", "message": "Stand up before moving (robot reads %s)." % p}
+            now = time.monotonic()
+            if not self._permit_ok(session, permit, now):
+                # No (fresh) permit: grant one, move nothing. The caller resends
+                # at once carrying it. A late Move therefore never starts motion.
+                pid = self._issue_permit(session, now, rotate=False)
+                return 409, {"success": False, "error": "PERMIT", "permit": pid,
+                             "message": "Drive permit issued — resend with it."}
             if self.session is not None and self.session != session:
                 self._retire(self.session)           # a new press supersedes an old one
+            next_permit = self._issue_permit(session, now, rotate=True)
             self.session, self.seq = session, seq
             self.moving = True
             self.lease_until = time.monotonic() + MOVE_LEASE_S
@@ -429,7 +469,7 @@ class Actuator:
                 log("[Move] publish failed: %s" % e)
                 return 503, {"success": False, "error": "PUBLISH_FAILED", "message": "publish failed"}
         code, _ = d.wait(p, MOVE_REPLY_TIMEOUT_S)
-        return 200, {"success": code == 0, "code": code}
+        return 200, {"success": code == 0, "code": code, "permit": next_permit}
 
     # -- transitions ---------------------------------------------------------
     def _admit_transition(self):
@@ -685,7 +725,8 @@ def handle_move():
         lo, hi = LIMITS[k]
         floor = MIN_VX_FWD if k == "vx" else MIN_VYAW if k == "vyaw" else 0
         vals[k] = snap(v, lo, hi, floor)
-    http, body = act.move(vals["vx"], vals["vy"], vals["vyaw"], session, seq)
+    permit = d.get("permit") if isinstance(d.get("permit"), str) and len(d.get("permit")) <= 64 else None
+    http, body = act.move(vals["vx"], vals["vy"], vals["vyaw"], session, seq, permit)
     return jsonify(body), http
 
 
