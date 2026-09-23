@@ -54,11 +54,24 @@ Rebuild (`docker compose build`) only when `Dockerfile` or
   mode restarts its whole stack and breaks the memory budget. Switch with
   `demo-mode` instead.
 
-## Known risk (same as the AGX today)
+## Operator sign-in
 
-Port 8000 listens on every interface with no authentication, and the robot
-control routes are on it. The container runs as root with the checkout mounted
-read-write, because the app writes detection logs, UI state and the CLIP cache
-inside it. Keep the Thor on the demo network (Cradlepoint) at events. Tightening
-this means an authenticated proxy, a non-root user, and a read-only code mount
-with separate data directories.
+Every page, video stream and API call (robot control included) needs a
+signed-in operator. Sign in once per browser; the session lasts 30 days.
+Sign out is in Settings.
+
+```bash
+ssh -t thor 'docker exec -it watchdog python3 auth.py set-password'   # change it
+ssh thor 'docker exec watchdog python3 auth.py status'
+```
+
+The password hash and session key are stored in `/state/auth.json` (the
+`watchdog-state` volume, mode 0600), never in git. Changing the password signs
+out every browser immediately. With no password set, the dashboard stays locked.
+
+## Remaining hardening (not done)
+
+The container runs as root with the checkout mounted read-write, because the
+app writes detection logs, UI state and the CLIP cache inside it. The next step
+is a non-root user plus a read-only code mount with separate data directories.
+The dashboard is plain HTTP, so keep it on the demo network (Cradlepoint).
