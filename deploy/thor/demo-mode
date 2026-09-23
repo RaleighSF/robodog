@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# demo-mode — switch the Jetson AGX Thor between demo stacks.
+#
+#   demo-mode watchdog   Stop Elastic-Vision's app stack, start Watch Dog
+#   demo-mode elastic    Stop Watch Dog, start Elastic-Vision's app stack
+#   demo-mode status     Show the active mode and what is running
+#   demo-mode apply      Re-apply the last chosen mode (run at boot)
+#
+# Cosmos Reason 2 (Elastic-Vision's `vllm` service) stays up in BOTH modes:
+# Elastic-Vision scores with it and Watch Dog narrates with it. Swapping only
+# the lighter services frees ~8 GB without reloading the 8B model.
+set -euo pipefail
+
+EV_DIR="${EV_DIR:-$HOME/elastic-vision}"
+EV_COMPOSE="$EV_DIR/deploy/compose/docker-compose.yml"
+EV_SERVICES=(app discovery es minio)
+WD_COMPOSE="${WD_COMPOSE:-$HOME/watch_dog/deploy/thor/docker-compose.yml}"
+STATE_FILE="${XDG_STATE_HOME:-$HOME/.local/state}/demo-mode/mode"
+VLLM_CONTAINER="compose-vllm-1"
+
+ev()  { (cd "$EV_DIR" && docker compose -f "$EV_COMPOSE" "$@"); }
+wd()  { docker compose -f "$WD_COMPOSE" "$@"; }
+say() { printf '\033[1m[demo-mode]\033[0m %s\n' "$*"; }
+
+wait_http() {  # url, label, timeout-seconds
+    local url=$1 label=$2 limit=${3:-180} t=0
+    until curl -fsS -o /dev/null --max-time 3 "$url"; do
+        (( t += 3 )); if (( t >= limit )); then say "$label did not come up within ${limit}s"; return 1; fi
+        sleep 3
+    done
+    say "$label is up ($url)"
+}
+
+ensure_vllm() {
+    if [ "$(docker inspect -f '{{.State.Running}}' "$VLLM_CONTAINER" 2>/dev/null)" != "true" ]; then
+        say "starting Cosmos vLLM (the 8B model takes a few minutes to load)"
+        docker start "$VLLM_CONTAINER" >/dev/null
+    fi
+}
+
+vllm_ready() {
+    docker exec "$VLLM_CONTAINER" python3 -c \
+        "import urllib.request; urllib.request.urlopen('http://localhost:8000/v1/models', timeout=3)" \
+        >/dev/null 2>&1
+}
+
+remember() { mkdir -p "$(dirname "$STATE_FILE")"; echo "$1" > "$STATE_FILE"; }
+
+to_watchdog() {
+    say "stopping Elastic-Vision app stack: ${EV_SERVICES[*]}"
+    ev stop "${EV_SERVICES[@]}"
+    ensure_vllm
+    say "starting Watch Dog"
+    wd up -d
+    remember watchdog
+    wait_http http://localhost:8000/ "Watch Dog dashboard" 240
+    say "dashboard: http://$(hostname -I | awk '{print $1}'):8000"
+}
+
+to_elastic() {
+    say "stopping Watch Dog"
+    wd stop 2>/dev/null || true
+    ensure_vllm
+    say "starting Elastic-Vision app stack: ${EV_SERVICES[*]}"
+    ev start es minio discovery
+    ev start app
+    remember elastic
+    wait_http http://localhost:8080/ "Elastic-Vision" 240
+}
+
+status() {
+    local mode; mode=$(cat "$STATE_FILE" 2>/dev/null || echo "unset")
+    say "mode: $mode"
+    docker ps -a --format '{{.Names}}\t{{.Status}}' \
+        | grep -E '^(watchdog|compose-(app|vllm|es|minio|discovery)-1)\b' | sort | column -t -s $'\t'
+    if vllm_ready; then say "Cosmos vLLM: serving"; else say "Cosmos vLLM: not ready"; fi
+    free -g | awk '/Mem:/ {printf "[demo-mode] memory: %s GB available of %s GB\n", $7, $2}'
+}
+
+case "${1:-status}" in
+    watchdog|wd)      to_watchdog ;;
+    elastic|ev)       to_elastic ;;
+    status)           status ;;
+    apply)
+        mode=$(cat "$STATE_FILE" 2>/dev/null || echo elastic)
+        say "re-applying last mode: $mode"
+        if [ "$mode" = watchdog ]; then to_watchdog; else to_elastic; fi ;;
+    *) sed -n '2,12p' "$0"; exit 2 ;;
+esac

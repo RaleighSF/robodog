@@ -1,0 +1,13 @@
+# Per-device overlay for the Jetson AGX Thor (merged over config.yaml at load).
+telemetry:
+  device_type: nvidia_agx_thor          # "Powered by NVIDIA · Jetson AGX Thor"
+  device_id: watchdog-thor-01
+
+scene_narrator:
+  # Elastic-Vision's vLLM serves Cosmos Reason 2 8B on its compose network.
+  backend: openai
+  api_url: http://vllm:8000/v1
+  model: nvidia/cosmos-reason2-8b
+  model_label: Cosmos Reason 2
+  # ~1.5 s per frame on Thor (vs 9-15 s for qwen2.5-VL on the AGX).
+  interval_seconds: 8

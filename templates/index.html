@@ -3804,6 +3804,12 @@
         let currentMode = 'casual';
         let currentTab = 'frame';
         let vlmPaused = false;
+        let modelLabel = 'VLM';
+        let intervalSec = 20;
+
+        function activeText() {
+            return modelLabel + ' — observing every ~' + Math.round(intervalSec) + 's';
+        }
 
         function formatTime(iso) {
             const d = new Date(iso);
@@ -3856,7 +3862,7 @@
                     statusText.textContent = 'VLM paused';
                     dot.classList.add('offline');
                 } else {
-                    statusText.textContent = 'VLM active — observing every ~20s';
+                    statusText.textContent = activeText();
                     dot.classList.remove('offline');
                 }
             });
@@ -3887,7 +3893,7 @@
                 }
             } else {
                 if (!vlmPaused) {
-                    statusText.textContent = active ? 'VLM active — observing every ~20s' : 'Connecting to VLM...';
+                    statusText.textContent = active ? activeText() : 'Connecting to VLM...';
                 }
                 if (currentTab === 'frame') frameTabContent.style.display = '';
                 if (existingBanner) existingBanner.remove();
@@ -3913,6 +3919,9 @@
             fetch('/api/scene/mode').then(r => r.json()).then(modeData => {
                 if (!modeData.enabled) { section.style.display = 'none'; return; }
                 section.style.display = '';
+                if (modeData.model_label) modelLabel = modeData.model_label;
+                if (modeData.interval_seconds) intervalSec = modeData.interval_seconds;
+                if (active && !vlmPaused && currentMode === 'casual') statusText.textContent = activeText();
                 if (modeData.mode !== currentMode) setModeUI(modeData.mode);
                 if (modeData.paused !== undefined && modeData.paused !== vlmPaused) {
                     vlmPaused = modeData.paused;
@@ -3939,7 +3948,7 @@
                         active = true;
                         if (!vlmPaused) {
                             dot.classList.remove('offline');
-                            statusText.textContent = 'VLM active — observing every ~20s';
+                            statusText.textContent = activeText();
                         }
                     }
                     if (data.entries && data.entries.length > 0) {

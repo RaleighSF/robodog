@@ -118,9 +118,18 @@ _GESTURE_YES = re.compile(r"^\s*YES\s*$", re.IGNORECASE | re.MULTILINE)
 class SceneNarrator:
     """VLM-powered frame observation + scene aggregation engine."""
 
-    def __init__(self, ollama_url=None, model=None, scene_context=None):
+    def __init__(self, ollama_url=None, model=None, scene_context=None,
+                 backend="ollama", api_url=None, model_label=None,
+                 casual_interval=None):
+        # backend "ollama" speaks Ollama's /api/chat (AGX, local qwen2.5-VL).
+        # backend "openai" speaks /v1/chat/completions (vLLM on the Thor
+        # serving Cosmos Reason 2). Prompts are shared; only transport differs.
+        self.backend = backend if backend in ("ollama", "openai") else "ollama"
         self.ollama_url = ollama_url or DEFAULT_OLLAMA_URL
+        self.api_url = (api_url or "").rstrip("/")
         self.model = model or DEFAULT_MODEL
+        self.model_label = model_label or self.model
+        self.casual_interval = float(casual_interval or CASUAL_INTERVAL)
         self.scene_context = scene_context
         self._frame_log: deque = deque(maxlen=MAX_LOG_ENTRIES)
         self._lock = threading.Lock()
@@ -215,6 +224,9 @@ class SceneNarrator:
             "gesture_count": self._gesture_count,
             "gesture_confirmations": self._consecutive_positives,
             "gesture_required": self._required_confirmations,
+            "model": self.model,
+            "model_label": self.model_label,
+            "interval_seconds": self.casual_interval,
         }
 
     def get_frame_log(self, since=None):
@@ -258,20 +270,51 @@ class SceneNarrator:
     def start(self):
         if self._thread and self._thread.is_alive():
             return
-        if not self._check_ollama():
-            logger.warning("[SceneNarrator] Ollama not reachable — narrator disabled")
-            return
-        self.enabled = True
         self._stop_event.clear()
+        if not self._check_backend():
+            # The model server may simply boot after us (vLLM on the Thor takes
+            # minutes to load). Keep retrying instead of disabling for good.
+            logger.warning(f"[SceneNarrator] {self.backend} backend not reachable — retrying every 15s")
+            threading.Thread(target=self._wait_then_start, daemon=True,
+                             name="scene-narrator-wait").start()
+            return
+        self._launch()
+
+    def _wait_then_start(self):
+        while not self._stop_event.wait(timeout=15):
+            if self._check_backend():
+                self._launch()
+                return
+
+    def _launch(self):
+        self.enabled = True
         self._thread = threading.Thread(target=self._loop, daemon=True, name="scene-narrator")
         self._thread.start()
-        logger.info(f"[SceneNarrator] Started in '{self.mode}' mode — model={self.model}")
+        logger.info(f"[SceneNarrator] Started in '{self.mode}' mode — {self.backend} model={self.model}")
 
     def stop(self):
         self._stop_event.set()
         self.enabled = False
 
     # ── Internals ───────────────────────────────────────────────────
+
+    def _check_backend(self) -> bool:
+        if self.backend == "openai":
+            return self._check_openai()
+        return self._check_ollama()
+
+    def _check_openai(self) -> bool:
+        try:
+            resp = requests.get(f"{self.api_url}/models", timeout=3)
+            if resp.status_code == 200:
+                ids = [m.get("id") for m in resp.json().get("data", [])]
+                self._model_available = self.model in ids
+                if not self._model_available:
+                    logger.warning(f"[SceneNarrator] Model '{self.model}' not served. Available: {ids}")
+                return self._model_available
+        except Exception:
+            pass
+        return False
 
     def _check_ollama(self) -> bool:
         try:
@@ -308,7 +351,7 @@ class SceneNarrator:
             except Exception as e:
                 logger.error(f"[SceneNarrator] Error in {mode} tick: {e}")
 
-            target = CASUAL_INTERVAL if mode == "casual" else GESTURE_INTERVAL
+            target = self.casual_interval if mode == "casual" else GESTURE_INTERVAL
             elapsed = time.time() - tick_start
             remaining = max(0.1, target - elapsed)
             self._stop_event.wait(timeout=remaining)
@@ -330,7 +373,10 @@ class SceneNarrator:
     def _vlm_query(self, system_prompt: str, user_prompt: str, image_b64: str,
                    max_tokens: int = 150, temperature: float = 0.3,
                    num_ctx: int = 4096) -> Optional[str]:
-        """Send a single image+text query to Ollama. Serialized via _vlm_lock."""
+        """Send a single image+text query to the VLM. Serialized via _vlm_lock."""
+        if self.backend == "openai":
+            return self._openai_query(system_prompt, user_prompt, image_b64,
+                                      max_tokens, temperature)
         with self._vlm_lock:
             try:
                 resp = requests.post(
@@ -361,6 +407,41 @@ class SceneNarrator:
                 logger.warning(f"[SceneNarrator] Ollama returned {resp.status_code}")
             except requests.exceptions.Timeout:
                 logger.warning("[SceneNarrator] Ollama request timed out")
+            except Exception as e:
+                logger.error(f"[SceneNarrator] Request failed: {e}")
+        return None
+
+    def _openai_query(self, system_prompt, user_prompt, image_b64,
+                      max_tokens, temperature) -> Optional[str]:
+        """OpenAI-compatible chat call (vLLM serving Cosmos Reason 2)."""
+        with self._vlm_lock:
+            try:
+                resp = requests.post(
+                    f"{self.api_url}/chat/completions",
+                    json={
+                        "model": self.model,
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": [
+                                {"type": "image_url",
+                                 "image_url": {"url": "data:image/jpeg;base64," + image_b64}},
+                                {"type": "text", "text": user_prompt},
+                            ]},
+                        ],
+                        "max_tokens": max_tokens,
+                        "temperature": temperature,
+                        "top_p": 0.9,
+                    },
+                    timeout=30,
+                )
+                if resp.status_code == 200:
+                    content = resp.json()["choices"][0]["message"].get("content") or ""
+                    # Cosmos Reason can emit <think>...</think> before the answer.
+                    content = re.sub(r"<think>.*?</think>", "", content, flags=re.S)
+                    return content.strip() or None
+                logger.warning(f"[SceneNarrator] VLM returned {resp.status_code}: {resp.text[:200]}")
+            except requests.exceptions.Timeout:
+                logger.warning("[SceneNarrator] VLM request timed out")
             except Exception as e:
                 logger.error(f"[SceneNarrator] Request failed: {e}")
         return None
@@ -523,7 +604,8 @@ def get_narrator() -> Optional[SceneNarrator]:
     return _narrator
 
 
-def init_narrator(ollama_url=None, model=None, scene_context=None) -> SceneNarrator:
+def init_narrator(ollama_url=None, model=None, scene_context=None, **kwargs) -> SceneNarrator:
     global _narrator
-    _narrator = SceneNarrator(ollama_url=ollama_url, model=model, scene_context=scene_context)
+    _narrator = SceneNarrator(ollama_url=ollama_url, model=model,
+                              scene_context=scene_context, **kwargs)
     return _narrator

@@ -11,10 +11,16 @@ from typing import List, Dict, Any, Optional
 class VisionConfig:
     """Vision system configuration with YOLO-E support"""
     
-    def __init__(self, config_path: str = "config.yaml"):
-        self.config_path = config_path
+    def __init__(self, config_path: Optional[str] = None):
+        # WATCHDOG_CONFIG lets a containerised deployment keep its writable
+        # config outside the git checkout (saves never dirty the repo), and
+        # WATCHDOG_CONFIG_OVERLAY layers per-device settings (e.g. the Thor's
+        # Cosmos backend) on top without forking config.yaml.
+        self.config_path = config_path or os.environ.get("WATCHDOG_CONFIG", "config.yaml")
+        self.overlay_path = os.environ.get("WATCHDOG_CONFIG_OVERLAY", "")
         self.config = self._load_default_config()
         self._load_config_file()
+        self._load_overlay()
         
     def _load_default_config(self) -> Dict[str, Any]:
         """Load default configuration"""
@@ -86,6 +92,19 @@ class VisionConfig:
         else:
             print(f"📄 No config file found at {self.config_path}, using defaults")
     
+    def _load_overlay(self):
+        """Apply the per-device overlay last so it always wins."""
+        if not self.overlay_path:
+            return
+        try:
+            with open(self.overlay_path, 'r') as f:
+                overlay = yaml.safe_load(f) or {}
+            if isinstance(overlay, dict):
+                self._deep_merge(self.config, overlay)
+                print(f"✅ Applied config overlay {self.overlay_path}")
+        except Exception as e:
+            print(f"⚠️ Could not apply config overlay {self.overlay_path}: {e}")
+
     def _deep_merge(self, base_dict: Dict, update_dict: Dict):
         """Deep merge two dictionaries"""
         for key, value in update_dict.items():

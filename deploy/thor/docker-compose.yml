@@ -1,0 +1,33 @@
+# Watch Dog on the Jetson AGX Thor. Normally driven by `demo-mode`, which
+# swaps this in for Elastic-Vision's app stack while sharing its Cosmos vLLM.
+name: watchdog
+
+services:
+  watchdog:
+    build: .
+    image: watchdog-thor:latest
+    container_name: watchdog
+    runtime: nvidia
+    restart: unless-stopped        # demo-mode stops it in Elastic-Vision mode
+    shm_size: 2g
+    ports:
+      - "8000:8000"
+    environment:
+      WATCHDOG_CONFIG: /state/config.yaml
+      WATCHDOG_CONFIG_OVERLAY: /app/deploy/thor/config.thor.yaml
+      NVIDIA_VISIBLE_DEVICES: all
+    volumes:
+      - ../..:/app                              # git checkout (code + *.pt weights)
+      - watchdog-state:/state                   # writable config
+      - ${HOME}/.cache/clip:/root/.cache/clip   # YOLO-World CLIP text encoder
+    networks:
+      - default
+      - elastic                                 # reach Cosmos at http://vllm:8000
+
+volumes:
+  watchdog-state:
+
+networks:
+  elastic:
+    external: true
+    name: compose_default                       # Elastic-Vision's compose network

@@ -1695,6 +1695,10 @@ def _init_scene_narrator():
         ollama_url=narrator_cfg.get('ollama_url'),
         model=narrator_cfg.get('model'),
         scene_context=narrator_cfg.get('scene_context'),
+        backend=narrator_cfg.get('backend', 'ollama'),
+        api_url=narrator_cfg.get('api_url'),
+        model_label=narrator_cfg.get('model_label'),
+        casual_interval=narrator_cfg.get('interval_seconds'),
     )
     narrator.set_frame_source(lambda: camera_manager.get_frame())
 
