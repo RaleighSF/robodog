@@ -1868,6 +1868,9 @@ if __name__ == '__main__':
     # entrypoint), so operator passwords and session cookies never cross the
     # network in clear text.
     cert, key = os.environ.get('WATCHDOG_TLS_CERT'), os.environ.get('WATCHDOG_TLS_KEY')
+    if bool(cert) != bool(key):
+        raise SystemExit("WATCHDOG_TLS_CERT and WATCHDOG_TLS_KEY must be set together; "
+                         "refusing to start without TLS")
     ssl_context = (cert, key) if cert and key else None
     app.run(debug=False, host='0.0.0.0', port=8000, threaded=True, use_reloader=False,
             ssl_context=ssl_context)

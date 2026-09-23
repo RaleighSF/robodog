@@ -184,24 +184,44 @@ def _record_failure(addr, now):
     _failures.setdefault(addr, collections.deque()).append(now)
 
 
+_hash_slots = threading.BoundedSemaphore(4)   # cap concurrent hash checks
+
+
 def verify(addr, password):
     """(ok, error, generation). The generation comes from the same snapshot
-    the hash was checked against."""
+    the hash was checked against.
+
+    Each attempt reserves a failure slot atomically BEFORE the (slow) hash
+    check and gives it back only on success, so concurrent guesses cannot all
+    slip past the limit while earlier ones are still being hashed."""
     now = time.time()
     with _mem_lock:
         if _throttled(addr, now):
             return False, "Too many attempts. Wait a minute and try again.", None
-    data = snapshot()
-    stored = data.get("password_hash")
-    if not stored:
-        return False, "No operator password is set on this device yet.", None
-    if check_password_hash(stored, password or ""):
-        with _mem_lock:
-            _failures.pop(addr, None)
-        return True, None, data.get("generation")
-    with _mem_lock:
-        _record_failure(addr, now)
-    return False, "Incorrect password.", None
+        _record_failure(addr, now)                  # the reservation
+    ok = False
+    try:
+        data = snapshot()
+        stored = data.get("password_hash")
+        if not stored:
+            return False, "No operator password is set on this device yet.", None
+        if not _hash_slots.acquire(timeout=5):
+            return False, "Too many attempts. Wait a minute and try again.", None
+        try:
+            ok = check_password_hash(stored, password or "")
+        finally:
+            _hash_slots.release()
+        if ok:
+            return True, None, data.get("generation")
+        return False, "Incorrect password.", None
+    finally:
+        if ok:
+            with _mem_lock:
+                _failures.pop(addr, None)           # success clears this address
+                try:
+                    _global_failures.remove(now)    # and returns its global slot
+                except ValueError:
+                    pass
 
 
 # ── request helpers ───────────────────────────────────────────────────────
@@ -223,7 +243,7 @@ def _same_origin(request):
     if not source or source == "null":
         return False
     parts = urlsplit(source)
-    return parts.scheme in ("http", "https") and parts.netloc == request.host
+    return parts.scheme == request.scheme and parts.netloc == request.host
 
 
 def init_app(app, render_login):

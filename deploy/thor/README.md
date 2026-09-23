@@ -67,16 +67,29 @@ ssh thor 'docker exec watchdog python3 auth.py status'
 ```
 
 - **HTTPS only.** On first boot the container generates a self-signed
-  certificate into the state volume (`/state/tls`). Each browser shows a
-  one-time "not private" warning; the traffic is encrypted either way.
-  Replace `cert.pem`/`key.pem` with a CA-issued pair to remove the warning.
+  certificate into the state volume (`/state/tls`), so each browser warns
+  once. **Don't accept that warning blindly.** A warning alone can't tell
+  the Thor apart from an impostor on the same WiFi. Before entering the
+  password, compare the fingerprint the browser shows (click the warning
+  or padlock, then view the certificate, SHA-256) with the one from the
+  Thor over SSH:
+
+  ```bash
+  ssh thor 'docker exec watchdog openssl x509 -in /state/tls/cert.pem -noout -fingerprint -sha256'
+  ```
+
+  Better: install `cert.pem` as trusted on the booth laptop once, or replace
+  `cert.pem`/`key.pem` with a CA-issued pair.
 - **Password change revokes sessions.** Every session is bound to a credential
   generation that rotates with the password, so an old session is refused on
   its next request, including one that was in flight during the change.
-- **CSRF:** requests that change state must come from this host:port.
-- **Throttling:** 5 failures per address and 30 overall per minute. This
-  state is in memory, so it resets when the container restarts. Clients
-  behind one NAT share the per-address limit.
+- **CSRF:** requests that change state must come from this exact
+  scheme://host:port.
+- **Throttling:** 5 failures per address and 30 overall per minute, counted
+  before each password check, so parallel guesses can't slip past. While
+  the overall limit is tripped, a legitimate operator also has to wait up
+  to a minute. This state is in memory, so it resets when the container
+  restarts. Clients behind one NAT share the per-address limit.
 - **Loopback:** trusted on the AGX, for its on-box auto-arm supervisor.
   Disabled in the Thor container (`WATCHDOG_TRUST_LOOPBACK=0`).
 - With no password set, the dashboard stays locked. The hash, signing key
