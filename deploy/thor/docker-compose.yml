@@ -10,6 +10,7 @@ services:
     runtime: nvidia
     restart: unless-stopped        # demo-mode stops it in Elastic-Vision mode
     shm_size: 2g
+    init: true                     # reap the auto-arm supervisor's children
     ports:
       - "8443:8000"                 # HTTPS only; no plain-HTTP port is published
     environment:
@@ -18,8 +19,11 @@ services:
       WATCHDOG_TLS_CERT: /state/tls/cert.pem
       WATCHDOG_TLS_KEY: /state/tls/key.pem
       WATCHDOG_TLS_HOSTNAME: nvidia-thor
-      WATCHDOG_TLS_IPS: "192.168.1.234 10.0.0.109"
-      WATCHDOG_TRUST_LOOPBACK: "0"      # nothing on-box drives the API here
+      WATCHDOG_TLS_IPS: "192.168.1.234 10.0.0.109 192.168.50.209"   # ethernet, home WiFi, Cradlepoint
+      WATCHDOG_TRUST_LOOPBACK: "0"      # the supervisor uses its token instead
+      WATCHDOG_AUTOARM: "1"
+      WATCHDOG_DASH: https://127.0.0.1:8000
+      WATCHDOG_SUPERVISOR_TOKEN_FILE: /state/auth.json
       NVIDIA_VISIBLE_DEVICES: all
     volumes:
       - ../..:/app                              # git checkout (code + *.pt weights;

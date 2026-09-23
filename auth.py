@@ -8,6 +8,9 @@ Loopback trust: on the AGX an on-box supervisor (deploy/systemd/
 watchdog-autostart.sh) drives the API from 127.0.0.1, so loopback is trusted
 there. Set WATCHDOG_TRUST_LOOPBACK=0 wherever a proxy or other local service
 could relay outside traffic over loopback (the Thor container disables it).
+With loopback trust off, an on-box supervisor authenticates instead with the
+supervisor token (auth.json "supervisor_token", header X-Watchdog-Supervisor),
+which is accepted ONLY on loopback connections.
 
 Sessions are bound to a credential *generation*: changing the password
 rotates the generation, and any session minted under an older one is
@@ -136,6 +139,9 @@ def _ensure_keys():
             changed = True
         if not data.get("generation"):
             data["generation"] = secrets.token_hex(8)
+            changed = True
+        if not data.get("supervisor_token"):
+            data["supervisor_token"] = secrets.token_hex(32)
             changed = True
         if changed:
             _write_file(data)
@@ -287,9 +293,18 @@ def init_app(app, render_login):
     )
     open_endpoints = {"login", "logout", "healthz", "static"}
 
+    def _supervisor(on_loopback):
+        """On-box supervisor: a token that is only honoured on loopback."""
+        if not on_loopback:
+            return False
+        sent = request.headers.get("X-Watchdog-Supervisor") or ""
+        expected = snapshot().get("supervisor_token") or ""
+        return bool(sent and expected) and secrets.compare_digest(sent, expected)
+
     @app.before_request
     def _require_operator():
-        loopback = trust_loopback and request.remote_addr in ("127.0.0.1", "::1")
+        on_loopback = request.remote_addr in ("127.0.0.1", "::1")
+        loopback = on_loopback and (trust_loopback or _supervisor(on_loopback))
         if request.method not in _SAFE_METHODS and not loopback \
                 and request.endpoint != "healthz" and not _same_origin(request):
             return jsonify({"error": "cross-origin request refused"}), 403
