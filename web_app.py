@@ -928,14 +928,23 @@ _GO2_MAX_VYAW = 0.5
 
 
 # Move proxy deadline. requests' (connect, read) timeouts bound inactivity, not
-# the whole call, so the overall deadline is enforced here: the proxy answers
-# within _GO2_MOVE_DEADLINE_S no matter what the socket does. A Move that misses
-# it is abandoned (it may still land; the Orin rejects it if its session was
-# retired meanwhile). Deliberate fail-stop: if renewals stall past the robot's
-# 0.4 s lease, the Orin stops the dog and retires the press, and the operator
-# presses again. The deadman is never lengthened to hide a stall.
+# the whole call, so the proxy's ANSWER is bounded here at _GO2_MOVE_DEADLINE_S.
+# There is no backlog: a Move runs only if a sender slot is free right now
+# (otherwise it is refused, never queued), and a sender re-checks the deadline
+# immediately before publishing, so an expired Move is never sent. A Move whose
+# HTTP call is already on the wire cannot be recalled; if it lands late, the
+# Orin's own rules decide it: an older seq is SUPERSEDED, a released press was
+# retired by its stop (even one the Orin never saw a Move for), and a lapsed
+# drive is stopped at admission. At worst it renews a press the operator is
+# still holding.
+# Deliberate fail-stop: continuous renewal is NOT guaranteed under network
+# stalls. If renewals miss the robot's 0.4 s lease, the Orin stops the dog and
+# retires the press; the operator presses again. The deadman is never
+# lengthened to hide a stall.
 _GO2_MOVE_DEADLINE_S = 0.3
-_go2_move_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="go2-move")
+_GO2_MOVE_SENDERS = 2
+_go2_move_pool = ThreadPoolExecutor(max_workers=_GO2_MOVE_SENDERS, thread_name_prefix="go2-move")
+_go2_move_slots = threading.BoundedSemaphore(_GO2_MOVE_SENDERS)
 
 
 def _go2_send_stop(session=None, timeout=4, everything=False):
@@ -1051,13 +1060,31 @@ def go2_move():
         url = robot_host.cached_service_url()     # no discovery inside the drive deadline
         if url is None:
             return jsonify({'success': False, 'message': 'robot link unreachable'}), 503
-        # ~45 ms on a reused keep-alive; the overall deadline is the future's.
-        fut = _go2_move_pool.submit(lambda: robot_host.http().post(f'{url}/move',
-            json={'vx': vx, 'vy': vy, 'vyaw': vyaw, 'session': session, 'seq': seq},
-            timeout=(0.3, 0.3)))
+        # ~45 ms on a reused keep-alive.
+        if not _go2_move_slots.acquire(blocking=False):
+            return jsonify({'success': False, 'error': 'DEADLINE',
+                            'message': 'robot link slow — renewing'}), 504
+        expires = time.monotonic() + _GO2_MOVE_DEADLINE_S
+
+        def send():
+            if time.monotonic() >= expires:
+                return None                          # expired before sending: never published
+            return robot_host.http().post(f'{url}/move',
+                json={'vx': vx, 'vy': vy, 'vyaw': vyaw, 'session': session, 'seq': seq},
+                timeout=(0.3, 0.3))
         try:
-            response = fut.result(timeout=_GO2_MOVE_DEADLINE_S)
+            fut = _go2_move_pool.submit(send)
+        except Exception:
+            _go2_move_slots.release()
+            raise
+        # The slot frees when the send finishes OR is cancelled while queued.
+        fut.add_done_callback(lambda _f: _go2_move_slots.release())
+        try:
+            response = fut.result(timeout=max(0.0, expires - time.monotonic()))
         except FutureTimeout:
+            fut.cancel()                             # no effect if already on the wire (see above)
+            response = None
+        if response is None:
             return jsonify({'success': False, 'error': 'DEADLINE',
                             'message': 'robot link slow — renewing'}), 504
         return jsonify(response.json()), response.status_code
