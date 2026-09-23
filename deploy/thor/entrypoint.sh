@@ -29,9 +29,11 @@ fi
 # trusted here).
 if [ "${WATCHDOG_AUTOARM:-0}" = 1 ]; then
     (
+        # This loop must outlive any supervisor failure: don't inherit -e/pipefail.
+        set +e +o pipefail
         while true; do
             bash /app/deploy/systemd/watchdog-autostart.sh 2>&1 | sed -u 's/^/[auto-arm] /'
-            echo "[auto-arm] supervisor exited; restarting in 10s"
+            echo "[auto-arm] supervisor exited (status ${PIPESTATUS[0]}); restarting in 10s"
             sleep 10
         done
     ) &

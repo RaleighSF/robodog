@@ -68,19 +68,31 @@ ssh thor 'docker exec watchdog python3 auth.py status'
 
 - **HTTPS only, with a padlock.** The Thor and the AGX use certificates
   issued by a private "NTT DATA Watch Dog Demo CA". The CA key lives only on
-  Raleigh's Mac in `~/.watchdog-ca/` and never goes in git. The CA is
-  name-constrained to private IP ranges plus `nvidia-thor`, `watchdog-agx` and
-  `localhost`, so even a leaked key can't vouch for a real website. Trust the CA
-  once on each demo laptop and both dashboards load with a normal padlock:
+  Raleigh's Mac in `~/.watchdog-ca/` and never goes in git. The CA carries
+  critical name constraints: private IP ranges, `localhost`, `nvidia-thor`,
+  `watchdog-agx`, and subdomains of those names. OpenSSL rejects certificates
+  it signs for public names or IPs (tested: `www.google.com` and `8.8.8.8` both
+  fail verification). **This is defence in depth, not a guarantee.** Browsers
+  and the macOS keychain are not obliged to enforce constraints on a root you
+  trust manually. Treat `ca.key` as a real secret: mode 0600 protects it from
+  other users, not from a compromised account. Trust the CA once on each demo
+  laptop and both dashboards load with a normal padlock:
 
   ```bash
   security add-trusted-cert -r trustRoot -k ~/Library/Keychains/login.keychain-db ~/.watchdog-ca/ca.pem
   ```
 
-  To re-issue a device certificate (for example when an IP changes), rerun the
-  CA's `issue` step and copy the result to `/state/tls/` (Thor) or `tls/`
-  (AGX). If no certificate is present, the Thor container falls back to
-  generating a self-signed one, which browsers warn about.
+  Lifetimes and upkeep:
+  - Device certificates expire about **2028-12-12** (820 days). The CA expires
+    2031-09-22. Re-issue a device certificate before it expires, or when its
+    IP changes: sign a new one with the CA, copy it to `/state/tls/` (Thor)
+    or `tls/` (AGX), and restart the dashboard.
+  - If the CA key is ever exposed, remove the trust on every laptop with
+    `security delete-certificate -c "NTT DATA Watch Dog Demo CA"
+    ~/Library/Keychains/login.keychain-db`, then create a new CA and re-issue
+    both device certificates.
+  - If no certificate is present, the Thor container falls back to a
+    self-signed one, which browsers warn about.
 - **Password change revokes sessions.** Every session is bound to a credential
   generation that rotates with the password, so an old session is refused on
   its next request, including one that was in flight during the change.

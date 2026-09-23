@@ -28,7 +28,9 @@ dash() {
     local tok
     tok=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('supervisor_token',''))" \
           "$WATCHDOG_SUPERVISOR_TOKEN_FILE" 2>/dev/null)
-    curl -ksf -H "X-Watchdog-Supervisor: $tok" "$@"
+    # Header via curl's stdin config, so the token never appears in argv
+    # (visible to ps / process-inspection tools).
+    printf 'header = "X-Watchdog-Supervisor: %s"\n' "$tok" | curl -ksf -K - "$@"
   else
     curl -ksf "$@"
   fi
