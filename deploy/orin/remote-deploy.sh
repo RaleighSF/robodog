@@ -27,27 +27,25 @@ fi
 # (no unit and no image yet) is the only case allowed without a rollback point.
 set +e
 UNIT=/etc/systemd/system/go2_service.service
-# Tri-state lookups: prints the value (found), returns 3 for a CONFIRMED
-# "No such ..." from the daemon, and aborts on any other error (daemon down,
-# permissions) - an unknown state is never mistaken for absence.
-lookup() {   # $1 = inspect subcommand args...
-  local out rc
-  out="$("$@" 2>&1)"; rc=$?
-  if [ $rc -eq 0 ]; then printf '%s' "$out"; return 0; fi
-  if grep -qi "no such" <<<"$out"; then return 3; fi
-  echo "docker lookup failed ($*): $out - aborting (state unknown)" >&2; exit 1
-}
-# ($(...) runs lookup in a subshell, so its abort arrives here as rc 1.)
-PREV="$(lookup docker container inspect -f '{{.Image}}' watchdog-go2)"; rc=$?
-[ $rc -eq 0 ] || [ $rc -eq 3 ] || exit 1
-if [ $rc -eq 3 ]; then
-  PREV="$(lookup docker image inspect -f '{{.Id}}' watchdog-go2:latest)"; rc=$?
-  [ $rc -eq 0 ] || [ $rc -eq 3 ] || exit 1
-  [ $rc -eq 3 ] && PREV=""
+# Absence is established only by a SUCCESSFUL listing that returns nothing -
+# never by interpreting an error message. Any failing command aborts.
+CID="$(docker ps -a -q --no-trunc --filter 'name=^/?watchdog-go2$')" \
+  || { echo "docker ps failed - aborting (state unknown)" >&2; exit 1; }
+if [ -n "$CID" ]; then
+  PREV="$(docker container inspect -f '{{.Image}}' "$CID")" && [ -n "$PREV" ] \
+    || { echo "cannot read the running container's image - aborting" >&2; exit 1; }
+else
+  PREV="$(docker images -q --no-trunc watchdog-go2:latest)" \
+    || { echo "docker images failed - aborting (state unknown)" >&2; exit 1; }
 fi
-# Unit presence checked with privileges; only a confirmed "absent" counts.
-printf "%s\n" "$pw" | sudo -S -p "" test -e "$UNIT"; urc=$?
-case $urc in 0) UNIT_PRESENT=1 ;; 1) UNIT_PRESENT=0 ;; *) echo "cannot check $UNIT (rc $urc) - aborting" >&2; exit 1 ;; esac
+# Unit presence: the privileged command must RUN and print exactly one marker.
+UMARK="$(printf "%s\n" "$pw" | sudo -S -p "" sh -c "if [ -e $UNIT ]; then echo UNIT_PRESENT; else echo UNIT_ABSENT; fi")" \
+  || { echo "cannot check $UNIT with sudo - aborting" >&2; exit 1; }
+case "$UMARK" in
+  UNIT_PRESENT) UNIT_PRESENT=1 ;;
+  UNIT_ABSENT)  UNIT_PRESENT=0 ;;
+  *) echo "unexpected unit check result '$UMARK' - aborting" >&2; exit 1 ;;
+esac
 if [ -z "$PREV" ] && [ "$UNIT_PRESENT" -eq 0 ]; then
   echo "first install (confirmed: no image, no unit) - no rollback point"
 else
