@@ -291,7 +291,7 @@ class YOLOEDetector:
 
     def reload_config(self):
         """Reload configuration and update detection mode"""
-        self.config._load_config_file()  # Reload from file
+        self.config.reload()  # Reload from file + device overlay
         self._update_detection_mode()
         print("🔄 YOLO-E configuration reloaded")
     

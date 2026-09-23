@@ -829,7 +829,7 @@ _GO2_MOVE_TIMEOUT = 0.8
 # gen counts drive inputs; a confirmed stop clears possibly_moving only if no
 # newer input arrived while it was in flight. Ordering between Moves and Stops is
 # enforced on the Orin by the browser's drive session + seq (Azimuth's model).
-_go2_drive = {"possibly_moving": False, "last_input": 0.0, "gen": 0, "session": None}
+_go2_drive = {"possibly_moving": False, "last_input": 0.0, "gen": 0}
 _go2_drive_lock = threading.Lock()
 _GO2_COMMAND_COOLDOWN = 1.5
 _GO2_MAX_VX = 0.25
@@ -839,11 +839,12 @@ _GO2_MAX_VYAW = 0.5
 
 
 def _go2_send_stop(session=None, timeout=4):
-    """Send a stop (retiring the drive session); returns (ok, body). Clears the
-    drive-uncertainty flag only if the confirmed stop covers the newest input."""
+    """Send a stop; returns (ok, body). A session-less stop (E-stop, deadman)
+    stops the robot and retires whatever drive is active ON THE ORIN — never a
+    session guessed here. Clears the drive-uncertainty flag only if the
+    confirmed stop covers the newest input."""
     with _go2_drive_lock:
         gen = _go2_drive["gen"]
-        session = session or _go2_drive["session"]
     try:
         r = requests.post(f'{robot_host.service_url()}/stop', json={'session': session}, timeout=timeout)
         body = r.json()
@@ -944,7 +945,6 @@ def go2_move():
         _go2_drive["possibly_moving"] = True  # until a covering stop is confirmed
         _go2_drive["last_input"] = time.time()
         _go2_drive["gen"] += 1
-        _go2_drive["session"] = session
     try:
         response = requests.post(f'{robot_host.service_url()}/move',
             json={'vx': vx, 'vy': vy, 'vyaw': vyaw, 'session': session, 'seq': seq}, timeout=3)

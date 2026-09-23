@@ -2207,6 +2207,17 @@
             resizeDetectionCanvas();
         }
 
+        // An MJPEG <img> never reopens by itself after the server restarts or the
+        // robot link blips: while the feed should be showing, retry on error.
+        let _videoRetry = null;
+        videoStream.addEventListener('error', () => {
+            if (videoStream.style.display === 'none' || _videoRetry) return;
+            _videoRetry = setTimeout(() => {
+                _videoRetry = null;
+                if (videoStream.style.display !== 'none') videoStream.src = `/video_feed?${Date.now()}`;
+            }, 2000);
+        });
+
         function hideVideo() {
             // Clear the video source to stop the stream gracefully
             videoStream.src = '';
@@ -3520,7 +3531,7 @@
             const MOVE_RATE_MS = 150;
             const KEEP_TRYING = new Set(['STOP_PENDING', 'SETTLING']);   // transient: keep renewing
             let _moveInterval = null;
-            let _moveInFlight = false;
+            let _inFlight = null;          // session whose request is outstanding
             let _session = null;
             let _seq = 0;
 
@@ -3532,7 +3543,6 @@
 
             function clearLocal() {
                 if (_moveInterval) { clearInterval(_moveInterval); _moveInterval = null; }
-                _moveInFlight = false;
                 document.querySelectorAll('.dpad-btn.active').forEach(b => b.classList.remove('active'));
             }
 
@@ -3568,8 +3578,8 @@
             }
 
             async function sendMoveCmd(vx, vy, vyaw, session) {
-                if (_moveInFlight || session !== _session) return;
-                _moveInFlight = true;
+                if (_inFlight === session || session !== _session) return;
+                _inFlight = session;
                 try {
                     const resp = await fetch('/go2/move', {
                         method: 'POST',
@@ -3580,7 +3590,8 @@
                     if (!resp.ok && session === _session) {
                         let j = {};
                         try { j = await resp.json(); } catch (_) {}
-                        if (!KEEP_TRYING.has(j.error)) {
+                        // A stale reply from an older press must never stop a newer one.
+                        if (session === _session && !KEEP_TRYING.has(j.error)) {
                             if (typeof showStatus === 'function') showStatus(j.message || 'Move rejected', 'warning');
                             stopMove();
                         }
@@ -3589,7 +3600,7 @@
                     // A slow or lost tick must not end the press: the next tick renews,
                     // and the Orin's lease stops the dog if renewals really stop.
                 } finally {
-                    _moveInFlight = false;
+                    if (_inFlight === session) _inFlight = null;
                 }
             }
 
@@ -3606,6 +3617,8 @@
                 if (document.hidden) stopMove();
             });
             window.addEventListener('blur', stopMove);
+            // E-stop ends any local renewal too (the robot-side stop is session-less).
+            window.__dpadCancel = function () { _session = null; clearLocal(); };
         })();
 
         // Show action bar on page load if GO2 is selected
@@ -3654,6 +3667,7 @@
 
         // Emergency stop — always accessible
         async function emergencyStop() {
+            if (typeof window.__dpadCancel === 'function') window.__dpadCancel();
             try {
                 await fetch('/go2/stop', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}' });
                 showStatus('Emergency stop sent', 'warning');

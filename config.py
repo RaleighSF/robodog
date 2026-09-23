@@ -101,6 +101,20 @@ class VisionConfig:
         else:
             print(f"📄 No config file found at {self.config_path}, using defaults")
     
+    def reload(self):
+        """Re-read the writable config file and re-apply the device overlay.
+        Always use this instead of _load_config_file() alone, which would let
+        the base file override the overlay (e.g. the Thor's device_type)."""
+        live = self.config
+        self.config = self._load_default_config()
+        self._load_config_file()
+        self._base = copy.deepcopy(self.config)
+        self._load_overlay()
+        self._loaded = copy.deepcopy(self.config)
+        live.clear()
+        live.update(self.config)      # keep the same dict: callers may hold references
+        self.config = live
+
     def _load_overlay(self):
         """Apply the per-device overlay last so it always wins."""
         if not self.overlay_path:

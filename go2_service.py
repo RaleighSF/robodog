@@ -309,8 +309,7 @@ class Actuator:
         self.lease_until = 0.0
         self.session = None          # active drive session id
         self.seq = 0
-        self.retired = set()
-        self.retired_order = []
+        self.retired = set()         # process lifetime, like Azimuth (a few bytes per press)
         # transitions
         self.transition_busy = False
         self.settle_until = 0.0
@@ -318,11 +317,8 @@ class Actuator:
 
     # -- helpers (caller holds lock) --------------------------------------
     def _retire(self, session):
-        if session and session not in self.retired:
+        if session:
             self.retired.add(session)
-            self.retired_order.append(session)
-            if len(self.retired_order) > 512:
-                self.retired.discard(self.retired_order.pop(0))
         if self.session == session:
             self.session = None
 
@@ -353,6 +349,8 @@ class Actuator:
             return                                   # link down: keep the stop pending
         if att is None or att["link"] is not d or now - att["t"] > STILL_DEADLINE_S:
             if att is not None:
+                with att["link"].lock:
+                    att["link"].pending.pop(att["rid"], None)      # abandoned: no leak
                 log("[Stop] attempt for #%d not verified in %.1fs — retrying" % (att["target"], STILL_DEADLINE_S))
             try:
                 rid, slot = d.send(API["StopMove"])
@@ -371,16 +369,19 @@ class Actuator:
         # Incremental rest verification on distinct fresh samples after the stop.
         at, motion = d.last_state, d.motion
         fresh = at and at > att["t"] and now - at < 0.5
+        verified = False
         if not fresh:
             att["held_since"] = None; att["samples"] = 0      # evidence gap: start over
         elif at != att["last_seen"]:
+            # Evaluated only on a NEW distinct sample, and the still samples'
+            # own timestamps must span the hold (Azimuth's settle_still).
             att["last_seen"] = at
             if motion is not None and motion[0] < STILL_V and motion[1] < STILL_W:
-                att["held_since"] = att["held_since"] or now; att["samples"] += 1
+                att["held_since"] = att["held_since"] or at; att["samples"] += 1
+                verified = (at - att["held_since"] >= STILL_HOLD_S and att["samples"] >= STILL_MIN_SAMPLES)
             else:
                 att["held_since"] = None; att["samples"] = 0
-        if (att["code"] == 0 and att["held_since"] and now - att["held_since"] >= STILL_HOLD_S
-                and att["samples"] >= STILL_MIN_SAMPLES):
+        if att["code"] == 0 and verified:
             with self.lock:
                 self.stop_ok = max(self.stop_ok, att["target"])
                 if not self.stop_pending():
@@ -398,16 +399,25 @@ class Actuator:
                 log("[Supervisor] %s" % e)
 
     def stop_and_wait(self, retire_session=None, timeout=3.0):
-        """Request a stop; True only if THAT stop (or a later one) verified at rest."""
+        """Request a stop; returns its number if THAT stop (or a later one)
+        verified at rest, else 0."""
         with self.lock:
             n = self._request_stop(retire_session)
         t = time.monotonic()
         while time.monotonic() - t < timeout:
             with self.lock:
                 if self.stop_ok >= n:
-                    return True
+                    return n
             time.sleep(0.02)
-        return False
+        return 0
+
+    def _send_if_current(self, d, n, api, parameter=None, svc="sport"):
+        """Publish a transition only if no newer stop arrived since its own
+        verified stop #n (an E-stop cancels a pending posture/mode change)."""
+        with self.lock:
+            if self.stop_req != n:
+                return None
+            return d.send(api, parameter, svc)
 
     # -- move -------------------------------------------------------------
     def move(self, vx, vy, vyaw, session, seq):
@@ -465,7 +475,8 @@ class Actuator:
         if refused:
             return refused
         try:
-            if not self.stop_and_wait():             # always from a FRESH verified rest
+            n = self.stop_and_wait()                 # always from a FRESH verified rest
+            if not n:
                 return 409, {"success": False, "message": "Could not verify the robot at rest — command not sent."}
             p = telemetry_posture()
             if name == "stand":
@@ -482,7 +493,10 @@ class Actuator:
                 api = API["Hello"]
             else:
                 return 400, {"success": False, "message": "Invalid command"}
-            code, _ = d.request(api)
+            sent = self._send_if_current(d, n, api)
+            if sent is None:
+                return 409, {"success": False, "message": "Cancelled by a newer stop — command not sent."}
+            code, _ = d.wait(*sent, REQUEST_TIMEOUT_S)
             ok = code == 0 or code in LENIENT_CODES.get(name, set())
             msg = ("No reply from robot within %.0fs" % REQUEST_TIMEOUT_S if code is None
                    else "ok" if code == 0 else "robot code %s%s" % (code, " (tolerated)" if ok else ""))
@@ -508,9 +522,13 @@ class Actuator:
                 return 502, {"success": False, "message": "Unreadable mode reply — not changing it."}
             if current == mode:
                 return 200, {"success": True, "message": "already in '%s'" % mode, "code": 0}
-            if not self.stop_and_wait():
+            n = self.stop_and_wait()
+            if not n:
                 return 409, {"success": False, "message": "Could not verify the robot at rest — mode not changed."}
-            code, data = d.request(MOTION_SWITCHER["SelectMode"], {"name": mode}, svc="motion_switcher")
+            sent = self._send_if_current(d, n, MOTION_SWITCHER["SelectMode"], {"name": mode}, "motion_switcher")
+            if sent is None:
+                return 409, {"success": False, "message": "Cancelled by a newer stop — mode not changed."}
+            code, data = d.wait(*sent, REQUEST_TIMEOUT_S)
             log("[MotionMode] %s -> %s (code %s)" % (current, mode, code))
             return 200, {"success": code == 0, "code": code, "message": data or ""}
         finally:
@@ -689,7 +707,7 @@ def handle_stop():
     # Never refused. Retires the named drive session (or the active one) and
     # waits briefly for a verified rest; unconfirmed stops keep being retried.
     session = (request.get_json(silent=True) or {}).get("session")
-    ok = act.stop_and_wait(session if isinstance(session, str) else None, timeout=3.0)
+    ok = bool(act.stop_and_wait(session if isinstance(session, str) else None, timeout=3.0))
     return jsonify({"success": ok, "confirmed": ok,
                     "message": "Stop verified at rest" if ok else "Stop sent — still verifying, retrying until confirmed"})
 
