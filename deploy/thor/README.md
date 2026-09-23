@@ -66,20 +66,33 @@ ssh -t thor 'docker exec -it watchdog python3 auth.py set-password'   # change i
 ssh thor 'docker exec watchdog python3 auth.py status'
 ```
 
-- **HTTPS only.** On first boot the container generates a self-signed
-  certificate into the state volume (`/state/tls`), so each browser warns
-  once. **Don't accept that warning blindly.** A warning alone can't tell
-  the Thor apart from an impostor on the same WiFi. Before entering the
-  password, compare the fingerprint the browser shows (click the warning
-  or padlock, then view the certificate, SHA-256) with the one from the
-  Thor over SSH:
+- **HTTPS only, with a padlock.** The Thor and the AGX use certificates
+  issued by a private "NTT DATA Watch Dog Demo CA". The CA key lives only on
+  Raleigh's Mac in `~/.watchdog-ca/` and never goes in git. The CA carries
+  critical name constraints: private IP ranges, `localhost`, `nvidia-thor`,
+  `watchdog-agx`, and subdomains of those names. OpenSSL rejects certificates
+  it signs for public names or IPs (tested: `www.google.com` and `8.8.8.8` both
+  fail verification). **This is defence in depth, not a guarantee.** Browsers
+  and the macOS keychain are not obliged to enforce constraints on a root you
+  trust manually. Treat `ca.key` as a real secret: mode 0600 protects it from
+  other users, not from a compromised account. Trust the CA once on each demo
+  laptop and both dashboards load with a normal padlock:
 
   ```bash
-  ssh thor 'docker exec watchdog openssl x509 -in /state/tls/cert.pem -noout -fingerprint -sha256'
+  security add-trusted-cert -r trustRoot -k ~/Library/Keychains/login.keychain-db ~/.watchdog-ca/ca.pem
   ```
 
-  Better: install `cert.pem` as trusted on the booth laptop once, or replace
-  `cert.pem`/`key.pem` with a CA-issued pair.
+  Lifetimes and upkeep:
+  - Device certificates expire on **2028-12-21** (820 days). The CA expires
+    2031-09-22. Re-issue a device certificate before it expires, or when its
+    IP changes: sign a new one with the CA, copy it to `/state/tls/` (Thor)
+    or `tls/` (AGX), and restart the dashboard.
+  - If the CA key is ever exposed, remove the trust on every laptop with
+    `security delete-certificate -c "NTT DATA Watch Dog Demo CA"
+    ~/Library/Keychains/login.keychain-db`, then create a new CA and re-issue
+    both device certificates.
+  - If no certificate is present, the Thor container falls back to a
+    self-signed one, which browsers warn about.
 - **Password change revokes sessions.** Every session is bound to a credential
   generation that rotates with the password, so an old session is refused on
   its next request, including one that was in flight during the change.

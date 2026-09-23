@@ -22,4 +22,21 @@ if [ -n "${WATCHDOG_TLS_CERT:-}" ] && [ ! -s "$WATCHDOG_TLS_CERT" ]; then
           -keyout "$WATCHDOG_TLS_KEY" -out "$WATCHDOG_TLS_CERT" 2>/dev/null )
     echo "[entrypoint] generated self-signed TLS certificate ($san)"
 fi
+# Auto-arm: when the dog connects, switch to its camera and start detection
+# (same script the AGX runs under systemd). Runs beside the app for the life of
+# the container, so it stops automatically in Elastic-Vision mode. It talks to
+# the dashboard over loopback with the supervisor token (loopback alone is not
+# trusted here).
+if [ "${WATCHDOG_AUTOARM:-0}" = 1 ]; then
+    (
+        # This loop must outlive any supervisor failure: don't inherit -e/pipefail.
+        set +e +o pipefail
+        while true; do
+            bash /app/deploy/systemd/watchdog-autostart.sh 2>&1 | sed -u 's/^/[auto-arm] /'
+            echo "[auto-arm] supervisor exited (status ${PIPESTATUS[0]}); restarting in 10s"
+            sleep 10
+        done
+    ) &
+fi
+
 exec "$@"
