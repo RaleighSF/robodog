@@ -34,6 +34,17 @@ _DEFAULT_CANDIDATES = [
     "192.168.193.111",  # ZeroTier - network-independent fallback
 ]
 SERVICE_PORT = 5001
+# The robot link serves HTTPS with a certificate from the Watch Dog demo CA.
+# Verifying it proves we talk to OUR Orin (a look-alike host on the WiFi can't
+# answer discovery, and never receives the control token). Plain HTTP only if
+# explicitly configured (WATCHDOG_ROBOT_SCHEME=http, e.g. a legacy box).
+SERVICE_SCHEME = os.environ.get("WATCHDOG_ROBOT_SCHEME", "https")
+ROBOT_CA = os.environ.get("WATCHDOG_ROBOT_CA", "")
+
+
+def _verify():
+    """requests 'verify' value: the pinned demo CA (never the system store)."""
+    return ROBOT_CA if ROBOT_CA else True
 RTSP_PORT = 8554
 _PROBE_TIMEOUT = 1.2
 _RECHECK_SECONDS = 60.0
@@ -71,7 +82,8 @@ class RobotHost:
     @staticmethod
     def _alive(host):
         try:
-            r = requests.get(f"http://{host}:{SERVICE_PORT}/status", timeout=_PROBE_TIMEOUT)
+            r = requests.get(f"{SERVICE_SCHEME}://{host}:{SERVICE_PORT}/status",
+                             timeout=_PROBE_TIMEOUT, verify=_verify())
             return r.status_code == 200
         except Exception:
             return False
@@ -116,7 +128,7 @@ class RobotHost:
         return self.resolve()
 
     def service_url(self):
-        return f"http://{self.resolve()}:{SERVICE_PORT}"
+        return f"{SERVICE_SCHEME}://{self.resolve()}:{SERVICE_PORT}"
 
     def rtsp_url(self, channel="color"):
         return f"rtsp://{self.resolve()}:{RTSP_PORT}/{channel}"
@@ -145,21 +157,44 @@ def _control_token():
     return tok
 
 
+def _make_session(with_token):
+    import requests
+    from requests.adapters import HTTPAdapter
+    sess = requests.Session()
+    ad = HTTPAdapter(pool_connections=4, pool_maxsize=16, max_retries=0)
+    sess.mount("http://", ad)
+    sess.mount("https://", ad)
+    sess.verify = _verify()
+    if with_token:
+        tok = _control_token()
+        if tok and tok.isascii() and not any(c.isspace() for c in tok):
+            sess.headers["Authorization"] = "Bearer " + tok
+    return sess
+
+
+_public = None
+
+
 def http():
-    """Shared requests.Session with the control token (if configured)."""
+    """Control session: pooled keep-alive, CA-verified, WITH the control token.
+    Use only for command endpoints."""
     global _session
     with _session_lock:
         if _session is None:
-            import requests
-            from requests.adapters import HTTPAdapter
-            s = requests.Session()
-            s.mount("http://", HTTPAdapter(pool_connections=4, pool_maxsize=16, max_retries=0))
-            tok = _control_token()
-            if tok:
-                s.headers["Authorization"] = "Bearer " + tok
-            _session = s
+            _session = _make_session(True)
         return _session
+
+
+def public():
+    """Read-only session (status/battery/video): CA-verified, NO token, so the
+    credential never travels on reads."""
+    global _public
+    with _session_lock:
+        if _public is None:
+            _public = _make_session(False)
+        return _public
 
 
 # Reachable from the shared resolver object too (web_app imports the instance).
 RobotHost.http = staticmethod(http)
+RobotHost.public = staticmethod(public)

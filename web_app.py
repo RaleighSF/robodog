@@ -176,7 +176,7 @@ class WebApp:
             if not self.is_running:
                 time.sleep(0.05)
                 continue
-            frame, seq, _ts = camera_manager.wait_for_new_frame(last_seq, timeout=0.5)
+            frame, seq, cap_ts = camera_manager.wait_for_new_frame(last_seq, timeout=0.5)
             if frame is None:
                 continue
             last_seq = seq
@@ -186,7 +186,9 @@ class WebApp:
             except queue.Empty:
                 pass
             try:
-                self._detection_queue.put_nowait(frame)
+                # the capture time travels with the frame, so the gesture
+                # decision can refuse a picture that is old by then
+                self._detection_queue.put_nowait((frame, cap_ts))
             except queue.Full:
                 continue
             self._last_detection_frame_size = (frame.shape[1], frame.shape[0])
@@ -223,6 +225,7 @@ class WebApp:
             if frame is None:
                 self._detection_queue.task_done()
                 break
+            frame, cap_ts = frame
 
             try:
                 # Skip detection when paused (queue is still drained above)
@@ -279,7 +282,7 @@ class WebApp:
                 # person, so gating on `detections` meant the check never ran in
                 # exactly the situation it exists for.
                 if _gesture_enabled:
-                    _offer_gesture_frame(frame)      # own worker: never slows detection
+                    _offer_gesture_frame(frame, cap_ts)   # own worker: never slows detection
 
                 if self._config_manager.is_alert_logging_enabled():
                     now = time.time()
@@ -671,7 +674,7 @@ def get_status():
 def go2_battery():
     """Proxy endpoint for GO2 battery data to avoid CORS issues"""
     try:
-        response = robot_host.http().get(f'{robot_host.service_url()}/battery', timeout=2)
+        response = robot_host.public().get(f'{robot_host.service_url()}/battery', timeout=2)
         if response.status_code == 200:
             return jsonify(response.json())
         else:
@@ -679,14 +682,14 @@ def go2_battery():
     except Exception as e:
         robot_host.report_failure()
         logger.error(f"Failed to fetch GO2 battery: {e}")
-        return jsonify({'connected': False, 'soc': None, 'error': str(e)}), 503
+        return jsonify({'connected': False, 'soc': None, 'error': 'robot link unreachable'}), 503
 
 @app.route('/go2/video_passthrough')
 def go2_video_passthrough():
     """Zero-copy proxy that relays the GO2 MJPEG stream for low-latency viewing."""
     def proxy():
         try:
-            with robot_host.http().get(f'{robot_host.service_url()}/video_feed', stream=True, timeout=(3, 30)) as resp:
+            with robot_host.public().get(f'{robot_host.service_url()}/video_feed', stream=True, timeout=(3, 30)) as resp:
                 resp.raise_for_status()
                 for chunk in resp.iter_content(chunk_size=8192):
                     if chunk:
@@ -825,12 +828,13 @@ _gesture_thread = None
 _GESTURE_MAX_FRAME_AGE_S = 0.5     # never decide a shake on an old picture
 
 
-def _offer_gesture_frame(frame):
-    """Latest-frame slot for the gesture worker (older unprocessed frame dropped)."""
+def _offer_gesture_frame(frame, cap_ts):
+    """Latest-frame slot for the gesture worker (older unprocessed frame dropped).
+    cap_ts is the camera's receive time (time.monotonic) of this very frame."""
     global _gesture_thread
     with _gesture_slot_lock:
         _gesture_slot["frame"] = frame
-        _gesture_slot["ts"] = time.monotonic()
+        _gesture_slot["ts"] = cap_ts or 0.0
         _gesture_slot_lock.notify()
     if _gesture_thread is None or not _gesture_thread.is_alive():
         _gesture_thread = threading.Thread(target=_gesture_worker, name="gesture-worker", daemon=True)
@@ -846,16 +850,13 @@ def _gesture_worker():
             _gesture_slot["frame"] = None
         if time.monotonic() - ts > _GESTURE_MAX_FRAME_AGE_S:
             continue                           # stale: skip, a fresher frame will come
-        age = camera_manager.frame_age()
-        if age is None or age > _GESTURE_MAX_FRAME_AGE_S:
-            continue                           # the camera itself has gone stale
         try:
-            _check_outstretched_hand(frame)
+            _check_outstretched_hand(frame, ts)
         except Exception as e:
             logger.warning("[Gesture] worker error: %s", e)
 
 
-def _check_outstretched_hand(frame):
+def _check_outstretched_hand(frame, cap_ts):
     """Run YOLO Pose keypoint detection for outstretched hand and fire shake.
 
     Uses the lightweight yolo11n-pose model (~6MB) to check shoulder-elbow-wrist
@@ -887,6 +888,15 @@ def _check_outstretched_hand(frame):
               "fingers": hres["fingers"]}
 
     if result["detected"]:
+        # Re-check at the moment of decision: inference took time, and the
+        # operator may have left the Gesture tab or the video may have died.
+        _gesture_lease_check()
+        if not _gesture_enabled:
+            return
+        if time.monotonic() - cap_ts > _GESTURE_MAX_FRAME_AGE_S:
+            logger.info("[Gesture] hand seen on a frame that is now %.2fs old - not shaking",
+                        time.monotonic() - cap_ts)
+            return
         _gesture_last_trigger_ts = now
         _gesture_count += 1
         logger.info(
@@ -929,7 +939,8 @@ def _go2_send_stop(session=None, timeout=4, everything=False):
         body = r.json()
         ok = r.status_code == 200 and bool(body.get('success'))
     except Exception as e:
-        return False, {'success': False, 'message': str(e)}
+        logger.warning(f"[GO2] stop request failed: {e}")
+        return False, {'success': False, 'message': 'robot link unreachable'}
     if ok:
         with _go2_drive_lock:
             if _go2_drive["gen"] == gen:
@@ -1002,7 +1013,7 @@ def go2_command():
 
     except Exception as e:
         logger.error(f"Failed to send GO2 command: {e}")
-        return jsonify({'success': False, 'message': str(e)}), 503
+        return jsonify({'success': False, 'message': 'robot link unreachable'}), 503
 
 @app.route('/go2/move', methods=['POST'])
 def go2_move():
@@ -1026,11 +1037,13 @@ def go2_move():
         _go2_drive["gen"] += 1
     try:
         response = robot_host.http().post(f'{robot_host.service_url()}/move',
-            json={'vx': vx, 'vy': vy, 'vyaw': vyaw, 'session': session, 'seq': seq}, timeout=0.8)
+            json={'vx': vx, 'vy': vy, 'vyaw': vyaw, 'session': session, 'seq': seq},
+            timeout=(1.0, 0.35))     # a Move answers in ms on a reused keep-alive; a late one is useless
         return jsonify(response.json()), response.status_code
     except Exception as e:
         robot_host.report_failure()   # a venue change looks like a connection error
-        return jsonify({'success': False, 'message': str(e)}), 503
+        logger.warning(f"[GO2] move request failed: {e}")
+        return jsonify({'success': False, 'message': 'robot link unreachable'}), 503
 
 @app.route('/go2/stop', methods=['POST'])
 def go2_stop():
@@ -1065,7 +1078,7 @@ def go2_motion_mode():
 
     except Exception as e:
         logger.error(f"Failed to set GO2 motion mode: {e}")
-        return jsonify({'success': False, 'message': str(e)}), 503
+        return jsonify({'success': False, 'message': 'robot link unreachable'}), 503
 
 @app.route('/switch_model', methods=['POST'])
 def switch_detection_model():
@@ -1696,7 +1709,7 @@ def rtsp_stop():
 def _refresh_robot_state():
     """Fetch battery/status from go2_service and cache for telemetry."""
     try:
-        resp = robot_host.http().get(f'{robot_host.service_url()}/battery', timeout=2)
+        resp = robot_host.public().get(f'{robot_host.service_url()}/battery', timeout=2)
         if resp.status_code == 200:
             data = resp.json()
             web_app._cached_robot_state.update({
@@ -1721,7 +1734,7 @@ def _build_heartbeat_event():
     # Check if go2_service is reachable
     go2_reachable = False
     try:
-        r = robot_host.http().get(f'{robot_host.service_url()}/status', timeout=2)
+        r = robot_host.public().get(f'{robot_host.service_url()}/status', timeout=2)
         go2_reachable = r.status_code == 200
     except Exception:
         pass

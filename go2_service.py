@@ -42,20 +42,28 @@ import time
 import cv2
 from flask import Flask, Response, jsonify, request
 
+from go2dds.core import DDSCore
+from go2dds.motion import (MIN_VX_FWD, MIN_VYAW, RestVerifier, SETTLE_V, SETTLE_W,
+                           TELEOP_LIMITS, planar_motion, snap)
+from go2dds.topics import MOTION_SWITCHER, SPORT, TOPICS
+
 ROBOT_IP = os.environ.get("GO2_ROBOT_IP", "192.168.123.161")
 # Control token: every command endpoint requires "Authorization: Bearer <token>".
 # Only the controlling dashboard (the Thor) holds it; others are view-only.
 # Fail closed: with no token configured, commands are refused (stop excepted).
 CONTROL_TOKEN = (os.environ.get("GO2_SERVICE_TOKEN") or "").strip()
+if CONTROL_TOKEN and (not CONTROL_TOKEN.isascii() or any(c.isspace() for c in CONTROL_TOKEN)
+                      or len(CONTROL_TOKEN) < 32):
+    CONTROL_TOKEN = ""                     # malformed: fail closed (logged at start)
+    _TOKEN_REJECTED = True
+else:
+    _TOKEN_REJECTED = False
 OPEN_ENDPOINTS = {"status", "battery", "video_feed"}   # read-only
 AES_KEY = (os.environ.get("GO2_AES_KEY") or "").strip() or None
 JPEG_QUALITY = int(os.environ.get("GO2_JPEG_QUALITY", "80"))
 JPEG_PARAMS = [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY]
 
-# Sport api ids (official unitree_sdk2 header; verified on 1.1.15 by Azimuth)
-API = {"StopMove": 1003, "StandDown": 1005, "RecoveryStand": 1006, "Move": 1008,
-       "Sit": 1009, "RiseSit": 1010, "Hello": 1016}
-MOTION_SWITCHER = {"CheckMode": 1001, "SelectMode": 1002}
+API = SPORT                                   # shared go2dds table (Azimuth-validated ids)
 
 LENIENT_CODES = {"sit": {-1}, "shake": {-1}}      # vendor -1 observed as benign for these
 CMD_MIN_GAP_S = 2.0
@@ -70,17 +78,9 @@ STANDING_MIN_M = 0.27         # measured on Scout (1.1.15): standing 0.31-0.33, 
 LYING_MAX_M = 0.15
 VIDEO_STALE_S = 2.0
 VIDEO_RECONNECT_S = 10.0
-LIMITS = {"vx": (-0.15, 0.25), "vy": (-0.2, 0.2), "vyaw": (-0.5, 0.5)}   # Azimuth's envelope
-# Measured by Azimuth on this robot (edge/commands.py): below 0.22 m/s forward the
-# gait stalls after ~1.8 s while still ACKing every Move; below 0.45 rad/s it does
-# not turn. Non-zero commands are snapped up to these floors, like Azimuth's teleop.
-MIN_VX_FWD = 0.22
-MIN_VYAW = 0.45
-DEADBAND = 0.05
-# Rest verification (Azimuth's settle_still): a stop counts only when distinct fresh
-# sport samples after it show the body still, continuously for STILL_HOLD_S.
-STILL_V = 0.03                # m/s planar speed that counts as stopped
-STILL_W = 0.05                # rad/s yaw rate that counts as stopped
+LIMITS = TELEOP_LIMITS                          # Azimuth's envelope (go2dds.motion)
+# Speed floors (MIN_VX_FWD 0.22, MIN_VYAW 0.45) and rest thresholds (SETTLE_V/W)
+# come from go2dds.motion, measured by Azimuth on this robot.
 STILL_HOLD_S = 0.3
 STILL_MIN_SAMPLES = 4
 STILL_DEADLINE_S = 2.5
@@ -94,7 +94,10 @@ def _require_control_token():
     if request.endpoint in OPEN_ENDPOINTS:
         return None
     sent = request.headers.get("Authorization", "")
-    ok = bool(CONTROL_TOKEN) and hmac.compare_digest(sent, "Bearer " + CONTROL_TOKEN)
+    # Bytes compare: a non-ASCII header is simply a mismatch, never an exception
+    # (which would also have skipped the anonymous-stop path below).
+    ok = bool(CONTROL_TOKEN) and hmac.compare_digest(
+        sent.encode("utf-8", "replace"), ("Bearer " + CONTROL_TOKEN).encode("ascii"))
     if ok:
         return None
     if request.endpoint == "handle_stop":
@@ -118,129 +121,55 @@ def log(msg):
 
 # ── DDS link ────────────────────────────────────────────────────────────────
 
-class DDSLink:
-    """rclpy node in its own context + executor thread; request/response by id."""
+class RobotLink:
+    """Watch Dog's view of the robot on the shared go2dds core (the same DDS
+    code Azimuth runs): battery from /lf/lowstate, liveness, body height and
+    planar motion from /lf/sportmodestate; sport + motion_switcher requests."""
+
+    _TOPIC = {"sport": TOPICS["SPORT_MOD"], "motion_switcher": "rt/api/motion_switcher/request"}
 
     def __init__(self):
-        import rclpy
-        from rclpy.executors import SingleThreadedExecutor
-        from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
-        from unitree_api.msg import Request, Response
-        from unitree_go.msg import LowState, SportModeState
-        self._rclpy = rclpy
-        self.Request = Request
-        self.dead = False
-        self.lock = threading.Lock()
-        self.pending = {}                       # rid -> [Event, code, data]
-        self.rid = int(time.time() * 1000) % 1000000000
         self.battery = {"soc": None, "voltage": None, "current": None}
         self.body_height = None
         self.motion = None                    # (planar speed, |yaw rate|) or None if not finite
         self.last_state = 0.0
-        self.ctx = rclpy.Context()
-        rclpy.init(args=None, context=self.ctx)
+        self.core = DDSCore("watchdog_go2_service").start()
         try:
-            qos_state = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT, history=HistoryPolicy.KEEP_LAST,
-                                   depth=1, durability=DurabilityPolicy.VOLATILE)
-            qos_resp = QoSProfile(reliability=ReliabilityPolicy.BEST_EFFORT, history=HistoryPolicy.KEEP_LAST,
-                                  depth=32, durability=DurabilityPolicy.VOLATILE)
-            qos_req = QoSProfile(reliability=ReliabilityPolicy.RELIABLE, history=HistoryPolicy.KEEP_LAST,
-                                 depth=8, durability=DurabilityPolicy.VOLATILE)
-            self.node = rclpy.create_node("watchdog_go2_service", context=self.ctx)
-            self.pubs = {}
-            for svc in ("sport", "motion_switcher"):
-                self.pubs[svc] = self.node.create_publisher(Request, "/api/%s/request" % svc, qos_req)
-                self.node.create_subscription(Response, "/api/%s/response" % svc, self._on_resp, qos_resp)
-            self.node.create_subscription(LowState, "/lf/lowstate", self._on_low, qos_state)
-            self.node.create_subscription(SportModeState, "/lf/sportmodestate", self._on_sport, qos_state)
-            self.exec = SingleThreadedExecutor(context=self.ctx)
-            self.exec.add_node(self.node)
+            self.core.subscribe(TOPICS["LOW_STATE"], self._on_low)
+            self.core.subscribe(TOPICS["LF_SPORT_MOD_STATE"], self._on_sport)
         except Exception:
-            self.close()
+            self.core.close()
             raise
-        threading.Thread(target=self._spin, name="dds-executor", daemon=True).start()
 
-    def _spin(self):
-        try:
-            self.exec.spin()
-        except Exception as e:                           # noqa: BLE001
-            log("[DDS] executor died: %s" % e)
-        finally:
-            self.dead = True
+    @property
+    def dead(self):
+        return self.core.dead
 
     def close(self):
-        try:
-            if getattr(self, "node", None) is not None:
-                self.node.destroy_node()
-        except Exception:                                # noqa: BLE001
-            pass
-        try:
-            if self.ctx.ok():
-                self._rclpy.shutdown(context=self.ctx)
-        except Exception:                                # noqa: BLE001
-            pass
+        self.core.close()
 
-    def _on_low(self, m):
-        b = m.bms_state
-        self.battery = {"soc": int(b.soc), "voltage": float(m.power_v), "current": int(b.current)}
+    def _on_low(self, payload):
+        d = payload["data"]; b = d["bms_state"]
+        self.battery = {"soc": b["soc"], "voltage": d["power_v"], "current": b["current"]}
 
-    def _on_sport(self, m):
-        self.body_height = float(m.body_height)
-        try:
-            v = math.hypot(float(m.velocity[0]), float(m.velocity[1]))
-            w = abs(float(m.yaw_speed))
-            self.motion = (v, w) if math.isfinite(v) and math.isfinite(w) else None
-        except (AttributeError, IndexError, TypeError, ValueError):
-            self.motion = None
-        self.last_state = time.monotonic()
-
-    def _on_resp(self, m):
-        rid = int(m.header.identity.id)
-        with self.lock:
-            slot = self.pending.get(rid)
-        if slot is not None:                             # late/foreign replies are ignored
-            slot[1] = int(m.header.status.code)
-            slot[2] = m.data
-            slot[0].set()
+    def _on_sport(self, payload):
+        d = payload["data"]
+        self.body_height = d.get("body_height")
+        self.motion = planar_motion(d)
+        self.last_state = payload["_recvMono"]
 
     def alive(self):
-        return (not self.dead) and self.last_state and time.monotonic() - self.last_state < TELEMETRY_STALE_S
+        return (not self.core.dead) and self.last_state and time.monotonic() - self.last_state < TELEMETRY_STALE_S
 
     def send(self, api_id, parameter=None, svc="sport"):
-        """Publish a request; returns (rid, slot). Never blocks on the robot."""
-        with self.lock:
-            self.rid = (self.rid + 1) % 2000000000
-            rid = self.rid
-            slot = [threading.Event(), None, None]
-            self.pending[rid] = slot
-        try:
-            r = self.Request()
-            r.header.identity.id = rid
-            r.header.identity.api_id = int(api_id)
-            r.header.lease.id = 0
-            r.header.policy.priority = 0
-            r.header.policy.noreply = False
-            r.parameter = json.dumps(parameter) if isinstance(parameter, (dict, list)) else (parameter or "")
-            self.pubs[svc].publish(r)
-        except Exception:
-            with self.lock:
-                self.pending.pop(rid, None)
-            raise
-        return rid, slot
+        """Publish; returns a go2dds Pending. Never blocks on the robot."""
+        return self.core.send(self._TOPIC[svc], api_id, parameter, 0)
 
-    def wait(self, rid, slot, timeout):
-        """(code, data); code None = no reply within timeout."""
-        try:
-            if not slot[0].wait(timeout):
-                return None, None
-            return slot[1], slot[2]
-        finally:
-            with self.lock:
-                self.pending.pop(rid, None)
+    def wait(self, pending, timeout):
+        return self.core.wait(pending, timeout)
 
     def request(self, api_id, parameter=None, svc="sport", timeout=REQUEST_TIMEOUT_S):
-        rid, slot = self.send(api_id, parameter, svc)
-        return self.wait(rid, slot, timeout)
+        return self.core.request(self._TOPIC[svc], api_id, parameter, 0, timeout)
 
 
 dds = None
@@ -261,7 +190,7 @@ def dds_supervisor():
             current = None
         if current is None:
             try:
-                link = DDSLink()
+                link = RobotLink()
                 with dds_lock:
                     dds = link
                 log("[DDS] link up (sport + motion_switcher, /lf telemetry)")
@@ -293,15 +222,6 @@ def telemetry_posture():
     if h < STANDING_MIN_M:
         return "low"
     return "standing"
-
-
-def snap(v, lo, hi, floor):
-    if not math.isfinite(v) or abs(v) < DEADBAND:
-        return 0.0
-    v = max(lo, min(hi, v))
-    if floor and 0 < abs(v) < floor:
-        v = floor if v > 0 else (lo if lo > -floor else -floor)
-    return v
 
 
 # ── Actuation (Azimuth's teleop model) ───────────────────────────────────────
@@ -382,46 +302,32 @@ class Actuator:
             return                                   # link down: keep the stop pending
         if att is None or att["link"] is not d or now - att["t"] > STILL_DEADLINE_S:
             if att is not None:
-                with att["link"].lock:
-                    att["link"].pending.pop(att["rid"], None)      # abandoned: no leak
+                att["link"].core.cancel(att["p"])                   # abandoned: no leak
                 log("[Stop] attempt for #%d not verified in %.1fs (reply code %s, still samples %d) — retrying"
-                    % (att["target"], STILL_DEADLINE_S, att["code"], att["samples"]))
+                    % (att["target"], STILL_DEADLINE_S, att["code"], att["rv"].samples))
             try:
-                rid, slot = d.send(API["StopMove"])
+                p = d.send(API["StopMove"])
             except Exception as e:                   # noqa: BLE001
                 log("[Stop] publish failed: %s" % e)
                 return
-            att = {"target": target, "t": now, "rid": rid, "slot": slot, "link": d,
-                   "code": None, "held_since": None, "samples": 0, "last_seen": None}
+            att = {"target": target, "t": now, "p": p, "link": d, "code": None,
+                   "rv": RestVerifier(now, hold_s=STILL_HOLD_S, min_samples=STILL_MIN_SAMPLES,
+                                      settle_v=SETTLE_V, settle_w=SETTLE_W)}
             with self.lock:
                 self.attempt = att
             return
-        if att["code"] is None and att["slot"][0].is_set():
-            att["code"] = att["slot"][1]
-            with d.lock:
-                d.pending.pop(att["rid"], None)
-        # Incremental rest verification on distinct fresh samples after the stop.
-        at, motion = d.last_state, d.motion
-        fresh = at and at > att["t"] and now - at < 0.5
-        verified = False
-        if not fresh:
-            att["held_since"] = None; att["samples"] = 0      # evidence gap: start over
-        elif at != att["last_seen"]:
-            # Evaluated only on a NEW distinct sample, and the still samples'
-            # own timestamps must span the hold (Azimuth's settle_still).
-            att["last_seen"] = at
-            if motion is not None and motion[0] < STILL_V and motion[1] < STILL_W:
-                att["held_since"] = att["held_since"] or at; att["samples"] += 1
-                verified = (at - att["held_since"] >= STILL_HOLD_S and att["samples"] >= STILL_MIN_SAMPLES)
-            else:
-                att["held_since"] = None; att["samples"] = 0
+        if att["code"] is None and att["p"].replied:
+            att["code"] = att["p"].code
+            d.core.cancel(att["p"])
+        # Rest on distinct fresh samples after the stop (go2dds RestVerifier =
+        # Azimuth's settle_still; resets on stale gaps or motion).
+        verified = att["rv"].feed(d.last_state, d.motion, now)
         # A stop needs BOTH delivery (the robot replied — any code: a lying dog
         # answers -1 because there is nothing to stop) and PHYSICAL REST on fresh
         # samples (Azimuth's verdict_for). An unanswered StopMove never counts,
         # however still the body looks: that would hide a dead command channel.
         if verified and att["code"] is not None:
-            with d.lock:
-                d.pending.pop(att["rid"], None)         # done with this request either way
+            d.core.cancel(att["p"])                   # done with this request either way
             with self.lock:
                 self.stop_ok = max(self.stop_ok, att["target"])
                 if not self.stop_pending():
@@ -437,6 +343,18 @@ class Actuator:
                 self._tick()
             except Exception as e:                   # noqa: BLE001
                 log("[Supervisor] %s" % e)
+
+    def wait_current_stop(self, timeout=3.0):
+        """Wait for the stop already outstanding (anonymous stops coalesce onto it)."""
+        with self.lock:
+            n = self.stop_req
+        t = time.monotonic()
+        while time.monotonic() - t < timeout:
+            with self.lock:
+                if self.stop_ok >= n:
+                    return n
+            time.sleep(0.02)
+        return 0
 
     def stop_and_wait(self, retire_session=None, timeout=3.0, retire_active=True, operator=True):
         """Request a stop; returns its number if THAT stop (or a later one)
@@ -466,6 +384,12 @@ class Actuator:
         if d is None or not d.alive():
             return 503, {"success": False, "error": "NOT_CONNECTED", "message": "Robot not connected (no DDS telemetry)"}
         with self.lock:
+            # A lapsed drive is stopped HERE, atomically, not only on the next
+            # supervisor tick: an old session can never be renewed after expiry.
+            if self.moving and not self.stop_pending() and self.lease_until and time.monotonic() > self.lease_until:
+                log("[Deadman] lease lapsed (seen at admission) — stopping")
+                self._request_stop()
+                return 409, {"success": False, "error": "STOP_PENDING", "message": "Previous drive lapsed — stopping."}
             if session in self.retired:
                 return 409, {"success": False, "error": "SESSION_RETIRED", "message": "That drive was stopped — press again."}
             if (self.session is not None and session != self.session and self.moving
@@ -488,10 +412,11 @@ class Actuator:
             self.moving = True
             self.lease_until = time.monotonic() + MOVE_LEASE_S
             try:
-                rid, slot = d.send(API["Move"], {"x": vx, "y": vy, "z": vyaw})
+                p = d.send(API["Move"], {"x": vx, "y": vy, "z": vyaw})
             except Exception as e:                   # noqa: BLE001
-                return 503, {"success": False, "error": "PUBLISH_FAILED", "message": str(e)}
-        code, _ = d.wait(rid, slot, MOVE_REPLY_TIMEOUT_S)
+                log("[Move] publish failed: %s" % e)
+                return 503, {"success": False, "error": "PUBLISH_FAILED", "message": "publish failed"}
+        code, _ = d.wait(p, MOVE_REPLY_TIMEOUT_S)
         return 200, {"success": code == 0, "code": code}
 
     # -- transitions ---------------------------------------------------------
@@ -545,7 +470,7 @@ class Actuator:
             sent = self._send_if_current(d, n, self._admitted_ops, api)
             if sent is None:
                 return 409, {"success": False, "message": "Cancelled by a newer stop — command not sent."}
-            code, _ = d.wait(*sent, REQUEST_TIMEOUT_S)
+            code, _ = d.wait(sent, REQUEST_TIMEOUT_S)
             ok = code == 0 or code in LENIENT_CODES.get(name, set())
             msg = ("No reply from robot within %.0fs" % REQUEST_TIMEOUT_S if code is None
                    else "ok" if code == 0 else "robot code %s%s" % (code, " (tolerated)" if ok else ""))
@@ -578,7 +503,7 @@ class Actuator:
                                          {"name": mode}, "motion_switcher")
             if sent is None:
                 return 409, {"success": False, "message": "Cancelled by a newer stop — mode not changed."}
-            code, data = d.wait(*sent, REQUEST_TIMEOUT_S)
+            code, data = d.wait(sent, REQUEST_TIMEOUT_S)
             log("[MotionMode] %s -> %s (code %s)" % (current, mode, code))
             return 200, {"success": code == 0, "code": code, "message": data or ""}
         finally:
@@ -763,6 +688,18 @@ def handle_stop():
     # 'all' (E-stop): retire the caller's own press AND whatever drive is active
     # here. Without it a named stop is a D-pad release: only that press retires.
     everything = bool(body.get("all")) or session is None
+    if request.environ.get("watchdog.anonymous_stop"):
+        with act.lock:
+            if act.stop_pending():
+                act.lease_until = 0.0
+                act._retire(act.session)
+                already = True
+            else:
+                already = False
+        if already:                          # coalesce: no new stop per anonymous call
+            ok = bool(act.wait_current_stop(timeout=3.0))
+            return jsonify({"success": ok, "confirmed": ok,
+                            "message": "Stop verified at rest" if ok else "Stop sent — still verifying"})
     ok = bool(act.stop_and_wait(session, timeout=3.0, retire_active=everything))
     return jsonify({"success": ok, "confirmed": ok,
                     "message": "Stop verified at rest" if ok else "Stop sent — still verifying, retrying until confirmed"})
@@ -782,10 +719,17 @@ if __name__ == "__main__":
     # default HTTP/1.0 closes every connection, adding a handshake per Move).
     from werkzeug.serving import WSGIRequestHandler
     WSGIRequestHandler.protocol_version = "HTTP/1.1"
-    if not CONTROL_TOKEN:
+    if _TOKEN_REJECTED:
+        log("[Auth] GO2_SERVICE_TOKEN malformed (need >= 32 ASCII, no spaces) — commands refuse")
+    elif not CONTROL_TOKEN:
         log("[Auth] GO2_SERVICE_TOKEN not set — all command endpoints refuse (fail closed)")
+    cert, key = os.environ.get("GO2_TLS_CERT"), os.environ.get("GO2_TLS_KEY")
+    if bool(cert) != bool(key):
+        raise SystemExit("GO2_TLS_CERT and GO2_TLS_KEY must be set together")
+    tls = (cert, key) if cert else None
+    log("[HTTP] serving %s on :5001" % ("HTTPS (CA-issued certificate)" if tls else "plain HTTP"))
     threading.Thread(target=dds_supervisor, name="dds-supervisor", daemon=True).start()
     threading.Thread(target=act.supervise, name="deadman", daemon=True).start()
     threading.Thread(target=encoder, name="jpeg-encoder", daemon=True).start()
     threading.Thread(target=start_video, name="video", daemon=True).start()
-    app.run(host="0.0.0.0", port=5001, threaded=True)
+    app.run(host="0.0.0.0", port=5001, threaded=True, ssl_context=tls)

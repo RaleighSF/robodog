@@ -3672,20 +3672,40 @@
             }
         }
 
-        // Emergency stop — always accessible
-        async function emergencyStop() {
+        // Emergency stop — always accessible.
+        // Latched: the D-pad stays locked until the robot link CONFIRMS a stop
+        // (verified at rest). Unconfirmed attempts are retried; pressing E-stop
+        // again while one is in flight joins it rather than starting another.
+        let _estopLoop = null;
+        function emergencyStop() {
             window.__estopPending = true;
             const local = (typeof window.__dpadCancel === 'function') ? window.__dpadCancel() : null;
-            try {
-                // all: stop the robot and retire BOTH this page's press and whatever
-                // drive is active on the robot.
-                await fetch('/go2/stop', { method: 'POST', headers: {'Content-Type': 'application/json'},
-                                           body: JSON.stringify({ session: local, all: true }) });
-                showStatus('Emergency stop sent', 'warning');
-            } catch(e) {
-            } finally {
-                window.__estopPending = false;
-            }
+            if (_estopLoop) return _estopLoop;
+            _estopLoop = (async () => {
+                let attempt = 0;
+                while (true) {
+                    attempt++;
+                    try {
+                        // all: stop the robot and retire BOTH this page's press and
+                        // whatever drive is active on the robot.
+                        const r = await fetch('/go2/stop', {
+                            method: 'POST', headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({ session: local, all: true }),
+                            signal: AbortSignal.timeout(6000) });
+                        const body = await r.json().catch(() => ({}));
+                        if (r.ok && body.confirmed === true) {
+                            showStatus('Emergency stop confirmed — robot at rest', 'warning');
+                            break;
+                        }
+                        showStatus(attempt === 1 ? 'Emergency stop sent — confirming…'
+                                                 : `E-stop NOT yet confirmed (try ${attempt}) — retrying`, 'error');
+                    } catch (e) {
+                        showStatus(`E-stop: robot link not answering (try ${attempt}) — retrying`, 'error');
+                    }
+                    await new Promise(res => setTimeout(res, attempt < 10 ? 1000 : 3000));
+                }
+            })().finally(() => { window.__estopPending = false; _estopLoop = null; });
+            return _estopLoop;
         }
 
         function showStatus(message, type) {

@@ -14,7 +14,10 @@ After=azimuth-edge.service
 EnvironmentFile=/etc/go2_service.env
 ExecStartPre=-/usr/bin/docker rm -f watchdog-go2
 ExecStart=/usr/bin/docker run --rm --name watchdog-go2 --network host --ipc host \
-  -e GO2_AES_KEY -e GO2_ROBOT_IP -e GO2_SERVICE_TOKEN watchdog-go2:latest
+  -e GO2_AES_KEY -e GO2_ROBOT_IP -e GO2_SERVICE_TOKEN \
+  -e GO2_TLS_CERT=/tls/cert.pem -e GO2_TLS_KEY=/tls/key.pem \
+  -v /etc/watchdog-go2/tls:/tls:ro \
+  watchdog-go2:latest
 ExecStop=/usr/bin/docker stop -t 10 watchdog-go2
 Restart=always
 RestartSec=5
