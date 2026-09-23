@@ -411,6 +411,8 @@ class SceneNarrator:
             return self._openai_query(system_prompt, user_prompt, image_b64,
                                       max_tokens, temperature)
         with self._vlm_lock:
+            if self._cancelled():
+                return None      # stopped while queued behind another query
             try:
                 resp = requests.post(
                     f"{self.ollama_url}/api/chat",
@@ -448,6 +450,8 @@ class SceneNarrator:
                       max_tokens, temperature) -> Optional[str]:
         """OpenAI-compatible chat call (vLLM serving Cosmos Reason 2)."""
         with self._vlm_lock:
+            if self._cancelled():
+                return None      # stopped while queued behind another query
             try:
                 resp = requests.post(
                     f"{self.api_url}/chat/completions",
@@ -517,9 +521,9 @@ class SceneNarrator:
                     return
                 with self._lock:
                     self._frame_log.append(entry)
-            # Also feed into scene aggregation buffer
-            with self._scene_lock:
-                self._scene_observations.append({"timestamp": ts, "text": description})
+                # Also feed into scene aggregation buffer
+                with self._scene_lock:
+                    self._scene_observations.append({"timestamp": ts, "text": description})
             logger.info(f"[SceneNarrator:frame] {description[:80]}...")
 
     # ── Scene summary (aggregation) ────────────────────────────────
@@ -628,13 +632,14 @@ class SceneNarrator:
         self._consecutive_positives = 0
         logger.info(f"[SceneNarrator:gesture] CONFIRMED gesture #{self._gesture_count} — firing callback")
 
-        with self._lifecycle_lock:   # atomic with stop(); callback is fast
-            fire = self._gesture_callback and not self._cancelled()
-        if fire:
-            try:
-                self._gesture_callback("confirmed_squat")
-            except Exception as e:
-                logger.error(f"[SceneNarrator:gesture] Callback error: {e}")
+        # Admission and firing are atomic with stop(). (The VLM gesture callback
+        # is not wired to the robot today; YOLO Pose owns the shake trigger.)
+        with self._lifecycle_lock:
+            if self._gesture_callback and not self._cancelled():
+                try:
+                    self._gesture_callback("confirmed_squat")
+                except Exception as e:
+                    logger.error(f"[SceneNarrator:gesture] Callback error: {e}")
 
 
 # ── Module-level singleton ──────────────────────────────────────────
