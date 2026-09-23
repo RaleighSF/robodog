@@ -45,3 +45,6 @@ ui_state.json.tmp
 # Operator login (password hash + session key) — device-local, never commit
 auth.json
 auth.json.tmp
+
+# Dashboard TLS key/cert (device-local)
+tls/
