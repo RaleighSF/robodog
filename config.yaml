@@ -55,6 +55,17 @@ telemetry:
   s3_region: us-east-1
   thumbnail_max_width: 320
   upload_images: true
+ui:
+  # First-boot demo skin (default | azure | aws). The live choice is made in
+  # the dashboard (Configure > Demo profile) and persisted to ui_state.json.
+  profile: default
+  # Pin one skin for an event and hide the picker, e.g. `lock_profile: aws`
+  # at re:Invent (sponsor rules: no competitor clouds on screen). Empty = off.
+  lock_profile: ''
+  nvidia_badge:
+    enabled: true
+    # Leave empty to derive from telemetry.device_type (e.g. Jetson AGX Orin).
+    platform: ''
 vision:
   classes:
   - person

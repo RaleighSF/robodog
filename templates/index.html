@@ -1,17 +1,17 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="{{ profile.id }}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Project Watch Dog - Factory Patrol Monitoring | NTT DATA</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <title>{{ profile.title }}</title>
+    <link id="themeFont" href="{{ profile.font_href or '' }}" rel="stylesheet"{% if not profile.font_href %} disabled{% endif %}>
     <style>
         :root {
             /* NTT DATA Brand Colors — Deep Navy Blueprint */
             --brand-500: #3B82C4;       /* Brand medium blue */
             --brand-600: #0060AE;       /* Primary NTT Endeavour Blue */
             --brand-700: #004D8C;       /* Hover/pressed state */
-            --brand-50: rgba(0,96,174,0.12); /* Subtle tints */
+            --brand-50: rgba(var(--brand-rgb),0.12); /* Subtle tints */
 
             /* Ink (Text) Colors — inverted for dark theme */
             --ink-900: #E8EDF3;         /* Headlines */
@@ -35,14 +35,30 @@
             --success: #10B981;
             --warning: #D97706;
             --error: #DC2626;              /* Reserved for e-stop / true errors only */
+
+            /* RGB triplets so tints can be themed: rgba(var(--brand-rgb), .3) */
+            --brand-rgb: 0,96,174;
+            --brand-alt-rgb: 0,114,187;
+            --bg-0-rgb: 10,22,40;
+            --bg-50-rgb: 15,29,50;
+            --bg-100-rgb: 22,39,64;
+            --accent-rgb: 100,133,193;
+            --fg-rgb: 255,255,255;
+            --video-bg: #060E1A;
+            --brand-fg: #0060AE;           /* brand-coloured text (default = brand-600) */
+            --brand-fg-hover: #004D8C;
+            --on-accent: #fff;             /* text on accent-light-blue fills */
+            --on-brand: #0A1628;           /* text on brand/semantic fills */
+            --nav-bg: rgba(10,22,40,0.85);
+            --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         }
 
         @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
-        ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+        ::-webkit-scrollbar-thumb { background: rgba(var(--fg-rgb),0.1); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(var(--fg-rgb),0.2); }
 
         * {
             margin: 0;
@@ -51,7 +67,7 @@
         }
 
         body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            font-family: var(--font-sans);
             background: var(--bg-0);
             color: var(--ink-700);
             font-size: 16px;
@@ -59,15 +75,15 @@
             height: 100vh;
             overflow: hidden;
             background-image:
-                linear-gradient(rgba(0,96,174,0.03) 1px, transparent 1px),
-                linear-gradient(90deg, rgba(0,96,174,0.03) 1px, transparent 1px);
+                linear-gradient(rgba(var(--brand-rgb),0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(var(--brand-rgb),0.03) 1px, transparent 1px);
             background-size: 40px 40px;
         }
 
         .header-nav {
-            background: rgba(10,22,40,0.85);
+            background: var(--nav-bg);
             backdrop-filter: blur(20px) saturate(150%);
-            border-bottom: 1px solid rgba(255,255,255,0.05);
+            border-bottom: 1px solid rgba(var(--fg-rgb),0.05);
             padding: 0;
         }
 
@@ -115,15 +131,17 @@
         }
 
         .partner-logo-img {
-            /* The mark's black body vanishes against the dark nav, so mount it on a
-               white tile. border-box keeps the tile a fixed 34px with 4px padding. */
             height: 44px;
             width: auto;
-            padding: 5px;
             box-sizing: border-box;
+            display: block;
+        }
+        .partner-logo-img.is-tile {
+            /* Bridgestone's black body vanishes against the dark nav, so mount it
+               on a white tile. border-box keeps the tile a fixed height. */
+            padding: 5px;
             background: #fff;
             border-radius: 6px;
-            display: block;
         }
 
         .nav-controls {
@@ -136,7 +154,7 @@
             display: flex;
             align-items: center;
             gap: 15px;
-            background: rgba(255, 255, 255, 0.1);
+            background: rgba(var(--fg-rgb), 0.1);
             padding: 8px 12px;
             border-radius: 8px;
             backdrop-filter: blur(10px);
@@ -149,9 +167,9 @@
 
         .header-select {
             padding: 6px 10px;
-            border: 1px solid rgba(255,255,255,0.1);
+            border: 1px solid rgba(var(--fg-rgb),0.1);
             border-radius: 4px;
-            background: rgba(15,29,50,0.9);
+            background: rgba(var(--bg-50-rgb),0.9);
             color: var(--ink-900);
             font-size: 13px;
             font-weight: 500;
@@ -162,7 +180,7 @@
 
         .header-select:focus {
             outline: none;
-            border-color: var(--brand-600);
+            border-color: var(--brand-fg);
             background: var(--bg-100);
         }
 
@@ -178,9 +196,9 @@
 
         .header-input {
             padding: 6px 10px;
-            border: 1px solid rgba(255,255,255,0.1);
+            border: 1px solid rgba(var(--fg-rgb),0.1);
             border-radius: 4px;
-            background: rgba(15,29,50,0.9);
+            background: rgba(var(--bg-50-rgb),0.9);
             color: var(--ink-900);
             font-size: 13px;
             width: 120px;
@@ -189,7 +207,7 @@
 
         .header-input:focus {
             outline: none;
-            border-color: var(--brand-600);
+            border-color: var(--brand-fg);
             background: var(--bg-100);
         }
 
@@ -198,7 +216,7 @@
             align-items: center;
             gap: 8px;
             padding: 0 15px;
-            border-left: 1px solid rgba(255, 255, 255, 0.2);
+            border-left: 1px solid rgba(var(--fg-rgb), 0.2);
         }
 
         .mode-label {
@@ -234,8 +252,8 @@
         }
 
         .mode-badge.mode-text {
-            background: rgba(0, 114, 187, 0.2);
-            color: var(--brand-600);
+            background: rgba(var(--brand-alt-rgb), 0.2);
+            color: var(--brand-fg);
         }
 
         @keyframes pulse {
@@ -248,7 +266,7 @@
             gap: 8px;
             margin-left: 10px;
             padding-left: 10px;
-            border-left: 1px solid rgba(255, 255, 255, 0.2);
+            border-left: 1px solid rgba(var(--fg-rgb), 0.2);
         }
 
         .btn-header {
@@ -264,7 +282,7 @@
 
         .btn-header.btn-start {
             background: var(--success);
-            color: var(--bg-0);
+            color: var(--on-brand);
         }
 
         .btn-header.btn-start:hover {
@@ -274,31 +292,31 @@
         }
 
         .btn-header.btn-stop {
-            background: rgba(100,133,193,0.25);
+            background: rgba(var(--accent-rgb),0.25);
             color: var(--accent-teal-500);
         }
 
         .btn-header.btn-stop:hover {
-            background: rgba(100,133,193,0.4);
+            background: rgba(var(--accent-rgb),0.4);
             transform: translateY(-1px);
-            box-shadow: 0 4px 8px rgba(100,133,193,0.3);
+            box-shadow: 0 4px 8px rgba(var(--accent-rgb),0.3);
         }
 
         .btn-header.btn-config {
             background: var(--brand-600);
-            color: var(--bg-0);
+            color: var(--on-brand);
         }
 
         .btn-header.btn-config:hover {
             background: var(--brand-700);
             transform: translateY(-1px);
-            box-shadow: 0 4px 8px rgba(0, 114, 187, 0.3);
+            box-shadow: 0 4px 8px rgba(var(--brand-alt-rgb), 0.3);
         }
 
         .btn-header.btn-disabled,
         .btn-header.btn-disabled:hover {
             background: rgba(100, 116, 139, 0.4);
-            color: rgba(255, 255, 255, 0.8);
+            color: rgba(var(--fg-rgb), 0.8);
             cursor: not-allowed;
             transform: none;
             box-shadow: none;
@@ -323,8 +341,8 @@
             display: flex;
             justify-content: center;
             align-items: flex-start;
-            background: linear-gradient(135deg, #060E1A 0%, #0A1628 100%);
-            border-right: 1px solid rgba(255,255,255,0.05);
+            background: linear-gradient(135deg, var(--video-bg) 0%, var(--bg-0) 100%);
+            border-right: 1px solid rgba(var(--fg-rgb),0.05);
             overflow: hidden;
             min-height: 0;
         }
@@ -332,7 +350,7 @@
             content: '';
             position: absolute;
             inset: 12px;
-            border: 1.5px solid rgba(0,96,174,0.35);
+            border: 1.5px solid rgba(var(--brand-rgb),0.35);
             border-radius: 4px;
             pointer-events: none;
             z-index: 2;
@@ -345,8 +363,8 @@
             animation: reticleGlow 3s ease-in-out infinite;
         }
         @keyframes reticleGlow {
-            0%, 100% { border-color: rgba(0,96,174,0.25); }
-            50% { border-color: rgba(0,96,174,0.5); }
+            0%, 100% { border-color: rgba(var(--brand-rgb),0.25); }
+            50% { border-color: rgba(var(--brand-rgb),0.5); }
         }
 
         .video-inner {
@@ -376,14 +394,14 @@
             position: absolute;
             top: 16px;
             left: 16px;
-            background: rgba(10,22,40,0.75);
+            background: rgba(var(--bg-0-rgb),0.75);
             backdrop-filter: blur(8px);
             color: var(--ink-900);
             padding: 8px 14px;
             border-radius: 6px;
             font-size: 13px;
             font-weight: 600;
-            border: 1px solid rgba(255,255,255,0.06);
+            border: 1px solid rgba(var(--fg-rgb),0.06);
             z-index: 3;
         }
 
@@ -392,10 +410,10 @@
             position: absolute;
             bottom: 12px;
             left: 52px;
-            background: rgba(10,22,40,0.85);
+            background: rgba(var(--bg-0-rgb),0.85);
             backdrop-filter: blur(16px) saturate(180%);
             border-radius: 10px;
-            border: 1px solid rgba(255,255,255,0.06);
+            border: 1px solid rgba(var(--fg-rgb),0.06);
             padding: 10px;
             display: none;
             flex-direction: column;
@@ -444,9 +462,9 @@
             width: 40px;
             height: 40px;
             border-radius: 50%;
-            background: rgba(10,22,40,0.85);
+            background: rgba(var(--bg-0-rgb),0.85);
             backdrop-filter: blur(12px);
-            border: 1px solid rgba(255,255,255,0.1);
+            border: 1px solid rgba(var(--fg-rgb),0.1);
             color: var(--ink-700);
             cursor: pointer;
             display: flex;
@@ -457,14 +475,14 @@
             box-shadow: 0 4px 16px rgba(0,0,0,0.3);
         }
         .go2-toggle-btn:hover {
-            background: rgba(0,96,174,0.3);
-            border-color: rgba(0,96,174,0.4);
+            background: rgba(var(--brand-rgb),0.3);
+            border-color: rgba(var(--brand-rgb),0.4);
             color: var(--ink-900);
         }
         .go2-toggle-btn.active {
             background: var(--brand-600);
-            color: var(--bg-0);
-            border-color: var(--brand-600);
+            color: var(--on-brand);
+            border-color: var(--brand-fg);
         }
 
         .ctrl-panel-label {
@@ -483,9 +501,9 @@
         }
 
         .go2-cmd-btn {
-            background: rgba(255, 255, 255, 0.08);
+            background: rgba(var(--fg-rgb), 0.08);
             color: var(--ink-900);
-            border: 1px solid rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(var(--fg-rgb), 0.1);
             padding: 5px 0;
             border-radius: 6px;
             font-size: 10px;
@@ -498,12 +516,12 @@
             gap: 5px;
         }
         .go2-cmd-btn:hover {
-            background: rgba(0, 114, 187, 0.35);
-            border-color: rgba(0, 114, 187, 0.5);
+            background: rgba(var(--brand-alt-rgb), 0.35);
+            border-color: rgba(var(--brand-alt-rgb), 0.5);
         }
         .go2-cmd-btn:active {
             background: var(--brand-500);
-            color: var(--bg-0);
+            color: var(--on-brand);
         }
         .go2-cmd-btn:disabled {
             opacity: 0.4;
@@ -512,7 +530,7 @@
 
         .ctrl-divider {
             height: 1px;
-            background: rgba(255, 255, 255, 0.08);
+            background: rgba(var(--fg-rgb), 0.08);
             margin: 0 -2px;
         }
 
@@ -530,8 +548,8 @@
             height: 36px;
             border: none;
             border-radius: 8px;
-            background: rgba(255, 255, 255, 0.08);
-            border: 1px solid rgba(255, 255, 255, 0.06);
+            background: rgba(var(--fg-rgb), 0.08);
+            border: 1px solid rgba(var(--fg-rgb), 0.06);
             color: var(--ink-900);
             cursor: pointer;
             display: flex;
@@ -543,24 +561,24 @@
             touch-action: none;
         }
         .dpad-btn:hover {
-            background: rgba(0, 114, 187, 0.3);
-            border-color: rgba(0, 114, 187, 0.4);
+            background: rgba(var(--brand-alt-rgb), 0.3);
+            border-color: rgba(var(--brand-alt-rgb), 0.4);
         }
         .dpad-btn:active, .dpad-btn.active {
             background: var(--brand-500);
-            color: var(--bg-0);
+            color: var(--on-brand);
             border-color: var(--brand-500);
-            box-shadow: 0 0 16px rgba(0, 114, 187, 0.5);
+            box-shadow: 0 0 16px rgba(var(--brand-alt-rgb), 0.5);
         }
         .dpad-btn svg { pointer-events: none; }
         .dpad-spacer { visibility: hidden; }
         .dpad-center {
-            background: rgba(255, 255, 255, 0.03);
+            background: rgba(var(--fg-rgb), 0.03);
             border-radius: 50%;
-            border-color: rgba(255, 255, 255, 0.04);
+            border-color: rgba(var(--fg-rgb), 0.04);
             cursor: default;
         }
-        .dpad-center:hover { background: rgba(255, 255, 255, 0.03); }
+        .dpad-center:hover { background: rgba(var(--fg-rgb), 0.03); }
 
         .status {
             grid-area: stats;
@@ -570,8 +588,8 @@
             font-weight: 500;
             font-size: 11px;
             text-align: center;
-            border-top: 1px solid rgba(255,255,255,0.05);
-            background: rgba(10,22,40,0.85);
+            border-top: 1px solid rgba(var(--fg-rgb),0.05);
+            background: rgba(var(--bg-0-rgb),0.85);
             backdrop-filter: blur(12px);
         }
 
@@ -594,9 +612,9 @@
         }
 
         .status.info {
-            background: rgba(0, 96, 174, 0.08);
+            background: rgba(var(--brand-rgb), 0.08);
             color: var(--brand-500);
-            border-top: 1px solid rgba(0,96,174,0.2);
+            border-top: 1px solid rgba(var(--brand-rgb),0.2);
         }
 
         .loading {
@@ -615,8 +633,8 @@
             content: '';
             width: 32px;
             height: 32px;
-            border: 2px solid rgba(0,96,174,0.15);
-            border-top-color: var(--brand-600);
+            border: 2px solid rgba(var(--brand-rgb),0.15);
+            border-top-color: var(--brand-fg);
             border-radius: 50%;
             animation: spin 1s linear infinite;
         }
@@ -647,13 +665,13 @@
         }
 
         .log-header {
-            background: rgba(15,29,50,0.9);
+            background: rgba(var(--bg-50-rgb),0.9);
             color: var(--ink-900);
             padding: 10px 14px;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            border-bottom: 1px solid rgba(255,255,255,0.05);
+            border-bottom: 1px solid rgba(var(--fg-rgb),0.05);
             gap: 8px;
         }
 
@@ -680,8 +698,8 @@
             align-items: center;
             justify-content: center;
             border-radius: 6px;
-            border: 1px solid rgba(255,255,255,0.1);
-            background: rgba(255,255,255,0.05);
+            border: 1px solid rgba(var(--fg-rgb),0.1);
+            background: rgba(var(--fg-rgb),0.05);
             color: var(--ink-400);
             font-size: 14px;
             cursor: pointer;
@@ -690,7 +708,7 @@
             line-height: 1;
         }
         .icon-btn:hover {
-            background: rgba(255,255,255,0.1);
+            background: rgba(var(--fg-rgb),0.1);
             color: var(--ink-900);
         }
         .icon-btn.danger:hover {
@@ -699,11 +717,11 @@
         }
 
         .log-stats {
-            background: rgba(15,29,50,0.5);
+            background: rgba(var(--bg-50-rgb),0.5);
             padding: 10px 16px;
             display: flex;
             gap: 20px;
-            border-bottom: 1px solid rgba(255,255,255,0.05);
+            border-bottom: 1px solid rgba(var(--fg-rgb),0.05);
         }
 
         .stat-item {
@@ -741,8 +759,8 @@
 
         .scene-section {
             grid-area: scene;
-            border-top: 1px solid rgba(255,255,255,0.05);
-            border-right: 1px solid rgba(255,255,255,0.05);
+            border-top: 1px solid rgba(var(--fg-rgb),0.05);
+            border-right: 1px solid rgba(var(--fg-rgb),0.05);
             display: flex;
             flex-direction: column;
             overflow: hidden;
@@ -765,11 +783,11 @@
         }
         .btn.btn-primary:hover { background: var(--brand-700); }
         .btn.btn-stop {
-            background: rgba(100,133,193,0.12);
+            background: rgba(var(--accent-rgb),0.12);
             color: var(--accent-teal-500);
             border-radius: 4px;
         }
-        .btn.btn-stop:hover { background: rgba(100,133,193,0.25); }
+        .btn.btn-stop:hover { background: rgba(var(--accent-rgb),0.25); }
 
         .scene-log {
             padding: 12px;
@@ -779,7 +797,7 @@
             gap: 10px;
             padding: 10px 12px;
             margin-bottom: 6px;
-            background: rgba(15,29,50,0.6);
+            background: rgba(var(--bg-50-rgb),0.6);
             border-radius: 8px;
             border-left: 3px solid var(--accent-teal-500);
             font-size: 13px;
@@ -821,7 +839,7 @@
 
         .awareness-tab-toggle, .scene-mode-toggle {
             display: flex;
-            background: rgba(15,29,50,0.8);
+            background: rgba(var(--bg-50-rgb),0.8);
             border-radius: 6px;
             border: 1px solid var(--ink-600);
             overflow: hidden;
@@ -840,15 +858,15 @@
         .tab-btn:hover, .mode-btn:hover { color: var(--ink-100); }
         .tab-btn.active {
             background: var(--brand-600);
-            color: var(--bg-0);
+            color: var(--on-brand);
         }
         .mode-btn.active[data-mode="casual"] {
             background: var(--accent-teal-500);
-            color: var(--bg-0);
+            color: var(--on-brand);
         }
         .mode-btn.active[data-mode="gesture"] {
             background: var(--accent-light-blue);
-            color: var(--bg-0);
+            color: var(--on-brand);
         }
         /* Pause buttons */
         .pause-btn {
@@ -917,7 +935,7 @@
             color: var(--ink-100);
         }
         .scene-summary-block .summary-text {
-            background: rgba(15,29,50,0.6);
+            background: rgba(var(--bg-50-rgb),0.6);
             border-radius: 8px;
             border-left: 3px solid var(--brand-600);
             padding: 14px 16px;
@@ -942,7 +960,7 @@
             gap: 10px;
             padding: 10px;
             margin-bottom: 6px;
-            background: rgba(15,29,50,0.6);
+            background: rgba(var(--bg-50-rgb),0.6);
             border-radius: 8px;
             border-left: 3px solid var(--accent-light-blue);
             transition: all 0.2s ease;
@@ -950,7 +968,7 @@
         }
 
         .log-entry:hover {
-            background: rgba(22,39,64,0.8);
+            background: rgba(var(--bg-100-rgb),0.8);
             transform: translateX(2px);
         }
 
@@ -959,7 +977,7 @@
             height: 36px;
             object-fit: cover;
             border-radius: 4px;
-            border: 1px solid rgba(255,255,255,0.06);
+            border: 1px solid rgba(var(--fg-rgb),0.06);
         }
 
         .log-content {
@@ -988,7 +1006,7 @@
 
         .log-id {
             background: var(--accent-light-blue);
-            color: #fff;
+            color: var(--on-accent);
             font-size: 9px;
             font-weight: 700;
             padding: 3px 7px;
@@ -1038,7 +1056,7 @@
 
         .config-modal-content {
             background: var(--bg-50);
-            border: 1px solid rgba(255,255,255,0.08);
+            border: 1px solid rgba(var(--fg-rgb),0.08);
             border-radius: 12px;
             box-shadow: 0 8px 48px rgba(0, 0, 0, 0.5);
             width: 100%;
@@ -1050,7 +1068,7 @@
         }
 
         .config-modal-header {
-            background: rgba(15,29,50,0.95);
+            background: rgba(var(--bg-50-rgb),0.95);
             color: var(--ink-900);
             padding: 20px 30px;
             border-radius: 12px 12px 0 0;
@@ -1082,7 +1100,7 @@
         }
 
         .config-modal-close:hover {
-            background: rgba(255, 255, 255, 0.2);
+            background: rgba(var(--fg-rgb), 0.2);
             transform: rotate(90deg);
         }
 
@@ -1093,7 +1111,7 @@
         .config-tabs {
             display: flex;
             gap: 10px;
-            border-bottom: 2px solid rgba(255,255,255,0.06);
+            border-bottom: 2px solid rgba(var(--fg-rgb),0.06);
             margin-bottom: 30px;
         }
 
@@ -1110,12 +1128,12 @@
         }
 
         .config-tab.active {
-            color: var(--brand-600);
-            border-bottom-color: var(--brand-600);
+            color: var(--brand-fg);
+            border-bottom-color: var(--brand-fg);
         }
 
         .config-tab:hover {
-            color: var(--brand-700);
+            color: var(--brand-fg-hover);
         }
 
         .config-tab-content {
@@ -1154,7 +1172,7 @@
         .config-select {
             width: 100%;
             padding: 10px 12px;
-            border: 1px solid rgba(255,255,255,0.1);
+            border: 1px solid rgba(var(--fg-rgb),0.1);
             border-radius: 8px;
             font-size: 14px;
             color: var(--ink-900);
@@ -1166,14 +1184,14 @@
         .config-textarea:focus,
         .config-select:focus {
             outline: none;
-            border-color: var(--brand-600);
-            box-shadow: 0 0 0 3px rgba(0, 114, 187, 0.1);
+            border-color: var(--brand-fg);
+            box-shadow: 0 0 0 3px rgba(var(--brand-alt-rgb), 0.1);
         }
 
         .config-textarea {
             min-height: 100px;
             resize: vertical;
-            font-family: 'Inter', sans-serif;
+            font-family: var(--font-sans);
         }
 
         .config-checkbox {
@@ -1187,7 +1205,7 @@
             width: 18px;
             height: 18px;
             cursor: pointer;
-            accent-color: var(--brand-600);
+            accent-color: var(--brand-fg);
         }
 
         .config-slider-container {
@@ -1200,7 +1218,7 @@
             flex: 1;
             height: 6px;
             border-radius: 3px;
-            background: rgba(255,255,255,0.1);
+            background: rgba(var(--fg-rgb),0.1);
             outline: none;
             -webkit-appearance: none;
         }
@@ -1240,7 +1258,7 @@
             min-width: 50px;
             text-align: right;
             font-weight: 600;
-            color: var(--brand-600);
+            color: var(--brand-fg);
         }
 
         .config-button {
@@ -1258,29 +1276,29 @@
 
         .config-button-primary {
             background: var(--brand-600);
-            color: var(--bg-0);
+            color: var(--on-brand);
         }
 
         .config-button-primary:hover {
             background: var(--brand-700);
             transform: translateY(-1px);
-            box-shadow: 0 4px 12px rgba(0, 114, 187, 0.3);
+            box-shadow: 0 4px 12px rgba(var(--brand-alt-rgb), 0.3);
         }
 
         .config-button-secondary {
-            background: rgba(255,255,255,0.06);
+            background: rgba(var(--fg-rgb),0.06);
             color: var(--ink-700);
-            border: 1px solid rgba(255,255,255,0.1);
+            border: 1px solid rgba(var(--fg-rgb),0.1);
         }
 
         .config-button-secondary:hover {
-            background: rgba(255,255,255,0.12);
+            background: rgba(var(--fg-rgb),0.12);
             color: var(--ink-900);
         }
 
         .config-button-danger {
             background: var(--error);
-            color: var(--bg-0);
+            color: var(--on-brand);
         }
 
         .config-button-danger:hover {
@@ -1289,7 +1307,7 @@
         }
 
         .config-file-upload {
-            border: 2px dashed rgba(255,255,255,0.12);
+            border: 2px dashed rgba(var(--fg-rgb),0.12);
             border-radius: 8px;
             padding: 20px;
             text-align: center;
@@ -1299,8 +1317,8 @@
         }
 
         .config-file-upload:hover {
-            border-color: var(--brand-600);
-            background: rgba(0,96,174,0.08);
+            border-color: var(--brand-fg);
+            background: rgba(var(--brand-rgb),0.08);
         }
 
         .config-file-upload input[type="file"] {
@@ -1319,15 +1337,15 @@
             align-items: center;
             gap: 15px;
             padding: 10px 15px;
-            background: rgba(255,255,255,0.04);
+            background: rgba(var(--fg-rgb),0.04);
             border-radius: 8px;
-            border: 1px solid rgba(255,255,255,0.06);
+            border: 1px solid rgba(var(--fg-rgb),0.06);
             transition: all 0.2s;
         }
 
         .visual-prompt-item:hover {
-            background: rgba(0,96,174,0.08);
-            border-color: rgba(0,96,174,0.2);
+            background: rgba(var(--brand-rgb),0.08);
+            border-color: rgba(var(--brand-rgb),0.2);
         }
 
         .visual-prompt-thumbnail {
@@ -1335,7 +1353,7 @@
             height: 60px;
             object-fit: cover;
             border-radius: 6px;
-            border: 2px solid rgba(255,255,255,0.1);
+            border: 2px solid rgba(var(--fg-rgb),0.1);
         }
 
         .visual-prompt-info {
@@ -1364,7 +1382,7 @@
         .nlp-test-result {
             margin-top: 15px;
             padding: 15px;
-            background: rgba(0,96,174,0.08);
+            background: rgba(var(--brand-rgb),0.08);
             border-radius: 8px;
             border-left: 4px solid var(--brand-600);
         }
@@ -1385,7 +1403,7 @@
         .nlp-class-tag {
             padding: 6px 12px;
             background: var(--brand-600);
-            color: var(--bg-0);
+            color: var(--on-brand);
             border-radius: 16px;
             font-size: 12px;
             font-weight: 500;
@@ -1393,11 +1411,11 @@
 
         .config-modal-footer {
             padding: 20px 30px;
-            border-top: 1px solid rgba(255,255,255,0.06);
+            border-top: 1px solid rgba(var(--fg-rgb),0.06);
             display: flex;
             justify-content: flex-end;
             gap: 10px;
-            background: rgba(15,29,50,0.7);
+            background: rgba(var(--bg-50-rgb),0.7);
             border-radius: 0 0 12px 12px;
         }
 
@@ -1422,8 +1440,8 @@
         }
 
         .config-status-message.info {
-            background: rgba(0, 114, 187, 0.1);
-            color: var(--brand-600);
+            background: rgba(var(--brand-alt-rgb), 0.1);
+            color: var(--brand-fg);
             border: 1px solid var(--brand-600);
         }
 
@@ -1510,7 +1528,7 @@
 
         .modal-close:hover {
             background: var(--error);
-            color: var(--bg-0);
+            color: var(--on-brand);
             transform: scale(1.1);
         }
 
@@ -1535,7 +1553,7 @@
         .log-thumbnail:hover {
             transform: scale(1.1);
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-            border-color: var(--brand-600);
+            border-color: var(--brand-fg);
         }
 
         @media (max-width: 1200px) {
@@ -1572,7 +1590,8 @@
             .logo-section { gap: 10px; }
             .partner-section { gap: 6px; }
             .partner-label { font-size: 10px; }
-            .partner-logo-img { height: 34px; padding: 4px; }
+            .partner-logo-img { height: 34px; }
+            .partner-logo-img.is-tile { padding: 4px; }
 
             .header-controls {
                 flex-wrap: wrap;
@@ -1584,7 +1603,7 @@
                 margin-left: 0;
                 padding-left: 0;
                 border-left: none;
-                border-top: 1px solid rgba(255, 255, 255, 0.2);
+                border-top: 1px solid rgba(var(--fg-rgb), 0.2);
                 padding-top: 8px;
             }
 
@@ -1625,14 +1644,14 @@
     
         /* Detection mode slider (YOLO <-> PPE). Only one detector runs at a time. */
         .det-mode-toggle { display:inline-flex; align-items:center; gap:8px; margin-left:12px;
-            padding:4px 10px; border:1px solid rgba(255,255,255,.14); border-radius:999px;
-            background:rgba(255,255,255,.04); user-select:none; cursor:pointer; vertical-align:middle; }
+            padding:4px 10px; border:1px solid rgba(var(--fg-rgb),.14); border-radius:999px;
+            background:rgba(var(--fg-rgb),.04); user-select:none; cursor:pointer; vertical-align:middle; }
         .det-mode-label { font-size:11px; font-weight:600; letter-spacing:.06em;
-            color:rgba(255,255,255,.42); transition:color .12s ease; }
+            color:rgba(var(--fg-rgb),.42); transition:color .12s ease; }
         .det-mode-toggle[data-mode="yolo"] #modeLabelYolo { color:#4da3ff; }
         .det-mode-toggle[data-mode="ppe"]  #modeLabelPpe  { color:#3fd68c; }
         .det-mode-switch { position:relative; width:36px; height:18px; border-radius:999px;
-            background:rgba(255,255,255,.16); transition:background .16s ease; flex:none; }
+            background:rgba(var(--fg-rgb),.16); transition:background .16s ease; flex:none; }
         .det-mode-toggle[data-mode="yolo"] .det-mode-switch { background:rgba(77,163,255,.35); }
         .det-mode-toggle[data-mode="ppe"]  .det-mode-switch { background:rgba(63,214,140,.35); }
         .det-mode-knob { position:absolute; top:2px; left:2px; width:14px; height:14px;
@@ -1643,8 +1662,8 @@
         /* Start/Stop reflect real pipeline state: the actionable button is lit,
            the one that would be a no-op is dimmed and disabled. */
         .btn-header.is-dim {
-            background: rgba(255, 255, 255, 0.07) !important;
-            color: rgba(255, 255, 255, 0.38) !important;
+            background: rgba(var(--fg-rgb), 0.07) !important;
+            color: rgba(var(--fg-rgb), 0.38) !important;
             cursor: default !important;
             box-shadow: none !important;
         }
@@ -1658,7 +1677,13 @@
             transform: translateY(-1px);
             box-shadow: 0 4px 8px rgba(229, 72, 77, 0.35);
         }
+
+        .rtsp-info { background-color: #e3f2fd; color: #1976d2; }
+        .rtsp-ok   { background-color: #c8e6c9; color: #2e7d32; }
+        .rtsp-warn { background-color: #fff3e0; color: #e65100; }
+        .rtsp-err  { background-color: #ffcdd2; color: #c62828; }
 </style>
+    <link rel="stylesheet" href="/static/themes/themes.css?v={{ theme_css_version }}">
 </head>
 <body>
     <nav class="header-nav">
@@ -1699,9 +1724,10 @@
                 </div>
             </div>
             <div class="partner-section">
-                <span class="partner-label">In partnership with</span>
-                <img class="partner-logo-img" src="/static/bridgestone-logo.png"
-                     alt="Bridgestone" width="250" height="250">
+                <span class="partner-label" id="partnerLabel">{{ profile.partner.label }}</span>
+                <img class="partner-logo-img{% if profile.partner.tile %} is-tile{% endif %}" id="partnerLogo"
+                     src="{{ profile.partner.logo if profile.partner.has_logo else '' }}" alt="{{ profile.partner.alt }}"{% if not profile.partner.has_logo %} hidden{% endif %}>
+                <span class="partner-wordmark" id="partnerWordmark"{% if profile.partner.has_logo %} hidden{% endif %}>{{ profile.partner.wordmark or '' }}</span>
             </div>
         </div>
     </nav>
@@ -1719,6 +1745,13 @@
                     <span id="batteryPercent" style="font-weight: 600; font-size: 14px; color: #10b981;">--</span>%
                 </span>
             </div>
+            {% if nvidia.enabled %}
+            <div class="nv-badge" id="nvBadge" title="Edge inference on NVIDIA{% if nvidia.platform %} {{ nvidia.platform }}{% endif %}">
+                <span class="nv-badge-kicker">Powered by</span>
+                {% if nvidia.logo %}<img class="nv-badge-logo" src="{{ nvidia.logo }}" alt="NVIDIA">{% else %}<span class="nv-wordmark">NVIDIA</span>{% endif %}
+                {% if nvidia.platform %}<span class="nv-badge-platform">{{ nvidia.platform }}</span>{% endif %}
+            </div>
+            {% endif %}
             <div class="video-inner">
                 <img id="videoStream" class="video-stream" src="" alt="Robot patrol video feed will appear here" style="display: none;">
                 <canvas id="detectionOverlay" class="detection-overlay"></canvas>
@@ -1816,6 +1849,12 @@
             <div class="scene-status">
                 <span id="sceneDot" class="dot offline"></span>
                 <span id="sceneStatusText">Connecting to VLM...</span>
+                {% if nvidia.enabled %}
+                <span class="nv-inline" title="Vision-language model runs on the NVIDIA edge GPU">
+                    <span class="nv-inline-kicker">Powered by</span>
+                    {% if nvidia.logo %}<img class="nv-inline-logo" src="{{ nvidia.logo }}" alt="NVIDIA">{% else %}<span class="nv-wordmark nv-wordmark-sm">NVIDIA</span>{% endif %}
+                </span>
+                {% endif %}
             </div>
             <!-- Frame tab content -->
             <div id="frameTabContent" class="log-container">
@@ -1873,12 +1912,26 @@
     <div id="configModal" class="config-modal">
         <div class="config-modal-content">
             <div class="config-modal-header">
-                <h2>YOLO-E Configuration</h2>
+                <h2>Settings</h2>
                 <button class="config-modal-close" onclick="closeConfigModal()">&times;</button>
             </div>
 
             <div class="config-modal-body">
                 <div id="configStatusMessage" style="display: none;"></div>
+
+                {% if not profile_locked %}
+                <div class="config-section profile-picker">
+                    <div class="config-field" style="margin-bottom: 0;">
+                        <label class="config-label" for="profileSelect">Demo profile</label>
+                        <select id="profileSelect" class="config-input">
+                            {% for p in profiles.values() %}
+                            <option value="{{ p.id }}"{% if p.id == profile.id %} selected{% endif %}>{{ p.label }}</option>
+                            {% endfor %}
+                        </select>
+                        <div class="config-help-text">Repaints the dashboard with the event's brand. Applies instantly and is remembered on this edge device.</div>
+                    </div>
+                </div>
+                {% endif %}
 
                 <!-- Global Detection Mode Selector -->
                 <div class="config-section" style="margin-bottom: 20px; padding: 15px; background: rgba(255, 255, 255, 0.05); border-radius: 8px;">
@@ -1954,7 +2007,7 @@
 
                         <div class="config-file-upload" onclick="document.getElementById('visualPromptFiles').click()">
                             <input type="file" id="visualPromptFiles" accept="image/*" multiple>
-                            <div style="font-size: 16px; font-weight: 600; color: var(--brand-600); margin-bottom: 8px;">Click to upload images</div>
+                            <div style="font-size: 16px; font-weight: 600; color: var(--brand-fg); margin-bottom: 8px;">Click to upload images</div>
                             <div style="font-size: 13px; color: var(--ink-400);">Supports JPG, PNG, BMP, TIFF, WEBP</div>
                         </div>
 
@@ -1985,7 +2038,7 @@
                             <textarea id="textPrompts" class="config-textarea" placeholder="e.g., person, car, cup, bottle, laptop"></textarea>
                             <div class="config-help-text">
                                 Enter YOLO class names separated by commas.
-                                See <a href="https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/datasets/coco.yaml" target="_blank" style="color: var(--brand-600);">COCO classes</a> for valid names.
+                                See <a href="https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/datasets/coco.yaml" target="_blank" style="color: var(--brand-fg);">COCO classes</a> for valid names.
                             </div>
                         </div>
                         <button class="config-button config-button-primary" onclick="saveTextPrompts()">Save Text Prompts</button>
@@ -2877,6 +2930,14 @@
         }
 
         // Show configuration status message
+        // RTSP status pill colours come from CSS so demo profiles can theme them.
+        function setRtspStatus(el, kind) {
+            el.style.backgroundColor = '';
+            el.style.color = '';
+            el.classList.remove('rtsp-info', 'rtsp-ok', 'rtsp-warn', 'rtsp-err');
+            el.classList.add('rtsp-' + kind);
+        }
+
         function showConfigMessage(message, type = 'info') {
             const statusDiv = document.getElementById('configStatusMessage');
             statusDiv.className = `config-status-message ${type}`;
@@ -3147,8 +3208,7 @@
             const statusDiv = document.getElementById('rtspStatus');
             statusDiv.style.display = 'block';
             statusDiv.textContent = 'Checking RTSP server status...';
-            statusDiv.style.backgroundColor = '#e3f2fd';
-            statusDiv.style.color = '#1976d2';
+            setRtspStatus(statusDiv, 'info');
 
             try {
                 const response = await fetch('/rtsp/status');
@@ -3156,17 +3216,14 @@
 
                 if (result.status === 'success') {
                     statusDiv.textContent = result.message;
-                    statusDiv.style.backgroundColor = result.running ? '#c8e6c9' : '#fff3e0';
-                    statusDiv.style.color = result.running ? '#2e7d32' : '#e65100';
+                    setRtspStatus(statusDiv, result.running ? 'ok' : 'warn');
                 } else {
                     statusDiv.textContent = 'Error: ' + result.message;
-                    statusDiv.style.backgroundColor = '#ffcdd2';
-                    statusDiv.style.color = '#c62828';
+                    setRtspStatus(statusDiv, 'err');
                 }
             } catch (error) {
                 statusDiv.textContent = 'Error checking status: ' + error.message;
-                statusDiv.style.backgroundColor = '#ffcdd2';
-                statusDiv.style.color = '#c62828';
+                setRtspStatus(statusDiv, 'err');
             }
         }
 
@@ -3178,8 +3235,7 @@
             startBtn.textContent = 'Starting...';
             statusDiv.style.display = 'block';
             statusDiv.textContent = 'Starting RTSP server on Orin backpack...';
-            statusDiv.style.backgroundColor = '#e3f2fd';
-            statusDiv.style.color = '#1976d2';
+            setRtspStatus(statusDiv, 'info');
 
             try {
                 const response = await fetch('/rtsp/start', { method: 'POST' });
@@ -3187,17 +3243,14 @@
 
                 if (result.status === 'success') {
                     statusDiv.textContent = result.message + ' - Ready for IR/Depth feeds!';
-                    statusDiv.style.backgroundColor = '#c8e6c9';
-                    statusDiv.style.color = '#2e7d32';
+                    setRtspStatus(statusDiv, 'ok');
                 } else {
                     statusDiv.textContent = 'Error: ' + result.message;
-                    statusDiv.style.backgroundColor = '#ffcdd2';
-                    statusDiv.style.color = '#c62828';
+                    setRtspStatus(statusDiv, 'err');
                 }
             } catch (error) {
                 statusDiv.textContent = 'Error starting server: ' + error.message;
-                statusDiv.style.backgroundColor = '#ffcdd2';
-                statusDiv.style.color = '#c62828';
+                setRtspStatus(statusDiv, 'err');
             } finally {
                 startBtn.disabled = false;
                 startBtn.textContent = 'Start RTSP Server';
@@ -3212,8 +3265,7 @@
             stopBtn.textContent = 'Stopping...';
             statusDiv.style.display = 'block';
             statusDiv.textContent = 'Stopping RTSP server on Orin backpack...';
-            statusDiv.style.backgroundColor = '#e3f2fd';
-            statusDiv.style.color = '#1976d2';
+            setRtspStatus(statusDiv, 'info');
 
             try {
                 const response = await fetch('/rtsp/stop', { method: 'POST' });
@@ -3221,17 +3273,14 @@
 
                 if (result.status === 'success') {
                     statusDiv.textContent = result.message + ' - CPU resources freed!';
-                    statusDiv.style.backgroundColor = '#c8e6c9';
-                    statusDiv.style.color = '#2e7d32';
+                    setRtspStatus(statusDiv, 'ok');
                 } else {
                     statusDiv.textContent = 'Error: ' + result.message;
-                    statusDiv.style.backgroundColor = '#ffcdd2';
-                    statusDiv.style.color = '#c62828';
+                    setRtspStatus(statusDiv, 'err');
                 }
             } catch (error) {
                 statusDiv.textContent = 'Error stopping server: ' + error.message;
-                statusDiv.style.backgroundColor = '#ffcdd2';
-                statusDiv.style.color = '#c62828';
+                setRtspStatus(statusDiv, 'err');
             } finally {
                 stopBtn.disabled = false;
                 stopBtn.textContent = 'Stop RTSP Server';
@@ -4057,6 +4106,60 @@
                 .then(j => { if (j && j.mode) paint(j.mode); })
                 .catch(() => {});
         })();
+</script>
+<script>
+    /* Demo profiles: live-repaint the dashboard, then persist on the edge. */
+    (function () {
+        const PROFILES = {{ profiles|tojson }};
+        const select = document.getElementById('profileSelect');
+        if (!select) return;
+
+        function apply(p) {
+            document.documentElement.dataset.theme = p.id;
+            document.title = p.title;
+            const font = document.getElementById('themeFont');
+            if (p.font_href) {
+                if (font.getAttribute('href') !== p.font_href) font.setAttribute('href', p.font_href);
+                font.disabled = false;
+            } else {
+                font.disabled = true;
+            }
+            // Approved artwork when present on the edge, else a text reference.
+            const logo = document.getElementById('partnerLogo');
+            logo.hidden = !p.partner.has_logo;
+            logo.src = p.partner.has_logo ? p.partner.logo : '';
+            logo.alt = p.partner.alt;
+            logo.classList.toggle('is-tile', !!p.partner.tile);
+            document.getElementById('partnerLabel').textContent = p.partner.label;
+            const word = document.getElementById('partnerWordmark');
+            word.textContent = p.partner.wordmark || '';
+            word.hidden = !!p.partner.has_logo || !p.partner.wordmark;
+        }
+
+        let committed = select.value;
+        select.addEventListener('change', function () {
+            const next = PROFILES[select.value];
+            if (!next) return;
+            apply(next);
+            select.disabled = true;
+            fetch('/api/ui/profile', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({profile: next.id})
+            })
+                .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+                .then(() => {
+                    committed = next.id;
+                    showConfigMessage(next.label + ' profile applied', 'success');
+                })
+                .catch(err => {
+                    apply(PROFILES[committed]);
+                    select.value = committed;
+                    showConfigMessage('Could not save profile: ' + err.message, 'error');
+                })
+                .finally(() => { select.disabled = false; });
+        });
+    })();
 </script>
 </body>
 </html>

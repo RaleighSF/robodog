@@ -1,0 +1,455 @@
+/* ==========================================================================
+   Watch Dog demo profiles
+   --------------------------------------------------------------------------
+   Loaded after the inline stylesheet in templates/index.html. The default
+   (NTT DATA) look lives there; each vendor profile below only re-points the
+   design tokens and restyles the handful of components whose shape differs
+   between design systems. Keep vendor values sourced (see comments).
+   ========================================================================== */
+
+/* ---------- Shared: partner lockup + NVIDIA badge (all profiles) ---------- */
+
+.partner-wordmark {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--ink-900);
+    white-space: nowrap;
+    letter-spacing: -0.01em;
+    line-height: 1;
+}
+.partner-wordmark[hidden],
+.partner-logo-img[hidden] { display: none; }
+
+/* "Powered by NVIDIA" on the live situational-awareness surfaces. Sits on
+   top of arbitrary video, so it carries its own dark scrim in every theme. */
+.nv-badge {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    z-index: 3;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px 6px 10px;
+    border-radius: 6px;
+    background: rgba(0, 0, 0, 0.62);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    border: 1px solid rgba(118, 185, 0, 0.35); /* NVIDIA green #76B900 */
+    color: #fff;
+    pointer-events: none;
+    line-height: 1;
+}
+.nv-badge-kicker,
+.nv-inline-kicker {
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.7);
+    white-space: nowrap;
+}
+.nv-badge-logo { height: 16px; width: auto; display: block; }
+.nv-badge-platform {
+    font-size: 11px;
+    font-weight: 600;
+    color: #fff;
+    padding-left: 8px;
+    border-left: 1px solid rgba(255, 255, 255, 0.25);
+    white-space: nowrap;
+}
+
+.nv-inline {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    opacity: 0.85;
+}
+.nv-inline-logo { height: 11px; width: auto; display: block; }
+
+@media (max-width: 768px) {
+    .nv-badge { top: 60px; right: 10px; padding: 5px 8px; }
+    .nv-badge-platform { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+}
+
+.nv-wordmark {
+    font-weight: 800;
+    font-size: 14px;
+    letter-spacing: 0.04em;
+    color: #76B900;
+}
+.nv-wordmark-sm { font-size: 10px; }
+
+
+/* ==========================================================================
+   Microsoft Azure — Fluent 2, webDarkTheme
+   Source: @fluentui/tokens@1.0.0-alpha.24 (webDarkTheme, brandWeb ramp);
+   typography per fluent2.microsoft.design/typography.
+   ========================================================================== */
+html[data-theme="azure"] {
+    --brand-500: #479ef5;           /* colorBrandForeground1 */
+    --brand-600: #115ea3;           /* colorBrandBackground */
+    --brand-700: #0f6cbd;           /* colorBrandBackgroundHover */
+    --brand-50: rgba(71,158,245,0.12);
+    --brand-rgb: 17,94,163;
+    --brand-alt-rgb: 15,108,189;
+
+    --ink-900: #ffffff;             /* colorNeutralForeground1 */
+    --ink-100: #ffffff;
+    --ink-700: #d6d6d6;             /* colorNeutralForeground2 */
+    --ink-400: #adadad;             /* colorNeutralForeground3 */
+    --ink-600: #525252;             /* colorNeutralStroke2 */
+
+    --bg-0: #1f1f1f;                /* colorNeutralBackground2 — canvas */
+    --bg-50: #292929;               /* colorNeutralBackground1 — surfaces */
+    --bg-100: #333333;              /* colorNeutralBackground6 — raised */
+    --bg-0-rgb: 31,31,31;
+    --bg-50-rgb: 41,41,41;
+    --bg-100-rgb: 51,51,51;
+    --video-bg: #0a0a0a;            /* colorNeutralBackground4 */
+    --nav-bg: #141414;              /* colorNeutralBackground3 */
+
+    --accent-teal-500: #479ef5;
+    --accent-purple-500: #479ef5;
+    --accent-light-blue: #62abf5;   /* colorBrandForeground2 */
+    --accent-sky: #77b7f7;          /* brandWeb 120 */
+    --accent-rgb: 71,158,245;
+
+    --success: #54b054;             /* colorStatusSuccessForeground1 */
+    --warning: #faa06b;             /* colorStatusWarningForeground1 */
+    --error: #dc626d;               /* colorStatusDangerForeground1 */
+    --on-brand: #ffffff;            /* colorNeutralForegroundOnBrand */
+    --brand-fg: #479ef5;            /* colorBrandForeground1 — brand text on dark */
+    --brand-fg-hover: #62abf5;      /* colorBrandForeground2 */
+    --on-accent: #141414;           /* dark text on light brand fills (AA) */
+
+    --font-sans: 'Segoe UI', 'Segoe UI Web (West European)', -apple-system, BlinkMacSystemFont, Roboto, 'Helvetica Neue', sans-serif;
+    --shadow-4: 0 0 2px rgba(0,0,0,0.24), 0 2px 4px rgba(0,0,0,0.28);
+    --shadow-16: 0 0 2px rgba(0,0,0,0.24), 0 8px 16px rgba(0,0,0,0.28);
+    --shadow-28: 0 0 8px rgba(0,0,0,0.24), 0 14px 28px rgba(0,0,0,0.28);
+}
+
+/* ==========================================================================
+   AWS — Cloudscape Design System, dark mode (visual refresh)
+   Source: @cloudscape-design/design-tokens@3.0.113 index-visual-refresh.json
+   (dark values); typography per cloudscape.design/foundation/visual-foundation.
+   Chrome uses Cloudscape blue; AWS brand orange is not used as UI colour.
+   ========================================================================== */
+html[data-theme="aws"] {
+    --brand-500: #42b4ff;           /* color-text-link-default */
+    --brand-600: #42b4ff;           /* color-background-button-primary-default */
+    --brand-700: #75cfff;           /* color-background-button-primary-hover */
+    --brand-50: rgba(66,180,255,0.12);
+    --brand-rgb: 66,180,255;
+    --brand-alt-rgb: 66,180,255;
+
+    --ink-900: #ebebf0;             /* color-text-heading-default */
+    --ink-100: #ebebf0;
+    --ink-700: #c6c6cd;             /* color-text-body-default */
+    --ink-400: #a4a4ad;             /* color-text-form-secondary */
+    --ink-600: #424650;             /* color-border-divider-default */
+
+    --bg-0: #0f141a;                /* dark header context, layout-main */
+    --bg-50: #161d26;               /* color-background-container-content */
+    --bg-100: #1b232d;              /* color-background-dropdown-item-default */
+    --bg-0-rgb: 15,20,26;
+    --bg-50-rgb: 22,29,38;
+    --bg-100-rgb: 27,35,45;
+    --video-bg: #0b0f14;
+    --nav-bg: #161d26;              /* top-navigation container */
+
+    --accent-teal-500: #42b4ff;
+    --accent-purple-500: #42b4ff;
+    --accent-light-blue: #75cfff;
+    --accent-sky: #75cfff;
+    --accent-rgb: 66,180,255;
+
+    --success: #2bb534;             /* color-text-status-success */
+    --warning: #fbd332;             /* color-text-status-warning */
+    --error: #ff7a7a;               /* color-text-status-error */
+    --on-brand: #0f141a;            /* color-text-button-primary-default */
+    --brand-fg: #42b4ff;            /* color-text-link-default */
+    --brand-fg-hover: #75cfff;      /* color-text-link-hover */
+    --on-accent: #0f141a;
+
+    --font-sans: 'Open Sans', 'Helvetica Neue', Roboto, Arial, sans-serif;
+    --divider-2: #232b37;           /* color-border-divider-secondary */
+    --shadow-container: 0px 1px 1px 1px #192534, 0px 6px 36px #00040c;
+}
+
+
+/* ---------- Components shared by both vendor profiles ---------- */
+
+html[data-theme="azure"] body,
+html[data-theme="aws"] body {
+    background-image: none;         /* flat canvas; the blueprint grid is NTT's */
+}
+
+html[data-theme="azure"] .log-header h2,
+html[data-theme="aws"] .log-header h2 {
+    text-transform: none;
+    letter-spacing: 0;
+    color: var(--ink-900);
+}
+
+html[data-theme="azure"] :focus-visible,
+html[data-theme="aws"] :focus-visible {
+    outline: 2px solid var(--focus-ring, var(--brand-500));
+    outline-offset: 2px;
+}
+
+html[data-theme="azure"] .partner-label,
+html[data-theme="aws"] .partner-label {
+    text-transform: none;
+    letter-spacing: 0;
+    font-size: 13px;
+}
+
+/* Instant press feedback on pointer-down (apple-design principle 1). */
+html[data-theme="azure"] :is(.btn-header, .config-button, .go2-cmd-btn, .pause-btn, .icon-btn, .tab-btn, .mode-btn):active:not(:disabled),
+html[data-theme="aws"] :is(.btn-header, .config-button, .go2-cmd-btn, .pause-btn, .icon-btn, .tab-btn, .mode-btn):active:not(:disabled) {
+    transform: scale(0.97);
+    transition-duration: 60ms;
+}
+
+
+/* ---------- Azure / Fluent 2 specifics ---------- */
+
+html[data-theme="azure"] .header-nav {
+    backdrop-filter: none;
+    border-bottom: 1px solid #3d3d3d;       /* colorNeutralStroke3 */
+}
+html[data-theme="azure"] { --focus-ring: #ffffff; }  /* colorStrokeFocus2 */
+
+html[data-theme="azure"] .header-controls {
+    background: var(--bg-50);
+    border: 1px solid #3d3d3d;
+    border-radius: 4px;                      /* borderRadiusMedium */
+    backdrop-filter: none;
+}
+html[data-theme="azure"] :is(.btn-header, .config-button, .header-select, .header-input,
+    .config-input, .config-textarea, .config-select, .go2-cmd-btn, .pause-btn, .icon-btn, .dpad-btn) {
+    border-radius: 4px;
+}
+html[data-theme="azure"] :is(.header-select, .header-input, .config-input, .config-textarea, .config-select) {
+    background: var(--bg-50);
+    border: 1px solid #666666;               /* colorNeutralStroke1 */
+    border-bottom-color: #adadad;            /* Fluent input underline */
+}
+html[data-theme="azure"] :is(.header-select, .header-input, .config-input, .config-textarea, .config-select):focus {
+    border-bottom: 2px solid var(--brand-500);
+    box-shadow: none;
+}
+html[data-theme="azure"] .btn-header:hover,
+html[data-theme="azure"] .config-button-primary:hover {
+    transform: none;
+    box-shadow: none;
+}
+html[data-theme="azure"] .btn-header.btn-config,
+html[data-theme="azure"] .config-button-primary,
+html[data-theme="azure"] .btn.btn-primary {
+    background: var(--brand-600);
+    color: #fff;
+}
+html[data-theme="azure"] .btn-header.btn-config:hover,
+html[data-theme="azure"] .config-button-primary:hover,
+html[data-theme="azure"] .btn.btn-primary:hover { background: var(--brand-700); }
+html[data-theme="azure"] .btn-header.btn-start { background: #107c10; color: #fff; }  /* colorStatusSuccessBackground3 */
+html[data-theme="azure"] .btn-header.btn-start:hover { background: #0e700e; }
+
+html[data-theme="azure"] :is(.log-entry, .scene-entry, .scene-summary-block .summary-text) {
+    background: var(--bg-50);
+    border-radius: 4px;
+    box-shadow: var(--shadow-4);
+}
+html[data-theme="azure"] .log-entry:hover { background: #333333; transform: none; }
+html[data-theme="azure"] .log-header { background: var(--bg-0); border-bottom: 1px solid #3d3d3d; }
+html[data-theme="azure"] .log-header h2 { font-size: 14px; font-weight: 600; }  /* Body1Strong */
+html[data-theme="azure"] .log-section { background: var(--bg-0); }
+html[data-theme="azure"] .scene-section { border-color: #3d3d3d; }
+html[data-theme="azure"] .log-stats { background: var(--bg-0); border-bottom-color: #3d3d3d; }
+html[data-theme="azure"] .stat-label { text-transform: none; letter-spacing: 0; font-size: 12px; font-weight: 400; }
+html[data-theme="azure"] .stat-value { color: var(--ink-900); font-weight: 600; }
+
+/* Fluent TabList: text tabs with a brand underline indicator. */
+html[data-theme="azure"] .awareness-tab-toggle {
+    background: transparent;
+    border: none;
+    border-radius: 0;
+    gap: 4px;
+}
+html[data-theme="azure"] .tab-btn {
+    position: relative;
+    background: transparent;
+    padding: 5px 10px;
+}
+html[data-theme="azure"] .tab-btn.active {
+    background: transparent;
+    color: var(--ink-900);
+}
+html[data-theme="azure"] .tab-btn.active::after {
+    content: '';
+    position: absolute;
+    left: 10px; right: 10px; bottom: 0;
+    height: 3px;
+    border-radius: 10000px;
+    background: var(--brand-500);
+}
+html[data-theme="azure"] .scene-mode-toggle { border-radius: 4px; border-color: #666666; background: var(--bg-50); }
+html[data-theme="azure"] .mode-btn.active[data-mode] { background: var(--brand-600); color: #fff; }
+
+html[data-theme="azure"] .config-modal-content {
+    border-radius: 8px;                      /* borderRadiusXLarge (Dialog) */
+    border: 1px solid #3d3d3d;
+    box-shadow: var(--shadow-28);
+    background: var(--bg-50);
+}
+html[data-theme="azure"] .config-modal-header,
+html[data-theme="azure"] .config-modal-footer { background: var(--bg-50); border-radius: 8px 8px 0 0; }
+html[data-theme="azure"] .config-modal-footer { border-radius: 0 0 8px 8px; }
+html[data-theme="azure"] .config-modal-header h2 { font-size: 20px; font-weight: 600; }  /* Subtitle1 */
+
+html[data-theme="azure"] :is(.patrol-overlay, .go2-control-panel, .go2-toggle-btn:not(.active)) {
+    background: rgba(41,41,41,0.92);
+    backdrop-filter: blur(12px);
+    border-color: #3d3d3d;
+    box-shadow: var(--shadow-16);
+}
+html[data-theme="azure"] .go2-control-panel { border-radius: 8px; }
+html[data-theme="azure"] .status { background: var(--nav-bg); }
+
+
+/* ---------- AWS / Cloudscape specifics ---------- */
+
+html[data-theme="aws"] .header-nav {
+    backdrop-filter: none;
+    border-bottom: 1px solid var(--ink-600);
+    box-shadow: 0 1px 0 0 var(--divider-2);
+}
+html[data-theme="aws"] .header-controls {
+    background: transparent;
+    backdrop-filter: none;
+    padding: 4px 0;
+}
+html[data-theme="aws"] :is(.header-select, .header-input, .config-input, .config-textarea, .config-select) {
+    background: var(--bg-0);
+    border: 1px solid #656871;               /* color-border-input-default */
+    border-radius: 8px;                      /* border-radius-input */
+}
+html[data-theme="aws"] :is(.header-select, .header-input, .config-input, .config-textarea, .config-select):focus {
+    border-color: var(--brand-500);
+    box-shadow: 0 0 0 1px var(--brand-500);
+}
+
+/* Cloudscape buttons are pills (border-radius-button 20px) with bold labels. */
+html[data-theme="aws"] :is(.btn-header, .config-button, .pause-btn, .btn.btn-primary, .btn.btn-stop) {
+    border-radius: 20px;
+    font-weight: 700;
+}
+html[data-theme="aws"] .btn-header { padding: 6px 16px; }
+html[data-theme="aws"] .btn-header:hover,
+html[data-theme="aws"] .config-button-primary:hover { transform: none; box-shadow: none; }
+html[data-theme="aws"] .btn-header.btn-config,
+html[data-theme="aws"] .config-button-primary,
+html[data-theme="aws"] .btn.btn-primary {
+    background: var(--brand-600);
+    color: var(--on-brand);
+}
+html[data-theme="aws"] .btn-header.btn-config:hover,
+html[data-theme="aws"] .config-button-primary:hover,
+html[data-theme="aws"] .btn.btn-primary:hover { background: var(--brand-700); }
+/* Normal (secondary) button: blue outline on transparent. */
+html[data-theme="aws"] .btn-header.btn-start {
+    background: transparent;
+    color: var(--brand-500);
+    box-shadow: inset 0 0 0 2px var(--brand-500);
+}
+html[data-theme="aws"] .btn-header.btn-start:hover { background: rgba(66,180,255,0.12); color: var(--brand-700); }
+html[data-theme="aws"] .config-button-secondary {
+    background: transparent;
+    color: var(--brand-500);
+    border: 2px solid var(--brand-500);
+}
+html[data-theme="aws"] :is(.go2-cmd-btn, .icon-btn, .dpad-btn) { border-radius: 8px; }
+
+/* Containers: 16px radius, divider borders, container shadow. */
+html[data-theme="aws"] .log-section { background: var(--bg-0); }
+html[data-theme="aws"] .log-header {
+    background: var(--bg-50);
+    border-bottom: 1px solid var(--divider-2);
+    padding: 12px 16px;
+}
+html[data-theme="aws"] .log-header h2 { font-size: 16px; font-weight: 700; line-height: 20px; }  /* heading-s */
+html[data-theme="aws"] .log-stats { background: var(--bg-50); border-bottom-color: var(--divider-2); }
+html[data-theme="aws"] .stat-label { text-transform: none; letter-spacing: 0; font-size: 12px; }
+html[data-theme="aws"] .stat-value { color: var(--ink-900); }
+html[data-theme="aws"] .scene-section { border-color: var(--divider-2); }
+html[data-theme="aws"] :is(.log-entry, .scene-entry, .scene-summary-block .summary-text) {
+    background: var(--bg-50);
+    border: 1px solid var(--divider-2);
+    border-left: 3px solid var(--brand-500);
+    border-radius: 8px;                      /* border-radius-item */
+}
+html[data-theme="aws"] .log-entry:hover { background: var(--bg-100); transform: none; }
+html[data-theme="aws"] .log-id { color: var(--on-brand); border-radius: 4px; }  /* badge */
+
+/* Segmented control: bordered group, selected segment filled. */
+html[data-theme="aws"] :is(.awareness-tab-toggle, .scene-mode-toggle) {
+    background: var(--bg-0);
+    border: 1px solid #656871;
+    border-radius: 8px;
+}
+html[data-theme="aws"] :is(.tab-btn, .mode-btn) { font-weight: 700; }
+html[data-theme="aws"] :is(.tab-btn.active, .mode-btn.active[data-mode]) {
+    background: #ebebf0;
+    color: #0f141a;
+}
+
+html[data-theme="aws"] .config-modal-content {
+    border-radius: 16px;                     /* border-radius-container */
+    border: 1px solid var(--ink-600);
+    box-shadow: var(--shadow-container);
+    background: var(--bg-50);
+}
+html[data-theme="aws"] .config-modal-header { background: var(--bg-50); border-radius: 16px 16px 0 0; }
+html[data-theme="aws"] .config-modal-footer { background: var(--bg-50); border-radius: 0 0 16px 16px; }
+html[data-theme="aws"] .config-modal-header h2 { font-size: 20px; font-weight: 700; }  /* heading-l */
+html[data-theme="aws"] .config-tab.active { color: var(--brand-500); border-bottom-color: var(--brand-500); }
+
+html[data-theme="aws"] :is(.patrol-overlay, .go2-control-panel, .go2-toggle-btn:not(.active)) {
+    background: rgba(22,29,38,0.92);
+    backdrop-filter: blur(12px);
+    border-color: var(--ink-600);
+    box-shadow: var(--shadow-container);
+}
+html[data-theme="aws"] :is(.go2-control-panel, .patrol-overlay) { border-radius: 16px; }
+html[data-theme="aws"] .status { background: var(--bg-50); }
+
+/* Pressed / active fills. Fluent pairs white text with colorBrandBackground
+   (#115ea3, 6.5:1); the lighter foreground blue is for text only. */
+html[data-theme="azure"] :is(.go2-cmd-btn:active, .dpad-btn:active, .dpad-btn.active, .go2-toggle-btn.active) {
+    background: var(--brand-600);
+    border-color: var(--brand-500);
+    color: #ffffff;
+}
+html[data-theme="azure"] .dpad-btn:is(:active, .active) { box-shadow: 0 0 16px rgba(71,158,245,0.45); }
+html[data-theme="aws"] .go2-toggle-btn.active { box-shadow: var(--shadow-container); }
+
+/* RTSP stream status (Settings > RTSP): Fluent / Cloudscape status pairs. */
+html[data-theme="azure"] .rtsp-info { background-color: #0a2e4a; color: #62abf5; }
+html[data-theme="azure"] .rtsp-ok   { background-color: #052505; color: #54b054; }
+html[data-theme="azure"] .rtsp-warn { background-color: #4a1e04; color: #faa06b; }
+html[data-theme="azure"] .rtsp-err  { background-color: #3b0509; color: #dc626d; }
+html[data-theme="aws"] .rtsp-info { background-color: #001129; color: #42b4ff; }
+html[data-theme="aws"] .rtsp-ok   { background-color: #001401; color: #2bb534; }
+html[data-theme="aws"] .rtsp-warn { background-color: #191100; color: #fbd332; }
+html[data-theme="aws"] .rtsp-err  { background-color: #1f0000; color: #ff7a7a; }
