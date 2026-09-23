@@ -3,6 +3,7 @@
 Standalone test to verify robot communication and decryption
 This bypasses all the complex patching to directly test the core functionality
 """
+import os
 import requests
 import json
 import base64
@@ -11,7 +12,7 @@ from Crypto.Util.Padding import unpad
 
 # Robot details
 ROBOT_IP = "192.168.86.22"
-TOKEN = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI4QjRDODIyM0JGREZENUJBIiwiaWF0IjoxNzI0MjkxNDkwLCJhcHBfaWQiOiJZRjNVSTJTOE44SjJHVUJNIiwicHJvZHVjdF9pZCI6Imdvb19zbjhqM2dtdWJtOWZzamYzaGF1ZG1kIiwib3Blbl9pZCI6IjE3MjQyOTE0OTAyNjcxNjA2NzMifQ.OJV8qJ7MX7yOFzLzOsckLLfHBIZ4XJ5YI0UHXzQP-M_yXjYJILw8f4d23VyJpxYHCzKw4wYOCiI6OxrFJrqp5zIEd2F2Z3aQWQ-Qs4M3vOw95O4FUJLzK8b7VR3ckZIxfXTYJ-QO5ZNJFzZkQ_J9O4XzZ-VQ5O2cKYZ8J_zQ"
+TOKEN = os.environ.get("UNITREE_TOKEN", "")
 
 def decrypt_robot_data(encrypted_data):
     """Decrypt robot response data using various methods"""

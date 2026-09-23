@@ -48,8 +48,9 @@ Operator Laptop
 ## ⚙️ Prerequisites
 - macOS / Linux dev machine with Python 3.11+ for local edits.
 - Access to both hosts:
-  - `unitree@192.168.50.207` (password `123`) – Orin.
-  - `raleigh@192.168.50.208` (password `robodog#1`) – AGX.
+  - `unitree@192.168.50.207` – Orin.
+  - `raleigh@192.168.50.208` – AGX.
+  - Passwords are **not** in this repo — see the gitignored `CONNECTIONS.md` (or use SSH keys).
 - GO2 robot reachable at `192.168.50.75` (STA mode).
 - Git LFS not required (large weights kept out of repo).
 

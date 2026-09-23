@@ -25,12 +25,12 @@ async def test_library_connection():
         connection = Go2WebRTCConnection(
             connectionMethod=WebRTCConnectionMethod.LocalSTA,
             ip="192.168.86.22",
-            username="raleightn@gmail.com",
-            password="Amazon#1"
+            username=os.environ.get("UNITREE_USER", ""),
+            password=os.environ.get("UNITREE_PASS", "")
         )
         
         # Set token
-        connection.token = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyIiwidWlkIjo0MDg2OSwiY3QiOjE3NjA0OTQyMjAsImlzcyI6InVuaXRyZWVfcm9ib3QiLCJ0eXBlIjoiYWNjZXNzX3Rva2VuIiwiZXhwIjoxNzYzMDg2MjIwfQ.Pn65ntyllh0AbhzEpcRSlujp7aOZhYyNCQVL5lQZt1c"
+        connection.token = os.environ.get("UNITREE_TOKEN", "")
         
         print("🔗 Attempting connection...")
         await connection.connect()
