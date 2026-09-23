@@ -302,6 +302,7 @@ class Actuator:
         self.wake = threading.Event()
         # stop machine
         self.stop_req = 0            # highest requested stop number
+        self.op_stops = 0            # operator/deadman stops (not a transition's own prerequisite stop)
         self.stop_ok = 0             # highest stop number verified at rest
         self.attempt = None          # dict for the in-flight StopMove attempt
         # drive
@@ -322,10 +323,19 @@ class Actuator:
         if self.session == session:
             self.session = None
 
-    def _request_stop(self, retire_session=None):
+    def _request_stop(self, retire_session=None, retire_active=True, operator=True):
+        """retire_session: a drive the caller knows about (the browser's own press,
+        which may not have reached us yet). retire_active: also retire whatever
+        drive is active here. A plain D-pad release retires only its own press so
+        it can never kill the next one; E-stop and the deadman retire both."""
         self.stop_req += 1
+        if operator:
+            self.op_stops += 1
         self.lease_until = 0.0
-        self._retire(retire_session or self.session)
+        if retire_session:
+            self._retire(retire_session)
+        if retire_active or not retire_session:
+            self._retire(self.session)
         self.wake.set()
         return self.stop_req
 
@@ -351,7 +361,8 @@ class Actuator:
             if att is not None:
                 with att["link"].lock:
                     att["link"].pending.pop(att["rid"], None)      # abandoned: no leak
-                log("[Stop] attempt for #%d not verified in %.1fs — retrying" % (att["target"], STILL_DEADLINE_S))
+                log("[Stop] attempt for #%d not verified in %.1fs (reply code %s, still samples %d) — retrying"
+                    % (att["target"], STILL_DEADLINE_S, att["code"], att["samples"]))
             try:
                 rid, slot = d.send(API["StopMove"])
             except Exception as e:                   # noqa: BLE001
@@ -381,13 +392,17 @@ class Actuator:
                 verified = (at - att["held_since"] >= STILL_HOLD_S and att["samples"] >= STILL_MIN_SAMPLES)
             else:
                 att["held_since"] = None; att["samples"] = 0
-        if att["code"] == 0 and verified:
+        # Azimuth's verdict rule (edge/commands.py verdict_for): a stop is verified
+        # by PHYSICAL REST, whatever the reply code. A lying dog rejects StopMove
+        # (nothing to stop) yet is plainly still; requiring code 0 left stops
+        # pending forever and blocked every later command.
+        if verified:
             with self.lock:
                 self.stop_ok = max(self.stop_ok, att["target"])
                 if not self.stop_pending():
                     self.moving = False
                 self.attempt = None
-            log("[Stop] #%d verified at rest" % att["target"])
+            log("[Stop] #%d verified at rest (StopMove reply code %s)" % (att["target"], att["code"]))
 
     def supervise(self):
         while True:
@@ -398,11 +413,11 @@ class Actuator:
             except Exception as e:                   # noqa: BLE001
                 log("[Supervisor] %s" % e)
 
-    def stop_and_wait(self, retire_session=None, timeout=3.0):
+    def stop_and_wait(self, retire_session=None, timeout=3.0, retire_active=True, operator=True):
         """Request a stop; returns its number if THAT stop (or a later one)
         verified at rest, else 0."""
         with self.lock:
-            n = self._request_stop(retire_session)
+            n = self._request_stop(retire_session, retire_active, operator)
         t = time.monotonic()
         while time.monotonic() - t < timeout:
             with self.lock:
@@ -411,11 +426,12 @@ class Actuator:
             time.sleep(0.02)
         return 0
 
-    def _send_if_current(self, d, n, api, parameter=None, svc="sport"):
+    def _send_if_current(self, d, n, admitted_ops, api, parameter=None, svc="sport"):
         """Publish a transition only if no newer stop arrived since its own
-        verified stop #n (an E-stop cancels a pending posture/mode change)."""
+        verified stop #n AND no operator stop since the transition was admitted
+        (an E-stop at any point cancels a pending posture/mode change)."""
         with self.lock:
-            if self.stop_req != n:
+            if self.stop_req != n or self.op_stops != admitted_ops:
                 return None
             return d.send(api, parameter, svc)
 
@@ -450,6 +466,8 @@ class Actuator:
 
     # -- transitions ---------------------------------------------------------
     def _admit_transition(self):
+        """None if admitted (self._admitted_ops records the operator-stop count
+        at admission), else an (http, body) refusal."""
         with self.lock:
             if self.transition_busy:
                 return (429, {"success": False, "message": "Robot busy — wait for current command to finish"})
@@ -459,6 +477,7 @@ class Actuator:
             if time.monotonic() < self.settle_until:
                 return (429, {"success": False, "message": "Settling after the last command — wait a moment"})
             self.transition_busy = True
+            self._admitted_ops = self.op_stops
         return None
 
     def _end_transition(self):
@@ -475,7 +494,7 @@ class Actuator:
         if refused:
             return refused
         try:
-            n = self.stop_and_wait()                 # always from a FRESH verified rest
+            n = self.stop_and_wait(operator=False)   # always from a FRESH verified rest
             if not n:
                 return 409, {"success": False, "message": "Could not verify the robot at rest — command not sent."}
             p = telemetry_posture()
@@ -493,7 +512,7 @@ class Actuator:
                 api = API["Hello"]
             else:
                 return 400, {"success": False, "message": "Invalid command"}
-            sent = self._send_if_current(d, n, api)
+            sent = self._send_if_current(d, n, self._admitted_ops, api)
             if sent is None:
                 return 409, {"success": False, "message": "Cancelled by a newer stop — command not sent."}
             code, _ = d.wait(*sent, REQUEST_TIMEOUT_S)
@@ -522,10 +541,11 @@ class Actuator:
                 return 502, {"success": False, "message": "Unreadable mode reply — not changing it."}
             if current == mode:
                 return 200, {"success": True, "message": "already in '%s'" % mode, "code": 0}
-            n = self.stop_and_wait()
+            n = self.stop_and_wait(operator=False)
             if not n:
                 return 409, {"success": False, "message": "Could not verify the robot at rest — mode not changed."}
-            sent = self._send_if_current(d, n, MOTION_SWITCHER["SelectMode"], {"name": mode}, "motion_switcher")
+            sent = self._send_if_current(d, n, self._admitted_ops, MOTION_SWITCHER["SelectMode"],
+                                         {"name": mode}, "motion_switcher")
             if sent is None:
                 return 409, {"success": False, "message": "Cancelled by a newer stop — mode not changed."}
             code, data = d.wait(*sent, REQUEST_TIMEOUT_S)
@@ -706,8 +726,12 @@ def handle_move():
 def handle_stop():
     # Never refused. Retires the named drive session (or the active one) and
     # waits briefly for a verified rest; unconfirmed stops keep being retried.
-    session = (request.get_json(silent=True) or {}).get("session")
-    ok = bool(act.stop_and_wait(session if isinstance(session, str) else None, timeout=3.0))
+    body = request.get_json(silent=True) or {}
+    session = body.get("session") if isinstance(body.get("session"), str) else None
+    # 'all' (E-stop): retire the caller's own press AND whatever drive is active
+    # here. Without it a named stop is a D-pad release: only that press retires.
+    everything = bool(body.get("all")) or session is None
+    ok = bool(act.stop_and_wait(session, timeout=3.0, retire_active=everything))
     return jsonify({"success": ok, "confirmed": ok,
                     "message": "Stop verified at rest" if ok else "Stop sent — still verifying, retrying until confirmed"})
 

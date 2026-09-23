@@ -3618,7 +3618,9 @@
             });
             window.addEventListener('blur', stopMove);
             // E-stop ends any local renewal too (the robot-side stop is session-less).
-            window.__dpadCancel = function () { _session = null; clearLocal(); };
+            // Returns the local press (it may not have reached the robot yet) so the
+            // E-stop can retire it too.
+            window.__dpadCancel = function () { const s = _session; _session = null; clearLocal(); return s; };
         })();
 
         // Show action bar on page load if GO2 is selected
@@ -3667,9 +3669,12 @@
 
         // Emergency stop — always accessible
         async function emergencyStop() {
-            if (typeof window.__dpadCancel === 'function') window.__dpadCancel();
+            const local = (typeof window.__dpadCancel === 'function') ? window.__dpadCancel() : null;
             try {
-                await fetch('/go2/stop', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}' });
+                // all: stop the robot and retire BOTH this page's press and whatever
+                // drive is active on the robot.
+                await fetch('/go2/stop', { method: 'POST', headers: {'Content-Type': 'application/json'},
+                                           body: JSON.stringify({ session: local, all: true }) });
                 showStatus('Emergency stop sent', 'warning');
             } catch(e) {}
         }

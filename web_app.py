@@ -867,7 +867,7 @@ _GO2_MAX_VYAW = 0.5
 # Robot address is resolved at call time by robot_host (see robot_host.py).
 
 
-def _go2_send_stop(session=None, timeout=4):
+def _go2_send_stop(session=None, timeout=4, everything=False):
     """Send a stop; returns (ok, body). A session-less stop (E-stop, deadman)
     stops the robot and retires whatever drive is active ON THE ORIN — never a
     session guessed here. Clears the drive-uncertainty flag only if the
@@ -875,7 +875,8 @@ def _go2_send_stop(session=None, timeout=4):
     with _go2_drive_lock:
         gen = _go2_drive["gen"]
     try:
-        r = requests.post(f'{robot_host.service_url()}/stop', json={'session': session}, timeout=timeout)
+        r = requests.post(f'{robot_host.service_url()}/stop',
+                          json={'session': session, 'all': bool(everything or not session)}, timeout=timeout)
         body = r.json()
         ok = r.status_code == 200 and bool(body.get('success'))
     except Exception as e:
@@ -985,8 +986,10 @@ def go2_move():
 @app.route('/go2/stop', methods=['POST'])
 def go2_stop():
     _ensure_go2_watchdog()
-    session = (request.get_json(silent=True) or {}).get('session')
-    ok, body = _go2_send_stop(session if isinstance(session, str) else None)
+    data = request.get_json(silent=True) or {}
+    session = data.get('session')
+    ok, body = _go2_send_stop(session if isinstance(session, str) else None,
+                              everything=bool(data.get('all')))
     # if not confirmed, the deadman (here and on the Orin) keeps retrying
     return jsonify(body), (200 if ok else 202)
 
