@@ -3965,6 +3965,15 @@
 
         // ── Polling ────────────────────────────────────────────
         function poll() {
+            // The Gesture/Observe selector is the switch. While Gesture is selected
+            // this page renews the server-side arm (also from a background window);
+            // leaving or closing the page disarms it (see pagehide below).
+            if (currentMode === 'gesture') {
+                fetch('/api/scene/mode', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({mode: 'gesture'})
+                }).catch(function() {});
+            }
             // Mode + pause status
             fetch('/api/scene/mode').then(r => r.json()).then(modeData => {
                 if (modeData.model_label) modelLabel = modeData.model_label;
@@ -4048,6 +4057,17 @@
 
         poll();
         setInterval(poll, 5000);
+        // Closing or leaving the dashboard ends gesture detection immediately.
+        window.addEventListener('pagehide', function() {
+            if (currentMode !== 'gesture') return;
+            try {
+                fetch('/api/scene/mode', {
+                    method: 'POST', keepalive: true,
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({mode: 'casual'})
+                });
+            } catch (e) {}
+        });
 
         // ── Context panel ──────────────────────────────────────
         const ctxToggle = document.getElementById('toggleSceneCtx');

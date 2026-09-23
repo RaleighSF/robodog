@@ -17,6 +17,7 @@ to separate an open palm from a fist; it is lighting-sensitive and is used only
 as a soft signal, never as a hard gate.
 """
 import logging
+import os
 import threading
 import time
 
@@ -26,17 +27,36 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 _MODEL_PATH = "yolov8s-worldv2.pt"
+# MediaPipe hand landmarker (Thor image bakes it in; absent on the AGX, where the
+# detector falls back to YOLO-World alone). A/B on live frames 2026-09-23: MediaPipe
+# is precise (21 landmarks on the real hand, even blurred) but misses some poses;
+# YOLO-World catches different poses with junk boxes mixed in. They miss at
+# different moments, so a frame qualifies if EITHER finds a presented hand.
+_MP_MODEL = os.environ.get("WATCHDOG_HAND_LANDMARKER", "/opt/models/hand_landmarker.task")
 _HAND_CLASSES = ["hand", "open hand", "palm", "raised hand"]
-_CONF = 0.15               # hands are small/awkward; keep recall up, gate on size
+_CONF = 0.15               # YOLO-World inference floor (fallback path only)
+# Raleigh's rule (2026-09-23): in gesture mode ANY hand that is a substantial part
+# of the view shakes; a passer-by's hand is small.
+# Measured on the Thor (ultralytics 8.4) the same day: YOLO-World cannot separate a
+# presented hand (0.14-0.16 @ 7-12%) from body/chair boxes (0.11-0.17 @ 34-39%) —
+# loosening it produced a false-shake spree. MediaPipe's landmarker had ZERO hits
+# with the hand down and put landmarks on the real hand when presented. So where
+# MediaPipe is available (Thor) it alone decides; YOLO-World with its AGX-tuned
+# thresholds is the fallback only where MediaPipe is missing (AGX, ultralytics 8.3).
 _FRAME_DIM = 640
 
 # Tunable at runtime via POST /api/gesture
 DEFAULTS = {
-    "min_area_frac": 0.020,   # hand bbox fraction. Measured: a hand at a natural
-                              # greeting distance ~1-2 ft is ~3%; 2% leaves margin.
+    # YOLO-World fallback (AGX): tuned there, where a presented hand scores 0.4-0.6.
+    "min_area_frac": 0.020,
+    "max_area_frac": 0.60,    # scene-sized boxes are never a hand
     "center_band": 0.90,      # hand centre must be within this central fraction
-    "min_conf": 0.35,         # a real presented hand measures 0.4-0.6; a background
-                              # false positive sits near 0.35, so this is the divider.
+    "min_conf": 0.35,
+    # MediaPipe (primary where available): landmark-outline area is tighter than a
+    # box; a hand held out at 2-3 ft measured 5-10%, a passer-by's well under 2%.
+    "mp_min_area_frac": 0.025,
+    "mp_votes_needed": 2,     # qualifying frames among the last mp_vote_window
+    "mp_vote_window": 4,
     "require_open": False,    # if True, also require the finger heuristic to pass
     "min_fingers": 3,         # extended-finger count when require_open is on
 }
@@ -51,11 +71,14 @@ class HandDetector:
         self._device = "cpu"
         self.cfg = dict(DEFAULTS)
         self.last = {"reason": "never_run"}
+        self._mp = None
+        self._mp_state = "unloaded"        # unloaded | ready | unavailable
         # Smooth flicker: fire when >=2 of the last 3 frames qualify. YOLO-World
         # hand confidence bounces frame-to-frame, so a raw single-frame gate
         # drops in and out even with a hand held steady.
         from collections import deque
         self._recent = deque(maxlen=3)
+        self._mp_recent = deque(maxlen=int(self.cfg.get("mp_vote_window", 4)))
 
     @property
     def device(self):
@@ -131,6 +154,34 @@ class HandDetector:
             small = cv2.resize(frame, (int(fw * scale), int(fh * scale)), interpolation=cv2.INTER_AREA)
 
         t0 = time.time()
+        mp_hit = self._mediapipe_hand(small)
+        if self._mp_state == "ready":
+            # MediaPipe alone decides (no YOLO-World fallback: its false boxes
+            # are indistinguishable from real hands on this ultralytics).
+            out["source"] = "mediapipe"
+            out["inference_ms"] = (time.time() - t0) * 1000
+            ok = False
+            if mp_hit is None:
+                out["reason"] = "no_hand_seen"
+            else:
+                area, cx = mp_hit
+                out["area_frac"] = round(area, 4); out["confidence"] = 1.0
+                if abs(cx - 0.5) > self.cfg["center_band"] / 2.0:
+                    out["reason"] = "off_centre"
+                elif area < self.cfg["mp_min_area_frac"]:
+                    out["reason"] = "too_small(%.1f%%<%.1f%%)" % (area * 100, self.cfg["mp_min_area_frac"] * 100)
+                else:
+                    ok = True
+            self._mp_recent.append(ok)
+            need = self.cfg["mp_votes_needed"]
+            if ok and sum(self._mp_recent) >= need:
+                out["detected"] = True
+                out["reason"] = "open_hand_near_camera"
+                logger.info("[HandDetector] HAND (mediapipe) area=%.1f%% -> trigger", out["area_frac"] * 100)
+            elif ok:
+                out["reason"] = "confirming(%d/%d)" % (sum(self._mp_recent), need)
+            self.last = out
+            return out
         try:
             res = self._model(small, verbose=False, conf=_CONF)[0]
         except Exception as e:
@@ -151,8 +202,16 @@ class HandDetector:
         for bb, cf in zip(res.boxes.xyxy.cpu().numpy(), res.boxes.conf.cpu().numpy()):
             x1, y1, x2, y2 = bb
             area = ((x2 - x1) * (y2 - y1)) / float(sw * sh)
-            if best is None or area > best[0]:
+            if area > self.cfg.get("max_area_frac", 0.60):
+                continue                      # a scene-sized box is not a hand
+            # Most confident plausible hand wins (not merely the biggest box).
+            if best is None or float(cf) > best[1]:
                 best = (area, float(cf), (x1, y1, x2, y2))
+        if best is None:
+            self._recent.append(False)
+            out["reason"] = "no_hand_seen"
+            self.last = out
+            return out
 
         area, conf, (x1, y1, x2, y2) = best
         out["area_frac"] = round(area, 4)
@@ -187,17 +246,55 @@ class HandDetector:
             self.last = out
             return out
 
-        # This frame passed every gate; record a vote and fire on a 2-of-3 majority.
+        out["source"] = "yolo-world"
+        return self._vote(out, area, conf)
+
+    def _vote(self, out, area, conf):
+        """This frame passed every gate; record a vote and fire on a 2-of-3 majority."""
         self._recent.append(True)
         if sum(self._recent) >= 2:
             out["detected"] = True
             out["reason"] = "open_hand_near_camera"
-            logger.info("[HandDetector] HAND area=%.1f%% conf=%.2f fingers=%s -> trigger",
-                        area * 100, conf, out["fingers"])
+            logger.info("[HandDetector] HAND (%s) area=%.1f%% conf=%.2f -> trigger",
+                        out.get("source"), area * 100, conf)
         else:
             out["reason"] = "confirming(%d/3)" % sum(self._recent)
         self.last = out
         return out
+
+    def _mediapipe_hand(self, small_bgr):
+        """(landmark-outline area fraction, centre x) of the largest hand, or None.
+        Never raises: any MediaPipe problem disables it and YOLO-World carries on."""
+        if self._mp_state == "unavailable":
+            return None
+        try:
+            if self._mp_state == "unloaded":
+                if not os.path.isfile(_MP_MODEL):
+                    raise FileNotFoundError(_MP_MODEL)
+                import mediapipe as mp
+                from mediapipe.tasks import python as mpt
+                from mediapipe.tasks.python import vision
+                self._mp_mod = mp
+                self._mp = vision.HandLandmarker.create_from_options(vision.HandLandmarkerOptions(
+                    base_options=mpt.BaseOptions(model_asset_path=_MP_MODEL), num_hands=2,
+                    min_hand_detection_confidence=0.3, min_hand_presence_confidence=0.3,
+                    min_tracking_confidence=0.3, running_mode=vision.RunningMode.IMAGE))
+                self._mp_state = "ready"
+                logger.info("[HandDetector] MediaPipe hand landmarker loaded (%s)", _MP_MODEL)
+            rgb = cv2.cvtColor(small_bgr, cv2.COLOR_BGR2RGB)
+            with self._lock:
+                res = self._mp.detect(self._mp_mod.Image(image_format=self._mp_mod.ImageFormat.SRGB, data=rgb))
+            best = None
+            for lm in res.hand_landmarks:
+                xs = [p.x for p in lm]; ys = [p.y for p in lm]
+                area = (max(xs) - min(xs)) * (max(ys) - min(ys))
+                if best is None or area > best[0]:
+                    best = (area, (max(xs) + min(xs)) / 2.0)
+            return best
+        except Exception as e:                   # noqa: BLE001
+            self._mp_state = "unavailable"
+            logger.info("[HandDetector] MediaPipe unavailable (%s) — YOLO-World only", e)
+            return None
 
 
 _hd = None

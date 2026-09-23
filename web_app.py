@@ -715,10 +715,38 @@ def latest_detections():
 # A person standing close will be tall & narrow (fails #1).
 # A person's head/torso cropped at frame edge may have odd aspect but
 # won't be large enough or low enough (fails #2 or #3).
-_GESTURE_COOLDOWN = 5.0    # seconds between shake triggers
+_GESTURE_COOLDOWN = 3.0    # seconds between shake triggers
 _gesture_last_trigger_ts = 0.0
 _gesture_count = 0
 _gesture_enabled = False    # toggled by scene narrator mode
+# The dashboard's Gesture/Observe selector is the switch: Gesture arms, Observe
+# disarms. Arming is a LEASE the open page renews every poll (even in a
+# background window), and the page disarms explicitly when it is closed or left;
+# the lease is the backstop for a page that dies without saying goodbye
+# (90 s outlasts browsers' background-timer throttling).
+_GESTURE_LEASE_S = 90.0
+_gesture_lease_until = 0.0
+
+
+def _gesture_disarm(reason):
+    """Drop the gesture arm and put the narrator back to observing."""
+    global _gesture_enabled
+    if not _gesture_enabled:
+        return
+    _gesture_enabled = False
+    try:
+        n = get_narrator()
+        if n and n.mode == 'gesture':
+            n.set_mode('casual')
+    except Exception:
+        pass
+    logger.info("[GesturePose] DISARMED (%s)", reason)
+
+
+def _gesture_lease_check():
+    """Lapse the arm if no dashboard page has renewed it within the lease."""
+    if _gesture_enabled and time.time() > _gesture_lease_until:
+        _gesture_disarm("no open dashboard in Gesture mode for %.0fs" % _GESTURE_LEASE_S)
 
 # ---------------------------------------------------------------------------
 # PPE compliance detection. Runs in its own worker thread so it never shares a
@@ -785,6 +813,7 @@ def _check_outstretched_hand(frame):
     geometry.  Runs on the raw detection frame — no extra capture needed.
     """
     global _gesture_last_trigger_ts, _gesture_count
+    _gesture_lease_check()
     if not _gesture_enabled:
         return
     now = time.time()
@@ -1086,6 +1115,7 @@ def set_scene_context():
 @app.route('/api/scene/mode', methods=['GET'])
 def get_scene_mode():
     """Return the current narrator mode + gesture detection stats."""
+    _gesture_lease_check()
     narrator = get_narrator()
     if not narrator:
         return jsonify({'enabled': False})
@@ -1109,18 +1139,20 @@ def set_scene_mode():
     mode = data.get('mode', '').strip().lower()
     if mode not in ('casual', 'gesture'):
         return jsonify({'success': False, 'message': f'Invalid mode: {mode}'}), 400
-    global _gesture_enabled
+    global _gesture_enabled, _gesture_lease_until
     narrator.set_mode(mode)
-    # The slider is the gesture on/off control: 'gesture' arms, any other mode
-    # disarms. Firing a shake is a physical action, so the transition is always
-    # logged (never silent) and the operator can still override via
-    # POST /api/gesture {"enabled": ...}.
-    want = (mode == 'gesture')
-    if want != _gesture_enabled:
-        _gesture_enabled = want
-        logger.info("[GesturePose] %s via narrator slider (mode=%s)",
-                    'ARMED' if want else 'DISARMED', mode)
-    return jsonify({'success': True, 'mode': narrator.mode})
+    # The Gesture tab is the on/off control: 'gesture' arms (and each renewal
+    # from a visible tab extends the lease), any other mode disarms. Firing a
+    # shake is a physical action, so arming/disarming is always logged.
+    if mode == 'gesture':
+        _gesture_lease_until = time.time() + _GESTURE_LEASE_S
+        if not _gesture_enabled:
+            _gesture_enabled = True
+            logger.info("[GesturePose] ARMED from the dashboard Gesture tab (lease %.0fs, renewed by the open tab)",
+                        _GESTURE_LEASE_S)
+    else:
+        _gesture_disarm("dashboard switched to %s" % mode)
+    return jsonify({'success': True, 'mode': narrator.mode, 'lease_seconds': _GESTURE_LEASE_S})
 
 @app.route('/api/scene/summary')
 def get_scene_summary():
@@ -1737,7 +1769,7 @@ def _init_scene_narrator():
     global _gesture_enabled
     default_mode = narrator_cfg.get('default_mode', 'casual')
     narrator.set_mode(default_mode)
-    _gesture_enabled = (default_mode == 'gesture')
+    _gesture_enabled = False   # armed only by a visible dashboard tab (lease), never at boot
     logger.info(f"[GesturePose] Outstretched hand detection {'ENABLED' if _gesture_enabled else 'DISABLED'} (default mode: {default_mode})")
 
     narrator.start()

@@ -35,6 +35,20 @@ RUN pip list --format=freeze | grep -iE '^(torch|torchvision)==' | diff /tmp/bas
  && test "$(cat /etc/cudnn-lib-path)" = /usr/local/lib/python3.12/dist-packages/nvidia/cudnn/lib \
  && python3 -c "import torch; v = torch.backends.cudnn.version(); print('cudnn', v); assert v >= 91800"
 
+# MediaPipe hand landmarker for gesture detection (hand_detector.py): the wheel
+# without its deps (they would replace the pinned OpenCV/numpy), the two small
+# runtime deps it really needs, GL libraries for its native core, and the model
+# file pinned by checksum.
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        libegl1 libgles2 \
+ && rm -rf /var/lib/apt/lists/* \
+ && pip install --no-deps mediapipe==1.0.1 absl-py==2.5.0 flatbuffers==25.12.19 \
+ && pip list --format=freeze | grep -iE '^(torch|torchvision)==' | diff /tmp/base-torch.txt - \
+ && python3 -c "import mediapipe; print('mediapipe', mediapipe.__version__)"
+ADD --checksum=sha256:fbc2a30080c3c557093b5ddfc334698132eb341044ccee322ccf8bcf3607cde1 \
+    https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task \
+    /opt/models/hand_landmarker.task
+
 COPY entrypoint.sh /usr/local/bin/watchdog-entrypoint
 RUN chmod +x /usr/local/bin/watchdog-entrypoint
 
