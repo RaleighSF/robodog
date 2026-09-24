@@ -2,7 +2,7 @@
 
 **Bucket:** `s3://watchdog-telemetry` (us-east-1, account 251197268325)
 **Schema version:** `1.0.0`
-**Active deployment:** `watchdog-snowflake-summit-2026`
+**Active deployment:** `watchdog-demo`
 
 ---
 
@@ -38,7 +38,7 @@ Every event shares this top-level envelope:
   "schema_version": "1.0.0",
   "event_id": "evt_20260512T173645Z_6eb16790",
   "event_type": "heartbeat | detection | command | alert:<subtype>",
-  "deployment_id": "watchdog-snowflake-summit-2026",
+  "deployment_id": "watchdog-demo",
   "session_id": "sess_20260512T173614Z_2dd6a3",
   "timestamp": "2026-05-12T17:36:45.695Z",
   "device": { ... },
@@ -182,7 +182,7 @@ Dashboard stats endpoint: `GET http://<agx-ip>:8000/api/telemetry/stats`
 ```json
 {
   "enabled": true,
-  "deployment_id": "watchdog-snowflake-summit-2026",
+  "deployment_id": "watchdog-demo",
   "session_id": "sess_...",
   "events_emitted": 120,
   "events_uploaded": 120,

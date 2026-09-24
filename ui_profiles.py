@@ -19,7 +19,7 @@ PROFILES = {
     'default': {
         'id': 'default',
         'label': 'Default — NTT DATA',
-        'title': 'Project Watch Dog - Factory Patrol Monitoring | NTT DATA',
+        'title': 'Watch Dog · Physical AI Robot Patrol | NTT DATA',
         'font_href': 'https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap',
         'partner': None,   # no co-brand on the house look
     },

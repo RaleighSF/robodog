@@ -40,7 +40,7 @@ scene_narrator:
     it, never smug, and never invent people who are not there.'
 telemetry:
   backend: s3
-  deployment_id: watchdog-snowflake-summit-2026
+  deployment_id: watchdog-demo
   device_id: watchdog-edge-01
   device_type: nvidia_agx_orin
   enabled: true
