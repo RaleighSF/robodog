@@ -1923,7 +1923,7 @@ def _init_scene_narrator():
         model_label=narrator_cfg.get('model_label'),
         casual_interval=narrator_cfg.get('interval_seconds'),
     )
-    narrator.set_frame_source(lambda: camera_manager.get_frame())
+    narrator.set_frame_source(lambda: camera_manager.get_frame(max_age=2.0))   # never narrate a frozen frame
 
     # VLM gesture callback is DISABLED — YOLO Pose keypoints are the sole
     # shake trigger now (faster, no hallucination false-positives).

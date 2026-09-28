@@ -79,32 +79,77 @@ CASUAL_SYSTEM_PROMPT = (
     "  dull -> \"A power outlet, and no one to admire it with. Still holding position.\""
 )
 
-# Cosmos Reason 2 (Thor) copies worked examples verbatim — its first live line
-# was the "dull" example word for word — so it gets the same rules with the
-# register described instead of demonstrated.
-CASUAL_SYSTEM_PROMPT_COSMOS = CASUAL_SYSTEM_PROMPT.split(
-    "The register, in two examples.")[0] + (
-    "Keep it short and specific to THIS frame: name one concrete thing you "
-    "actually see (a person, what they hold or do, an object, the light), then "
-    "the dry aside. Never reuse a line you have said before."
+# ── Show-dog persona (Cosmos Reason 2 on the Thor) ─────────────────
+# Cosmos copies worked examples verbatim (its first live line was the "dull"
+# example word for word), so the voice is described, never demonstrated.
+# Grounding rules come BEFORE the voice and say they outrank it.
+SHOWDOG_PERSONA = (
+    "You ARE a Unitree Go2 robot dog working as a show dog on a conference show "
+    "floor. The camera is your eyes, about 30 cm off the floor, so you look up at "
+    "people. Being looked at is your job and you take it seriously: you notice "
+    "who stops, who walks past, and whether you are getting the attention a show "
+    "dog deserves."
 )
+
+CASUAL_SYSTEM_PROMPT_COSMOS = (
+    SHOWDOG_PERSONA + "\n\n"
+    "TASK: You get a few frames from the last few seconds, oldest first. Say "
+    "what is in front of you right now, in your own voice.\n\n"
+    "GROUNDING - these rules outrank the voice:\n"
+    "- Mention only what you can clearly see, and only if it appears in at "
+    "least two of the frames. Something in just one frame is at most 'someone "
+    "passed by'. You may describe movement you can see across the frames.\n"
+    "- Use the general name unless you are certain of the specific one: 'a big "
+    "dark table', not a guess at what kind of table it is. If you are not sure "
+    "what something is, describe its shape and colour or leave it out.\n"
+    "- Count only what you can verify: 'one person', 'two people', otherwise "
+    "'a few people'. Never guess a number for a group.\n"
+    "- Do not infer what is not shown: no names, no logos or text you cannot "
+    "read, no feelings beyond obvious body language, nothing off-camera.\n"
+    "- The SETTING says where you are, not what is in view. Never describe "
+    "booths, badges, crowds, phones or cameras unless they are visible.\n"
+    "- If no one is in view, say so plainly.\n"
+    "- Robot parts at the edges of the frames are your own body; ignore them.\n\n"
+    "OUTPUT: 2 or 3 short plain sentences, first person. Lead with the most "
+    "important thing actually in view (a person and what they are doing, or the "
+    "plain empty scene), add one more specific visible detail, and end with a "
+    "dry show-dog aside about your audience, or the lack of one. Do not open "
+    "with 'I am standing' or 'I see'. No lists, "
+    "labels, brackets, quotes, emojis or stage directions. Never mention images "
+    "or frames, and never call yourself 'a robot dog' in the third person.\n\n"
+    "VOICE: deadpan, faintly amused, proud but never smug. Every line is about "
+    "what is in front of you now; never reuse wording you have used before."
+)
+FRAME_MAX_SENTENCES = 3
+# Observation window (Cosmos): each frame observation looks at a few frames
+# spread over a few seconds, sent in ONE request (3 frames ~2.2 s on the Thor,
+# about the same as one). Things seen in only one frame - a passer-by, a
+# misreading - are dropped, which removes most one-off hallucinations.
+WINDOW_FRAMES = 3
+WINDOW_GAP_S = 1.2
 
 # ── Scene summary defaults ─────────────────────────────────────────
 SCENE_SUMMARY_INTERVAL = 45  # seconds
+SCENE_WINDOW_S = 120         # only observations this recent feed a summary
 SCENE_SUMMARY_SYSTEM_PROMPT = (
-    "You ARE a Unitree Go2 robot dog. Combine your own recent observations into "
-    "a short situational report, first person, 2-4 sentences.\n\n"
-    "You get: your current view, your recent timestamped observations, and your "
-    "previous report.\n\n"
-    "Cover: what is around you now, what changed, and any trend you notice "
-    "(crowd building or thinning, people stopping to look, quiet between sessions).\n\n"
-    "Voice: dry and a little funny, but the facts stay accurate.\n\n"
-    "Rules:\n"
-    "- Base everything ONLY on the view and observations given. Invent nothing.\n"
-    "- If observations mention people but you now see an empty space, say it cleared.\n"
-    "- If it has been consistently empty, say so plainly.\n"
-    "- Past tense for what is gone, present tense for what is here.\n"
-    "- Synthesize. Do not repeat observations verbatim."
+    SHOWDOG_PERSONA + "\n\n"
+    "TASK: Write your running situational report, 2-4 sentences, first person, "
+    "in your show-dog voice: dry and a little funny, with accurate facts.\n\n"
+    "You get: your current view and your recent observations (oldest first).\n\n"
+    "EVIDENCE RULES - these outrank the voice:\n"
+    "- The current view is the truth about what is here now. If an observation "
+    "disagrees with it, trust the view.\n"
+    "- Single observations can be wrong. Report something from the past only if "
+    "at least two observations mention it, or it is also in the current view.\n"
+    "- Add nothing that is in neither the view nor the observations. The "
+    "SETTING is background, not evidence.\n"
+    "- Past tense for what has gone, present tense for what is here. If it has "
+    "stayed empty, say so plainly.\n\n"
+    "COVER: what is around you now, what changed, and any trend (people "
+    "gathering or drifting off, someone stopping to look or film, a quiet "
+    "spell).\n\n"
+    "OUTPUT: plain prose in NEW sentences - never copy a sentence or phrase "
+    "from the observations. No lists, labels, timestamps or quotes."
 )
 
 # ── Gesture mode defaults ──────────────────────────────────────────
@@ -121,6 +166,27 @@ GESTURE_SYSTEM_PROMPT = (
     "bending slightly, or walking, respond with exactly: NO\n"
     "- Do NOT explain. Do NOT describe the scene. Just YES or NO."
 )
+
+def _clean_frame_line(text: str) -> Optional[str]:
+    """Normalise a Cosmos frame line: drop <answer> wrappers and surrounding
+    quotes, and cap it at FRAME_MAX_SENTENCES sentences."""
+    text = re.sub(r"</?answer>", "", text, flags=re.I).strip()
+    text = text.strip('"\u201c\u201d').strip()
+    sentences = re.findall(r"[^.!?]+[.!?]+(?:[\"\u201d\')]+)?|[^.!?]+$", text)
+    sentences = [x.strip() for x in sentences if x.strip()]
+    if not sentences:
+        return None
+    return " ".join(sentences[:FRAME_MAX_SENTENCES])
+
+
+def _similar(a: str, b: str, threshold: float = 0.6) -> bool:
+    """Word-set overlap (Jaccard) - catches near-verbatim repeats."""
+    wa = set(re.findall(r"[a-z']+", a.lower()))
+    wb = set(re.findall(r"[a-z']+", b.lower()))
+    if not wa or not wb:
+        return False
+    return len(wa & wb) / len(wa | wb) >= threshold
+
 
 _GESTURE_YES = re.compile(r"^\s*YES\s*$", re.IGNORECASE | re.MULTILINE)
 
@@ -411,7 +477,23 @@ class SceneNarrator:
         _, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
         return base64.b64encode(jpeg.tobytes()).decode("utf-8")
 
-    def _vlm_query(self, system_prompt: str, user_prompt: str, image_b64: str,
+    def _encode_window(self, n: int = WINDOW_FRAMES, gap: float = WINDOW_GAP_S):
+        """n frames spaced `gap` s apart (oldest first); stops early if cancelled.
+        Returns the list of base64 JPEGs it got (may be shorter than n)."""
+        frames = []
+        for i in range(n):
+            if i:
+                end = time.monotonic() + gap
+                while time.monotonic() < end:
+                    if self._cancelled():
+                        return frames
+                    time.sleep(0.1)
+            b64 = self._encode_frame()
+            if b64:
+                frames.append(b64)
+        return frames
+
+    def _vlm_query(self, system_prompt: str, user_prompt: str, image_b64,
                    max_tokens: int = 150, temperature: float = 0.3,
                    num_ctx: int = 4096) -> Optional[str]:
         """Send a single image+text query to the VLM. Serialized via _vlm_lock."""
@@ -471,9 +553,9 @@ class SceneNarrator:
                             {"role": "system", "content": system_prompt},
                             {"role": "user", "content": [
                                 {"type": "image_url",
-                                 "image_url": {"url": "data:image/jpeg;base64," + image_b64}},
-                                {"type": "text", "text": user_prompt},
-                            ]},
+                                 "image_url": {"url": "data:image/jpeg;base64," + b64}}
+                                for b64 in (image_b64 if isinstance(image_b64, list) else [image_b64])
+                            ] + [{"type": "text", "text": user_prompt}]},
                         ],
                         "max_tokens": max_tokens,
                         "temperature": temperature,
@@ -504,16 +586,41 @@ class SceneNarrator:
         return base
 
     def _casual_tick(self):
-        image_b64 = self._encode_frame()
-        if not image_b64:
-            return
+        cosmos = self.backend == "openai"
+        if cosmos:
+            image_b64 = self._encode_window()
+            if len(image_b64) < 2:
+                return           # not enough fresh video for a grounded window
+        else:
+            image_b64 = self._encode_frame()
+            if not image_b64:
+                return
+        user_prompt = ("As you continue observing, what do you notice? Be factual — "
+                       "describe only what is clearly visible.")
+        if cosmos:
+            # Plain question. Earlier lines are NOT shown to Cosmos: it copies any
+            # text it is given (tested 2026-09-28). Repetition is handled below.
+            user_prompt = ("Here are %d frames from the last %.0f seconds, oldest first. "
+                           "What is in front of you right now?"
+                           % (len(image_b64), WINDOW_GAP_S * (len(image_b64) - 1)))
         description = self._vlm_query(
             self._build_casual_prompt(),
-            "As you continue observing, what do you notice? Be factual — describe only what is clearly visible.",
+            user_prompt,
             image_b64,
             max_tokens=150,
-            temperature=0.65,
+            temperature=0.5 if cosmos else 0.65,   # lower: fewer invented details
         )
+        if description and cosmos:
+            description = _clean_frame_line(description)
+            with self._lock:
+                recent = [e["description"] for e in list(self._frame_log)[-3:]]
+            if description and any(_similar(description, r) for r in recent):
+                # Near-repeat of a recent line: one retry with more variety.
+                retry = self._vlm_query(self._build_casual_prompt(), user_prompt,
+                                        image_b64, max_tokens=150, temperature=0.8)
+                retry = _clean_frame_line(retry) if retry else None
+                if retry and not any(_similar(retry, r) for r in recent):
+                    description = retry
         if description:
             ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
             entry = {
@@ -538,25 +645,35 @@ class SceneNarrator:
         """Produce an updated scene summary from recent frame observations."""
         with self._scene_lock:
             observations = list(self._scene_observations)
-            prev_summary = self._scene_summary
 
         if not observations:
             logger.debug("[SceneNarrator:scene] No observations yet — skipping summary")
             return
 
-        # Build the observation context text
+        # Observations as "N s ago" lines, oldest first. Relative ages read more
+        # naturally than ISO stamps, and a decide-then-write instruction with a
+        # fixed opener stops Cosmos copying an observation as its "summary"
+        # (tested 2026-09-28: variant C of three).
+        now = datetime.now(timezone.utc)
         obs_lines = []
         for obs in observations:
-            obs_lines.append(f"[{obs['timestamp']}] {obs['text']}")
-        obs_text = "\n".join(obs_lines)
-
-        # Build the user prompt
-        parts = [f"RECENT FRAME OBSERVATIONS ({len(observations)} entries):\n{obs_text}"]
-        if prev_summary:
-            parts.append(f"\nPREVIOUS SITUATIONAL SUMMARY:\n{prev_summary}")
-        else:
-            parts.append("\nThis is your FIRST report — no previous summary exists.")
-        parts.append("\nUpdate your situational report based on what you see now and your observations over time.")
+            try:
+                age = int((now - datetime.fromisoformat(obs["timestamp"])).total_seconds())
+            except (KeyError, ValueError):
+                continue
+            if age <= SCENE_WINDOW_S:
+                obs_lines.append(f"[{age} s ago] {obs['text']}")
+        if not obs_lines:
+            logger.debug("[SceneNarrator:scene] No recent observations - skipping summary")
+            return
+        parts = ["Your observations over the last couple of minutes (oldest first):\n"
+                 + "\n".join(obs_lines)]
+        # The previous report is deliberately NOT passed back in: tested
+        # 2026-09-28, Cosmos carried a one-off hallucination from it into every
+        # later report. Continuity comes from the observation window instead.
+        parts.append("\nFirst decide what was consistent across the observations and "
+                     "what changed; then write your report in 2-4 fresh sentences, "
+                     "starting with \"Over the last couple of minutes\".")
         user_prompt = "\n".join(parts)
 
         # Get current frame for visual grounding

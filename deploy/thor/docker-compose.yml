@@ -19,7 +19,7 @@ services:
       WATCHDOG_TLS_CERT: /state/tls/cert.pem
       WATCHDOG_TLS_KEY: /state/tls/key.pem
       WATCHDOG_TLS_HOSTNAME: nvidia-thor
-      WATCHDOG_TLS_IPS: "192.168.1.234 10.0.0.109 192.168.50.209"   # ethernet, home WiFi, Cradlepoint
+      WATCHDOG_TLS_IPS: "192.168.1.234 10.0.0.109 192.168.50.209 192.168.50.210"   # ethernet, home WiFi, Cradlepoint WiFi + wired
       WATCHDOG_TRUST_LOOPBACK: "0"      # the supervisor uses its token instead
       WATCHDOG_AUTOARM: "1"
       WATCHDOG_DASH: https://127.0.0.1:8000

@@ -65,6 +65,41 @@ ssh thor 'docker cp /tmp/watchdog-ca.pem watchdog:/state/tls/ca.pem && docker ex
 - The auto-arm supervisor probes the robot with `--cacert` and needs
   `has_video: true`.
 
+## Network hardening (for shows)
+
+One-time, needs sudo on the Thor:
+
+```bash
+ssh -t thor 'sudo bash ~/watch_dog/deploy/thor/net/install.sh'
+```
+
+- **WiFi watchdog** (`wifi-watchdog.service`). The Realtek RTL8852CE can stall
+  silently: NetworkManager still shows it connected, but no traffic passes.
+  This happened for about 40 minutes on 2026-09-28. Every 30 s the watchdog
+  pings the WiFi gateway or the dog over the WiFi interface. After about 90 s
+  of silence it reconnects the WiFi. If the link is still dark, it reloads the
+  `rtl8852ce` driver, at most once every 15 min. Logs:
+  `journalctl -u wifi-watchdog`.
+- **Driver power saving off** (`/etc/modprobe.d/rtl8852ce-watchdog.conf`:
+  `rtw_lps_mode=0 rtw_ips_mode=0`). With the defaults, the card stopped
+  answering broadcast ARP. Devices already talking to the Thor kept working,
+  but a new laptop could not reach the dashboard. NetworkManager's powersave
+  setting does not control these driver modes.
+- **Wired fallback**: the wired profile also carries **192.168.50.210** (the
+  Cradlepoint subnet), so a cable into the Cradlepoint works with no changes.
+  The home 192.168.1.234 is kept. The Thor certificate covers .209 and .210.
+
+- **WiFi profiles** (set by hand with nmcli, 2026-09-28):
+  - `Smart Robotics Lan` (Cradlepoint): priority 10, static 192.168.50.209.
+  - `SmartRoboticsLan` (home): priority 5, DHCP, currently 10.0.0.109.
+  - `MusicCityNetwork`: priority 1, last resort.
+
+  Keep the Thor on the **same SSID as the dog**. On MusicCityNetwork, devices
+  on SmartRoboticsLan could not resolve the Thor by ARP.
+
+Addresses at a show: WiFi https://192.168.50.209:8443, wired
+https://192.168.50.210:8443.
+
 ## Configuration
 
 - `config.yaml` (repo) is the base.
