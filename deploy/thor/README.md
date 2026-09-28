@@ -80,6 +80,11 @@ ssh -t thor 'sudo bash ~/watch_dog/deploy/thor/net/install.sh'
   of silence it reconnects the WiFi. If the link is still dark, it reloads the
   `rtl8852ce` driver, at most once every 15 min. Logs:
   `journalctl -u wifi-watchdog`.
+- **Driver power saving off** (`/etc/modprobe.d/rtl8852ce-watchdog.conf`:
+  `rtw_lps_mode=0 rtw_ips_mode=0`). With the defaults, the card stopped
+  answering broadcast ARP. Devices already talking to the Thor kept working,
+  but a new laptop could not reach the dashboard. NetworkManager's powersave
+  setting does not control these driver modes.
 - **Wired fallback**: the wired profile also carries **192.168.50.210** (the
   Cradlepoint subnet), so a cable into the Cradlepoint works with no changes.
   The home 192.168.1.234 is kept. The Thor certificate covers .209 and .210.

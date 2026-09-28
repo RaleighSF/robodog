@@ -8,6 +8,12 @@
 # After FAILS consecutive misses: reconnect the WiFi (NetworkManager picks the
 # highest-priority visible profile: Cradlepoint first). If it is still dark
 # after that: reload the driver - at most once per DRIVER_BACKOFF s.
+#
+# Note: this catches a DEAD link. The failure actually seen on 2026-09-28 was
+# different - the card stopped answering broadcast ARP (new devices could not
+# reach the Thor; existing peers and the gateway still could), which pings from
+# the Thor cannot detect. That one is fixed at the source by turning driver
+# power saving off (install.sh, /etc/modprobe.d/rtl8852ce-watchdog.conf).
 IFACE="${IFACE:-wlP1p1s0}"
 DRIVER="${DRIVER:-rtl8852ce}"
 INTERVAL="${INTERVAL:-30}"
