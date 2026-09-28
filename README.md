@@ -48,7 +48,7 @@ Operator laptop (browser)
 | --- | --- | --- |
 | Go2 Orin backpack | 192.168.50.207 (Cradlepoint), 10.0.0.57 (home), 192.168.193.111 (ZeroTier) | Robot link (`go2_service`) |
 | Jetson AGX Thor | 192.168.50.209 (Cradlepoint), 10.0.0.109 (home WiFi), 192.168.1.234 (ethernet) | Dashboard, AI, the only controller |
-| AGX Xavier (legacy) | 192.168.50.208 | Retired from driving. It can't reach the HTTPS robot link until it's updated. |
+| AGX (retired) | — | Not part of the solution any more. Its dashboard and supervisor are disabled. |
 
 The Thor runs Watch Dog **or** Elastic-Vision's app stack, never both. Switch
 between them with `demo-mode`. Azimuth and Watch Dog never drive the dog at the
@@ -69,7 +69,7 @@ same time: their Orin systemd units declare `Conflicts=`.
 | `ui_profiles.py`, `static/themes/` | Vendor demo skins. |
 | `deploy/thor/` | Thor container, `demo-mode`, compose, Thor overlay config. |
 | `deploy/orin/` | Orin image, systemd unit, and the safe `build.sh` deploy. |
-| `deploy/systemd/watchdog-autostart.sh` | Auto-arm supervisor (Thor container and legacy AGX). |
+| `deploy/systemd/watchdog-autostart.sh` | Auto-arm supervisor (runs inside the Thor container). |
 | `docs/ARCHITECTURE.md` | Robot-link protocol and safety model. |
 | `docs/LEARNINGS.md` | What we learned the hard way. |
 | `DEMO_RUNBOOK.md` | Event-day runbook. **Local only** (gitignored, because it holds credentials). |

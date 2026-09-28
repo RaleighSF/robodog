@@ -89,6 +89,14 @@ ssh -t thor 'sudo bash ~/watch_dog/deploy/thor/net/install.sh'
   Cradlepoint subnet), so a cable into the Cradlepoint works with no changes.
   The home 192.168.1.234 is kept. The Thor certificate covers .209 and .210.
 
+- **WiFi profiles** (set by hand with nmcli, 2026-09-28):
+  - `Smart Robotics Lan` (Cradlepoint): priority 10, static 192.168.50.209.
+  - `SmartRoboticsLan` (home): priority 5, DHCP, currently 10.0.0.109.
+  - `MusicCityNetwork`: priority 1, last resort.
+
+  Keep the Thor on the **same SSID as the dog**. On MusicCityNetwork, devices
+  on SmartRoboticsLan could not resolve the Thor by ARP.
+
 Addresses at a show: WiFi https://192.168.50.209:8443, wired
 https://192.168.50.210:8443.
 
