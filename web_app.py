@@ -1948,6 +1948,34 @@ def _init_scene_narrator():
 
 _init_scene_narrator()
 
+
+def _ppe_preload():
+    """Warm the PPE model in the background shortly after start-up, so the
+    first switch to PPE mode is instant instead of a ~30 s pipeline stall.
+    Delayed so it never competes with auto-arm and the first narration."""
+    try:
+        from config import get_config
+        cfg = get_config().config.get('ppe') or {}
+    except Exception:
+        cfg = {}
+    if not cfg.get('preload', True):
+        return
+    time.sleep(float(cfg.get('preload_delay_s', 45)))
+    try:
+        pd = get_ppe_detector()
+        try:
+            import torch
+            # same device choice as the PPE mode switch, so that switch is a no-op
+            pd.set_device('cuda' if torch.cuda.is_available() else 'cpu')
+        except Exception:
+            pd.set_device('cpu')
+        pd.warmup()
+    except Exception as e:
+        logger.warning(f"[PPE] preload failed: {e}")
+
+
+threading.Thread(target=_ppe_preload, daemon=True, name='ppe-preload').start()
+
 @app.route('/api/detection/mode', methods=['GET'])
 def get_detection_mode():
     """Report which detector is active: 'yolo' or 'ppe'."""
