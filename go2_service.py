@@ -48,6 +48,7 @@ from flask import Flask, Response, jsonify, request
 from go2dds.core import DDSCore
 from go2dds.motion import (MIN_VX_FWD, MIN_VYAW, RestVerifier, SETTLE_V, SETTLE_W,
                            TELEOP_LIMITS, planar_motion, snap)
+from go2dds.normalize import low_state_dict, motor_states
 from go2dds.topics import MOTION_SWITCHER, SPORT, TOPICS
 
 ROBOT_IP = os.environ.get("GO2_ROBOT_IP", "192.168.123.161")
@@ -61,7 +62,7 @@ if CONTROL_TOKEN and (not CONTROL_TOKEN.isascii() or any(c.isspace() for c in CO
     _TOKEN_REJECTED = True
 else:
     _TOKEN_REJECTED = False
-OPEN_ENDPOINTS = {"status", "battery", "video_feed"}   # read-only
+OPEN_ENDPOINTS = {"status", "battery", "video_feed", "vitals"}   # read-only
 AES_KEY = (os.environ.get("GO2_AES_KEY") or "").strip() or None
 JPEG_QUALITY = int(os.environ.get("GO2_JPEG_QUALITY", "80"))
 JPEG_PARAMS = [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY]
@@ -70,6 +71,7 @@ API = SPORT                                   # shared go2dds table (Azimuth-val
 
 LENIENT_CODES = {"sit": {-1}, "shake": {-1}}      # vendor -1 observed as benign for these
 CMD_MIN_GAP_S = 2.0
+VITALS_DECODE_HZ = 5.0            # full LowState + joint decode rate for /vitals
 REQUEST_TIMEOUT_S = 5.0
 MOVE_REPLY_TIMEOUT_S = 1.0
 STOP_REPLY_TIMEOUT_S = 1.0
@@ -153,9 +155,16 @@ class RobotLink:
         self.body_height = None
         self.motion = None                    # (planar speed, |yaw rate|) or None if not finite
         self.last_state = 0.0
+        # Full snapshots for /vitals (rebound atomically; readers never see a
+        # half-built dict). Joints are decoded at most VITALS_DECODE_HZ.
+        self.low = None
+        self.sport = None
+        self.motors = None
+        self.low_mono = 0.0
+        self._next_decode = 0.0
         self.core = DDSCore("watchdog_go2_service").start()
         try:
-            self.core.subscribe(TOPICS["LOW_STATE"], self._on_low)
+            self.core.subscribe(TOPICS["LOW_STATE"], self._on_low, raw=True)
             self.core.subscribe(TOPICS["LF_SPORT_MOD_STATE"], self._on_sport)
         except Exception:
             self.core.close()
@@ -169,11 +178,19 @@ class RobotLink:
         self.core.close()
 
     def _on_low(self, payload):
-        d = payload["data"]; b = d["bms_state"]
-        self.battery = {"soc": b["soc"], "voltage": d["power_v"], "current": b["current"]}
+        m = payload["data"]                   # raw rclpy LowState (raw=True)
+        b = m.bms_state
+        self.battery = {"soc": int(b.soc), "voltage": float(m.power_v), "current": int(b.current)}
+        now = payload["_recvMono"]
+        if now >= self._next_decode:          # full decode is throttled
+            self._next_decode = now + 1.0 / VITALS_DECODE_HZ
+            self.low = low_state_dict(m)
+            self.motors = motor_states(m)
+            self.low_mono = now
 
     def _on_sport(self, payload):
         d = payload["data"]
+        self.sport = d
         self.body_height = d.get("body_height")
         self.motion = planar_motion(d)
         self.last_state = payload["_recvMono"]
@@ -682,6 +699,41 @@ def status():
         "body_height": round(d.body_height, 3) if d and d.body_height is not None else None,
         "stop_confirmed": stop_ok,
     })
+
+
+@app.route("/vitals")
+def vitals():
+    """Everything the dog publishes, for telemetry (schema 1.1 robot section).
+    Public read like /status: no control surface."""
+    d = link()
+    now = time.monotonic()
+    out = {"connected": link_ok(), "posture": telemetry_posture(),
+           "has_video": video_connected and video_fresh(), "transport": "dds"}
+    with act.lock:
+        out["actuator"] = {"moving": act.moving, "stop_confirmed": not act.stop_pending(),
+                           "transition_busy": act.transition_busy}
+    if d is None:
+        return jsonify(out)
+    sport, low, motors = d.sport, d.low, d.motors
+    if sport:
+        imu = sport.get("imu_state") or {}
+        out["sport"] = {k: sport.get(k) for k in ("mode", "gait_type", "progress", "error_code", "body_height",
+                        "foot_raise_height", "position", "velocity", "yaw_speed", "range_obstacle",
+                        "foot_force", "foot_position_body", "foot_speed_body")}
+        out["imu"] = {k: imu.get(k) for k in ("rpy", "quaternion", "gyroscope", "accelerometer", "temperature")}
+        out["sport_age_s"] = round(now - d.last_state, 3) if d.last_state else None
+    if low:
+        out["power"] = {"power_v": low.get("power_v"), "power_a": low.get("power_a"), "bms": low.get("bms_state")}
+        out["board_temps"] = {"ntc1": low.get("temperature_ntc1"), "ntc2": low.get("temperature_ntc2")}
+        out["feet"] = {"force": low.get("foot_force"), "force_est": low.get("foot_force_est")}
+        out["low_age_s"] = round(now - d.low_mono, 3)
+    if motors:
+        temps = [mm["temperature"] for mm in motors]
+        hot = max(motors, key=lambda mm: mm["temperature"])
+        out["motors"] = motors
+        out["motor_summary"] = {"temp_max": max(temps), "temp_avg": round(sum(temps) / len(temps), 1),
+                                "hottest_joint": hot["joint"], "lost_total": sum(mm["lost"] for mm in motors)}
+    return jsonify(out)
 
 
 @app.route("/battery")
