@@ -1,0 +1,2 @@
+azure-functions==1.25.0
+azure-kusto-data==5.0.5

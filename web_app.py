@@ -1827,10 +1827,50 @@ def _refresh_robot_state():
         pass
 
 
+def _edge_health():
+    """Edge (Thor) compute health for 1.1 vitals events."""
+    import psutil
+    temps = []
+    try:
+        import glob
+        for p in glob.glob('/sys/class/thermal/thermal_zone*/temp'):
+            with open(p) as f:
+                temps.append(int(f.read().strip()) / 1000.0)
+    except Exception:
+        pass
+    vm = psutil.virtual_memory()
+    return {'cpu_percent': psutil.cpu_percent(interval=None),
+            'mem_used_gb': round((vm.total - vm.available) / 1e9, 1),
+            'mem_available_gb': round(vm.available / 1e9, 1),
+            'temp_max_c': round(max(temps), 1) if temps else None,
+            'detection_fps': web_app._detection_fps,
+            'video_frame_age_s': camera_manager.frame_age()}
+
+
+def _build_vitals_event():
+    """Fetch the robot link's /vitals superset and emit a `vitals` event."""
+    telemetry = get_telemetry()
+    if not telemetry or not telemetry.enabled:
+        return
+    try:
+        r = robot_host.public().get(f'{robot_host.service_url()}/vitals', timeout=2)
+        vitals = r.json() if r.status_code == 200 else {'connected': False}
+    except Exception:
+        vitals = {'connected': False}
+    web_app._cached_vitals = vitals
+    telemetry.emit_vitals(vitals, _edge_health())
+
+
 def _build_heartbeat_event():
     """Collect system state for periodic heartbeat telemetry."""
     import psutil
     _refresh_robot_state()
+    v = getattr(web_app, '_cached_vitals', None) or {}
+    web_app._cached_robot_state.update({
+        'posture': v.get('posture'),
+        'body_height': (v.get('sport') or {}).get('body_height'),
+        'motor_temp_max': (v.get('motor_summary') or {}).get('temp_max'),
+    })
     from config import get_config
     cfg = get_config()
     telemetry = get_telemetry()
@@ -1872,6 +1912,7 @@ def _init_telemetry():
     tm = init_telemetry(cfg.config)
     tm.start()
     tm.start_heartbeat(_build_heartbeat_event)
+    tm.start_vitals(_build_vitals_event, float(telemetry_cfg.get('vitals_interval_seconds', 5)))
     atexit.register(tm.stop)
     logger.info("[Telemetry] Initialized and running")
 

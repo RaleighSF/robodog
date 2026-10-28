@@ -28,7 +28,7 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = "1.0.0"
+SCHEMA_VERSION = "1.1.0"   # 1.1: vitals events, robot posture/joints, edge health (additive)
 
 
 # ---------------------------------------------------------------------------
@@ -57,6 +57,9 @@ class RobotState:
     battery: BatteryState = field(default_factory=BatteryState)
     motion_mode: str = "normal"
     last_command: Optional[RobotCommand] = None
+    posture: Optional[str] = None            # 1.1: lying | low | standing | unknown
+    body_height: Optional[float] = None      # 1.1: metres
+    motor_temp_max: Optional[float] = None   # 1.1: hottest joint, deg C
 
 
 @dataclass
@@ -128,11 +131,16 @@ class TelemetryEvent:
     robot: RobotState = field(default_factory=RobotState)
     vision: Optional[VisionState] = None
     system_health: SystemHealth = field(default_factory=SystemHealth)
+    robot_vitals: Optional[Dict[str, Any]] = None   # 1.1: full /vitals superset (joints, IMU, BMS, feet...)
+    edge: Optional[Dict[str, Any]] = None           # 1.1: edge compute health (CPU, memory, temperatures)
 
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
         if d.get("vision") is None:
             del d["vision"]
+        for k in ("robot_vitals", "edge"):
+            if d.get(k) is None:
+                del d[k]
         if d.get("robot", {}).get("last_command") is None:
             d["robot"]["last_command"] = None
         return d
@@ -611,6 +619,39 @@ class TelemetryManager:
             )
         self._enqueue(event)
 
+    def emit_vitals(self, vitals: Dict, edge: Optional[Dict] = None):
+        """Emit a 1.1 `vitals` event: the robot link's full /vitals snapshot
+        plus edge health. Sent every vitals_interval_seconds for live dashboards."""
+        if not self.enabled:
+            return
+        event = self._base_event("vitals")
+        power = vitals.get("power") or {}
+        bms = power.get("bms") or {}
+        summary = vitals.get("motor_summary") or {}
+        event.robot = self._build_robot_state({
+            "battery": {"soc": bms.get("soc"), "voltage": power.get("power_v"),
+                        "current": bms.get("current"), "connected": vitals.get("connected", False)},
+            "posture": vitals.get("posture"),
+            "body_height": (vitals.get("sport") or {}).get("body_height"),
+            "motor_temp_max": summary.get("temp_max"),
+        })
+        event.robot_vitals = vitals
+        event.edge = edge
+        self._enqueue(event)
+
+    def start_vitals(self, collector_fn, interval_s: float):
+        """Periodic vitals collection (0 disables)."""
+        if not self.enabled or not interval_s or interval_s <= 0:
+            return
+        def loop():
+            while not self._stop_event.wait(timeout=interval_s):
+                try:
+                    collector_fn()
+                except Exception as e:
+                    logger.warning(f"[Telemetry] vitals collection failed: {e}")
+        threading.Thread(target=loop, name="TelemetryVitals", daemon=True).start()
+        logger.info(f"[Telemetry] Vitals started — interval={interval_s}s")
+
     # -- Internal helpers ----------------------------------------------------
 
     def _base_event(self, event_type: str) -> TelemetryEvent:
@@ -626,6 +667,9 @@ class TelemetryManager:
     def _build_robot_state(self, raw: Dict) -> RobotState:
         battery = raw.get("battery", raw)
         return RobotState(
+            posture=raw.get("posture"),
+            body_height=raw.get("body_height"),
+            motor_temp_max=raw.get("motor_temp_max"),
             battery=BatteryState(
                 soc=battery.get("soc"),
                 voltage=battery.get("voltage"),

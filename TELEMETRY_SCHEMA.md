@@ -120,6 +120,38 @@ Every event shares this top-level envelope:
 | `go2_service_reachable` | bool | `true` | Orin backpack HTTP accessible |
 | `rtsp_server_running` | bool\|null | `true` | RTSP camera service on Orin |
 
+## Schema 1.1 additions (additive; 1.0 readers keep working)
+
+**New fields on every event's `robot`:** `posture` (`lying | low | standing | unknown`),
+`body_height` (m), `motor_temp_max` (°C, hottest joint). They are null when unknown.
+
+**New event type `vitals`**, sent every `telemetry.vitals_interval_seconds` (default 5 s).
+It carries two extra objects:
+
+- `robot_vitals`: the robot link's `/vitals` snapshot. It is everything the
+  Go2 publishes over DDS:
+  - `connected`, `posture`, `has_video`;
+  - `actuator`: `moving`, `stop_confirmed`, `transition_busy`;
+  - `sport`: `mode`, `gait_type`, `progress`, `error_code`, `body_height`,
+    `foot_raise_height`, `position[3]`, `velocity[3]`, `yaw_speed`,
+    `range_obstacle[4]`, `foot_force[4]`, `foot_position_body[12]`,
+    `foot_speed_body[12]`;
+  - `imu`: `rpy[3]`, `quaternion[4]`, `gyroscope[3]`, `accelerometer[3]`,
+    `temperature`;
+  - `power`: `power_v`, `power_a`, and `bms` with `soc`, `current`, `cycle`,
+    `status`, `bq_ntc[]`, `mcu_ntc[]`, `cell_vol[]`, `version_*`;
+  - `board_temps`: `ntc1`, `ntc2`;
+  - `feet`: `force[4]`, `force_est[4]`;
+  - `motors[12]`, one per joint: `joint`, `mode`, `q`, `dq`, `ddq`, `tau_est`,
+    `temperature`, `lost`. Joints are ordered FR, FL, RR, RL legs, each
+    hip / thigh / calf (Unitree order; to be confirmed on the dog);
+  - `motor_summary`: `temp_max`, `temp_avg`, `hottest_joint`, `lost_total`.
+- `edge`: Thor health, with `cpu_percent`, `mem_used_gb`, `mem_available_gb`,
+  `temp_max_c`, `detection_fps` and `video_frame_age_s`.
+
+**Sinks** are chosen with `telemetry.sinks`, for example `[local, s3, azure_eventhub]`.
+Every sink receives the same JSON, so Azure (Ignite) and AWS (re:Invent) share one schema.
+
 ## Snowflake Integration
 
 ### External Stage
