@@ -69,14 +69,15 @@ export function useMotion(api: string, enabled: boolean): { feed: MotionFeed; ma
         const sock = n.provider === "aws-appsync-events" ? appSyncSocket(n) : new WebSocket(n.url, n.protocol);
         ws = sock;
         sock.onmessage = (ev) => {
-          const data = n.provider === "aws-appsync-events" ? appSyncData(sock, n, ev) : webPubSubData(ev);
-          if (!data) return;
-          feed.push(data.frames ?? []);
-          // Keep each maneuver's real time (robot clock); ignore any that are already old.
-          const mans = data.maneuvers ?? [];
-          const last = mans[mans.length - 1];
-          const at = last ? feed.toLocalMs(last.t) : null;
-          if (last && at != null && Date.now() - at < MANEUVER_SHOW_MS) setManeuver({ ...last, t: at });
+          const batches = n.provider === "aws-appsync-events" ? appSyncData(sock, n, ev) : webPubSubData(ev);
+          for (const data of batches) {
+            feed.push(data.frames ?? []);
+            // Keep each maneuver's real time (robot clock); ignore any that are already old.
+            const mans = data.maneuvers ?? [];
+            const last = mans[mans.length - 1];
+            const at = last ? feed.toLocalMs(last.t) : null;
+            if (last && at != null && Date.now() - at < MANEUVER_SHOW_MS) setManeuver({ ...last, t: at });
+          }
         };
         sock.onclose = () => { clearTimeout(renew); if (!stop) retry = setTimeout(connect, 3000); };
         renew = setTimeout(() => sock.close(), RENEW_MS);   // renew this socket only
@@ -100,32 +101,73 @@ type Negotiated =
   | { provider: "aws-appsync-events"; httpDomain: string; realtimeDomain: string; apiKey: string; channel: string };
 type Batch = { frames?: MotionFrame[]; maneuvers?: Maneuver[] };
 
-function webPubSubData(ev: MessageEvent): Batch | null {
+const isBatch = (b: unknown): b is Batch => !!b && typeof b === "object" && (Array.isArray((b as Batch).frames) || Array.isArray((b as Batch).maneuvers));
+
+function webPubSubData(ev: MessageEvent): Batch[] {
   try {
-    const m = JSON.parse(String(ev.data)) as { type?: string; data?: Batch };
-    return m.type === "message" && m.data ? m.data : null;
-  } catch { return null; }
+    const m = JSON.parse(String(ev.data)) as { type?: string; data?: unknown };
+    return m.type === "message" && isBatch(m.data) ? [m.data] : [];
+  } catch { return []; }
 }
 
 const b64url = (s: string) => btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 
+// AppSync Events WebSocket protocol: connection_init -> connection_ack (with a
+// keep-alive timeout) -> subscribe -> subscribe_success -> data / ka. Any error,
+// a failed subscribe, or a missed keep-alive closes the socket, and the hook's
+// onclose renegotiates.
+const ACK_DEADLINE_MS = 10_000;
+const watchdogs = new WeakMap<WebSocket, ReturnType<typeof setTimeout>>();
+
+function arm(sock: WebSocket, ms: number) {
+  clearTimeout(watchdogs.get(sock));
+  watchdogs.set(sock, setTimeout(() => sock.close(), ms));
+}
+
 function appSyncSocket(n: Extract<Negotiated, { provider: "aws-appsync-events" }>): WebSocket {
   const auth = { host: n.httpDomain, "x-api-key": n.apiKey };   // subscribe-only key; publishing needs IAM
   const sock = new WebSocket(`wss://${n.realtimeDomain}/event/realtime`, ["aws-appsync-event-ws", `header-${b64url(JSON.stringify(auth))}`]);
-  sock.onopen = () => sock.send(JSON.stringify({ type: "connection_init" }));
+  sock.onopen = () => { sock.send(JSON.stringify({ type: "connection_init" })); arm(sock, ACK_DEADLINE_MS); };
+  sock.addEventListener("close", () => clearTimeout(watchdogs.get(sock)));
   return sock;
 }
 
-function appSyncData(sock: WebSocket, n: Extract<Negotiated, { provider: "aws-appsync-events" }>, ev: MessageEvent): Batch | null {
-  let m: { type?: string; event?: unknown };
-  try { m = JSON.parse(String(ev.data)); } catch { return null; }
-  if (m.type === "connection_ack") {
-    sock.send(JSON.stringify({ type: "subscribe", id: crypto.randomUUID(), channel: n.channel,
-      authorization: { host: n.httpDomain, "x-api-key": n.apiKey } }));
-    return null;
+const keepAliveMs = new WeakMap<WebSocket, number>();
+
+function appSyncData(sock: WebSocket, n: Extract<Negotiated, { provider: "aws-appsync-events" }>, ev: MessageEvent): Batch[] {
+  let m: { type?: string; event?: unknown; connectionTimeoutMs?: number };
+  try { m = JSON.parse(String(ev.data)); } catch { return []; }
+  const ka = keepAliveMs.get(sock);
+  if (ka) arm(sock, ka);                                         // any traffic counts as alive
+  switch (m.type) {
+    case "connection_ack":
+      keepAliveMs.set(sock, m.connectionTimeoutMs ?? 300_000);
+      arm(sock, ACK_DEADLINE_MS);                                // now waiting for subscribe_success
+      sock.send(JSON.stringify({ type: "subscribe", id: crypto.randomUUID(), channel: n.channel,
+        authorization: { host: n.httpDomain, "x-api-key": n.apiKey } }));
+      return [];
+    case "subscribe_success":
+      arm(sock, keepAliveMs.get(sock) ?? 300_000);
+      return [];
+    case "subscribe_error":
+    case "connection_error":
+    case "error":
+      sock.close();
+      return [];
+    case "data": {
+      const raw = Array.isArray(m.event) ? m.event : [m.event];   // one event or an array of events
+      const out: Batch[] = [];
+      for (const e of raw) {
+        try {
+          const b = typeof e === "string" ? JSON.parse(e) : e;
+          if (isBatch(b)) out.push(b);
+        } catch { /* skip a malformed event, keep the rest */ }
+      }
+      return out;
+    }
+    default:
+      return [];                                                 // ka and anything new
   }
-  if (m.type !== "data" || m.event == null) return null;
-  try { return (typeof m.event === "string" ? JSON.parse(m.event) : m.event) as Batch; } catch { return null; }
 }
 
 export const MANEUVER_LABEL: Record<string, string> = { hello: "HELLO", sit: "SIT", stand_up: "STAND UP", lie_down: "LIE DOWN" };

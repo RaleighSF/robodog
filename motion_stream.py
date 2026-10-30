@@ -271,7 +271,9 @@ def start_from_config(cfg: dict, device_id: str, on_maneuver=None, cloud_selecto
     if not cfg or not cfg.get("enabled"):
         return None
     channels: List[_Channel] = []
-    az = cfg.get("azure") or ({"pubsub_host": cfg["pubsub_host"]} if cfg.get("pubsub_host") else None)
+    # Legacy flat config (pubsub_host/hub/group/token_file at the top level) keeps every field.
+    az = cfg.get("azure") or ({k: cfg[k] for k in ("pubsub_host", "hub", "group", "token_file") if k in cfg}
+                              if cfg.get("pubsub_host") else None)
     if az and az.get("pubsub_host"):
         channels.append(WebPubSubChannel(device_id, az.get("token_file", cfg.get("token_file", "/state/motion.token")),
                                          az["pubsub_host"], az.get("hub", "motion"), az.get("group", "motion")))

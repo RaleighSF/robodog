@@ -1925,20 +1925,16 @@ def _init_telemetry():
         logger.warning(f"[Motion] live twin not started: {e}")
 
 
-# The conference demo profile (UI settings) picks the cloud path: Azure for
-# Ignite, AWS for re:Invent, both on the default profile (ADR 0011).
-_DEFAULT_CLOUD_ROUTES = {'azure': ['azure'], 'aws': ['aws'], 'default': ['azure', 'aws']}
-
-
-def _cloud_selector(routes=None):
+# The conference demo profile (UI settings) picks the cloud path (ADR 0011);
+# the mapping lives in ui_profiles so the header link and the data path agree.
+def _cloud_selector(_routes=None):
     import ui_profiles
-    routes = routes or _DEFAULT_CLOUD_ROUTES
     cache = {'t': 0.0, 'clouds': ['azure', 'aws']}
 
     def select():
         now = time.monotonic()
         if now - cache['t'] > 1.0:                 # the twin asks 20 times a second; read the profile once a second
-            cache['clouds'] = routes.get(ui_profiles.get_active_profile_id(), ['azure', 'aws'])
+            cache['clouds'] = ui_profiles.active_clouds()
             cache['t'] = now
         return cache['clouds']
     return select

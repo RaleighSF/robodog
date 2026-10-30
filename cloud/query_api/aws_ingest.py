@@ -3,12 +3,12 @@
 The AWS counterpart of ingest_adx.py + the ADX update policies. Each Kinesis
 record is one schema-1.2 telemetry event (the same JSON the Thor sends to Event
 Hubs); rows are derived with backends/rows.py, which mirrors the KQL Expand*
-functions. Delivery is at-least-once: rows are keyed by event time, so a replay
-overwrites instead of duplicating, and joint state ignores samples it has seen."""
+functions. Delivery is at-least-once and batches can arrive late: time-series rows are
+keyed by event time (a replay overwrites), Latest#* items are replaced only by
+newer rows, and joint state folds late samples in under a version check."""
 import base64
 import json
 import logging
-from datetime import datetime, timezone
 
 from backends import aws_store as st
 from backends import rows
@@ -40,7 +40,7 @@ def handler(event, _context):
         devices[dev] = max(devices.get(dev, k), k)
         if et == "vitals":
             v = rows.vitals_row(ev)
-            w.put("Latest#" + dev, "vitals", dict(v, _kind="vitals"), ttl=False)
+            w.put_if_newer("Latest#" + dev, "vitals", dict(v, _kind="vitals"))
             w.put("Vitals#" + dev, k, {c: v.get(c) for c in st.COMPACT_VITALS})
             ms = rows.motor_rows(ev)
             w.put("Motors#" + dev, k, {"Timestamp": ev["timestamp"],
@@ -48,7 +48,7 @@ def handler(event, _context):
             motor_updates += [(dev, m) for m in ms]
         elif et == "heartbeat":
             h = rows.heartbeat_row(ev)
-            w.put("Latest#" + dev, "heartbeat", dict(h, _kind="heartbeat"), ttl=False)
+            w.put_if_newer("Latest#" + dev, "heartbeat", dict(h, _kind="heartbeat"))
         elif et == "command":
             w.put("Commands#" + dev, k, rows.command_row(ev))
         elif et == "maneuver":
@@ -61,16 +61,20 @@ def handler(event, _context):
             a = rows.alert_row(ev)
             w.put("Alerts#" + dev, f"{k}#{a['EventId']}", a)
 
-    # Joint state: read once per batch, fold every sample in order, write once.
-    if motor_updates:
-        keys = [("JointState#" + dev, m["Joint"]) for dev, m in motor_updates]
-        states = w.get_many(keys)
-        for dev, m in motor_updates:
-            key = ("JointState#" + dev, m["Joint"])
-            new = st.update_joint_state(states.get(key), m)
-            if new is not None:
-                states[key] = new
-                w.put(key[0], key[1], new, ttl=False)
+    # Joint state: group this batch's samples per joint, then fold them into the
+    # stored state with a consistent read and a versioned write (retry on conflict).
+    by_joint: dict = {}
+    for dev, m in motor_updates:
+        by_joint.setdefault(("JointState#" + dev, m["Joint"]), []).append(m)
+    for (pk, sk), ms in by_joint.items():
+        for _attempt in range(5):
+            cur = w.get_consistent(pk, sk)
+            prev = json.loads(cur["d"]) if cur else None
+            new = st.fold_joint_state(prev, ms)
+            if new is None or w.put_versioned(pk, sk, new, int(cur["v"]) if cur and "v" in cur else (0 if cur else None)):
+                break
+        else:
+            log.warning("joint state %s/%s: gave up after repeated write conflicts", pk, sk)
     for dev, k in devices.items():
         w.put("Devices", dev, {"DeviceId": dev, "Last": k}, ttl=False)
     w.flush()

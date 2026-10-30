@@ -15,17 +15,17 @@ string in `d`, and a TTL attribute `ttl` (epoch seconds) on time-series rows:
   Commands#<device>       <ts>            command row                24 h
   Maneuvers#<device>      <ts>#<name>     maneuver row               24 h
 
-JointState carries what ADX derives from 2 h of Motors history: when the joint's
-current run at or above 55 C / 70 C began, and a short temperature trail (one
-point per ~20 s for 11 min) for the 10-minute trend."""
+JointState carries what ADX derives from 2 h of Motors history: the joint's
+samples for the last 11 min (late samples fold in, so runs and trends match
+KQL) and when the current run at or above 55 C / 70 C began. Latest#* items
+carry `tsms` and are written only if newer (Writer.put_if_newer)."""
 import json
 import os
 from datetime import datetime, timedelta, timezone
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, List, Optional
 
 ROW_TTL_S = 24 * 3600
-TRAIL_STEP_S = 20
-TRAIL_KEEP_S = 11 * 60
+SAMPLE_KEEP_S = 11 * 60          # per-joint sample history: enough for the 10-minute trend
 CAUTION_C, LIMIT_C = 55.0, 70.0          # mirrored from Overwatch_Findings (provisional thresholds)
 COMPACT_VITALS = ("Timestamp", "DeviceId", "BatterySoc", "EdgeDetectionFps", "MotorTempMax", "Connected",
                   "BatteryCurrentA", "Posture", "BodyHeight")
@@ -60,58 +60,118 @@ def _dumps(row: Dict) -> str:
 # Write side (ingest Lambda)
 # ---------------------------------------------------------------------------
 class Writer:
+    """Time-series rows go through batch_writer (keyed by event time, so a replay
+    overwrites instead of duplicating). "Newest wins" items (Latest#*) use a
+    conditional put so an older or replayed batch can never replace newer state.
+    Joint state is read consistently and written with a version check."""
+
     def __init__(self, table=None):
         self.table = table or _table()
         self._puts: Dict[tuple, Dict] = {}
+        self._newest: Dict[tuple, Dict] = {}
 
     def put(self, pk: str, sk: str, row: Dict, ttl: bool = True):
         item = {"pk": pk, "sk": sk, "d": _dumps(row)}
         if ttl:
             ts = parse_ts(row.get("Timestamp")) or datetime.now(timezone.utc)
             item["ttl"] = int(ts.timestamp()) + ROW_TTL_S
-        self._puts[(pk, sk)] = item          # last write per key wins within a batch (dedupes replays)
+        self._puts[(pk, sk)] = item
 
-    def get_many(self, keys: Iterable[tuple]) -> Dict[tuple, Dict]:
-        import boto3
-        keys = list(dict.fromkeys(keys))
-        out: Dict[tuple, Dict] = {}
-        client = boto3.client("dynamodb")
-        for i in range(0, len(keys), 100):
-            req = {self.table.name: {"Keys": [{"pk": {"S": pk}, "sk": {"S": sk}} for pk, sk in keys[i:i + 100]]}}
-            while req:
-                resp = client.batch_get_item(RequestItems=req)
-                for it in resp.get("Responses", {}).get(self.table.name, []):
-                    out[(it["pk"]["S"], it["sk"]["S"])] = json.loads(it["d"]["S"])
-                req = resp.get("UnprocessedKeys") or None
-        return out
+    def put_if_newer(self, pk: str, sk: str, row: Dict):
+        """Keep only the newest row per key across batches and invocations."""
+        ts = parse_ts(row.get("Timestamp"))
+        if ts is None:
+            return
+        ms = int(ts.timestamp() * 1000)
+        cur = self._newest.get((pk, sk))
+        if cur is None or ms > cur["tsms"]:
+            self._newest[(pk, sk)] = {"pk": pk, "sk": sk, "d": _dumps(row), "tsms": ms}
+
+    def get_consistent(self, pk: str, sk: str) -> Optional[Dict]:
+        it = self.table.get_item(Key={"pk": pk, "sk": sk}, ConsistentRead=True).get("Item")
+        return it
+
+    def put_versioned(self, pk: str, sk: str, row: Dict, prev_version: Optional[int]) -> bool:
+        """Write row as version prev+1 only if the stored version is still prev.
+        False on a conflict (the caller re-reads and refolds)."""
+        from botocore.exceptions import ClientError
+        item = {"pk": pk, "sk": sk, "d": _dumps(row), "v": (prev_version or 0) + 1}
+        try:
+            if prev_version is None:            # item did not exist
+                self.table.put_item(Item=item, ConditionExpression="attribute_not_exists(pk)")
+            elif prev_version == 0:             # item written before versioning
+                self.table.put_item(Item=item, ConditionExpression="attribute_exists(pk) AND attribute_not_exists(v)")
+            else:
+                self.table.put_item(Item=item, ConditionExpression="v = :v", ExpressionAttributeValues={":v": prev_version})
+            return True
+        except ClientError as e:
+            if e.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException":
+                return False
+            raise
 
     def flush(self):
+        from botocore.exceptions import ClientError
         with self.table.batch_writer(overwrite_by_pkeys=["pk", "sk"]) as bw:
             for item in self._puts.values():
                 bw.put_item(Item=item)
         self._puts.clear()
+        for item in self._newest.values():
+            try:
+                self.table.put_item(Item=item, ConditionExpression="attribute_not_exists(tsms) OR tsms < :t",
+                                    ExpressionAttributeValues={":t": item["tsms"]})
+            except ClientError as e:
+                if e.response.get("Error", {}).get("Code") != "ConditionalCheckFailedException":
+                    raise                        # an older row lost to newer stored state: expected
+        self._newest.clear()
 
 
-def update_joint_state(prev: Optional[Dict], m: Dict) -> Optional[Dict]:
-    """New JointState from the previous one and a motor row; None to skip a stale
-    or duplicate sample (at-least-once delivery can replay)."""
-    ts = parse_ts(m.get("Timestamp"))
-    if ts is None:
+def _since(samples: List[list], threshold: float, carried: Optional[str]) -> Optional[str]:
+    """Start of the current run at or above threshold, from the sample window.
+    If every sample in the window is at or above it, the run began earlier: keep
+    the carried start (KQL counts it from its 2 h history)."""
+    start = None
+    for e, t in samples:
+        if t is not None and t >= threshold:
+            start = start if start is not None else e
+        else:
+            start = None
+    if start is None:
         return None
+    if start == samples[0][0] and carried:
+        c = parse_ts(carried)
+        if c is not None and c.timestamp() <= start:
+            return carried
+    return iso(datetime.fromtimestamp(start, tz=timezone.utc))
+
+
+def fold_joint_state(prev: Optional[Dict], motors: List[Dict]) -> Optional[Dict]:
+    """New JointState from the previous one and this batch's motor rows for one
+    joint, in any order. Late samples within the window are folded into the
+    sample history, so runs and trends are recomputed as KQL would; the newest
+    sample supplies the latest motor reading. None if nothing changed."""
     prev = prev or {}
-    pts = parse_ts(prev.get("Timestamp"))
-    if pts is not None and ts <= pts:
+    samples = {round(e, 3): t for e, t in prev.get("Samples") or []}
+    latest = {k: prev.get(k) for k in prev if k not in ("Samples", "Since55", "Since70")} if prev else {}
+    latest_ts = parse_ts(latest.get("Timestamp"))
+    changed = False
+    for m in motors:
+        ts = parse_ts(m.get("Timestamp"))
+        if ts is None:
+            continue
+        e = round(ts.timestamp(), 3)
+        if e not in samples:
+            samples[e] = m.get("Temperature")
+            changed = True
+        if latest_ts is None or ts > latest_ts:
+            latest, latest_ts, changed = dict(m), ts, True
+    if not changed or latest_ts is None:
         return None
-    t = m.get("Temperature")
-    state = dict(m)
-    hot = t is not None and t >= CAUTION_C
-    over = t is not None and t >= LIMIT_C
-    state["Since55"] = (prev.get("Since55") or m["Timestamp"]) if hot else None
-    state["Since70"] = (prev.get("Since70") or m["Timestamp"]) if over else None
-    trail = [p for p in prev.get("Trail") or [] if ts.timestamp() - p[0] <= TRAIL_KEEP_S]
-    if t is not None and (not trail or ts.timestamp() - trail[-1][0] >= TRAIL_STEP_S):
-        trail.append([round(ts.timestamp(), 1), t])
-    state["Trail"] = trail
+    newest = latest_ts.timestamp()
+    window = sorted([e, t] for e, t in samples.items() if newest - e <= SAMPLE_KEEP_S)
+    state = dict(latest, Samples=window)
+    t = latest.get("Temperature")
+    state["Since55"] = _since(window, CAUTION_C, prev.get("Since55")) if t is not None and t >= CAUTION_C else None
+    state["Since70"] = _since(window, LIMIT_C, prev.get("Since70")) if t is not None and t >= LIMIT_C else None
     return state
 
 

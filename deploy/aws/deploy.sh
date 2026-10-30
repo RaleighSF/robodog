@@ -4,7 +4,10 @@
 #   AWS_PROFILE=dev deploy/aws/deploy.sh
 set -euo pipefail
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
+# One region for every call and for the Thor's edge config (the profile's own
+# region could differ): resolve it once and export it to the CLI.
 REGION="${AWS_REGION:-us-east-1}"
+export AWS_REGION="$REGION" AWS_DEFAULT_REGION="$REGION"
 STACK="${STACK:-watchdog-reinvent}"
 SECRETS="$REPO/deploy/aws/secrets"; mkdir -p "$SECRETS"; chmod 700 "$SECRETS"
 BUILD="$REPO/build/aws-lambda"

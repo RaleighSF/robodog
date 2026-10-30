@@ -99,6 +99,38 @@ def _ui_config():
         return {}
 
 
+# The skin picks the cloud path (ADR 0011): telemetry, the live twin and the
+# "Live on ..." dashboard link all follow it. Overridable with config.yaml
+# telemetry.cloud_routing; dashboard URLs come from ui.cloud_dashboards.
+DEFAULT_CLOUD_ROUTES = {'azure': ['azure'], 'aws': ['aws'], 'default': ['azure', 'aws']}
+CLOUD_LABELS = {'azure': 'Azure', 'aws': 'AWS'}
+
+
+def _config_section(name):
+    try:
+        from config import get_config
+        return get_config().config.get(name, {}) or {}
+    except Exception:
+        return {}
+
+
+def clouds_for(pid):
+    routes = _config_section('telemetry').get('cloud_routing') or DEFAULT_CLOUD_ROUTES
+    clouds = routes.get(pid, DEFAULT_CLOUD_ROUTES.get(pid, ['azure', 'aws']))
+    return [c for c in clouds if c in CLOUD_LABELS]
+
+
+def active_clouds():
+    return clouds_for(get_active_profile_id())
+
+
+def cloud_links(pid):
+    """Where to watch this skin's cloud path: one link per cloud it sends to."""
+    urls = _ui_config().get('cloud_dashboards') or {}
+    return [{'cloud': c, 'label': 'Live on ' + CLOUD_LABELS[c], 'url': urls[c]}
+            for c in clouds_for(pid) if isinstance(urls.get(c), str) and urls[c].startswith('https://')]
+
+
 def default_profile_id():
     pid = _ui_config().get('profile', 'default')
     return pid if isinstance(pid, str) and pid in PROFILES else 'default'
@@ -159,6 +191,7 @@ def nvidia_badge():
 
 def _with_assets(profile):
     p = dict(profile)
+    p['cloud_links'] = cloud_links(p['id'])
     if p.get('partner'):
         partner = dict(p['partner'])
         partner['has_logo'] = asset_exists(partner.get('logo'))

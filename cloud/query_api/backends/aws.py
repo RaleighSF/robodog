@@ -8,16 +8,12 @@ from typing import Dict, List, Optional
 
 from . import aws_store as st
 
-_TIMESPAN = re.compile(r"^(\d{1,4})([smhd])$")
-_UNIT = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+_PPE = re.compile(r"(?<![A-Za-z0-9])ppe(?![A-Za-z0-9])", re.IGNORECASE)   # KQL `has "ppe"` (term, case-insensitive)
 STATE_CODES = (100, 1001, 1002)                  # posture states, not faults (dashboard STATE_CODES)
 
 
-def _span(v: str) -> timedelta:
-    m = _TIMESPAN.match(str(v))
-    if not m:
-        raise ValueError("timespans must look like 15m / 1h / 7d")
-    return timedelta(seconds=int(m.group(1)) * _UNIT[m.group(2)])
+def _when(r: Dict) -> datetime:
+    return st.parse_ts(r.get("Timestamp")) or datetime.min.replace(tzinfo=timezone.utc)
 
 
 def _avg(xs) -> Optional[float]:
@@ -55,7 +51,8 @@ class AWSBackend:
         fn = getattr(self, function_name, None)
         if fn is None:
             raise ValueError(f"unknown operation {function_name}")
-        spans = {k: _span(v) for k, v in params.items()}
+        from . import check_params
+        spans = {k: timedelta(seconds=v) for k, v in check_params(params).items()}
         return fn(**spans)
 
     # -- vitals --------------------------------------------------------------
@@ -120,7 +117,7 @@ class AWSBackend:
         rows = []
         for dev in self.r.devices():
             rows += self.r.window("Vitals", dev, window)
-        rows.sort(key=lambda r: st.parse_ts(r.get("Timestamp")) or datetime.min.replace(tzinfo=timezone.utc))
+        rows.sort(key=_when)
         out, prev = [], ""
         for r in rows:                              # KQL prev(Posture) over the whole ordered set
             p = r.get("Posture") or ""
@@ -158,7 +155,10 @@ class AWSBackend:
         for dev in self.r.devices():
             for d in self.r.window("Detections", dev, window):
                 by.setdefault(d.get("ClassName") or "", []).append(d)
-        out = [{"ClassName": c, "Count": len(ds), "AvgConfidence": round(_avg(d.get("Confidence") for d in ds) or 0, 3),
+        def conf(ds):
+            a = _avg(d.get("Confidence") for d in ds)
+            return round(a, 3) if a is not None else None          # missing stays missing, never 0
+        out = [{"ClassName": c, "Count": len(ds), "AvgConfidence": conf(ds),
                 "LastSeen": st.iso(max(st.parse_ts(d["Timestamp"]) for d in ds))} for c, ds in by.items()]
         return sorted(out, key=lambda r: -r["Count"])
 
@@ -166,7 +166,7 @@ class AWSBackend:
         rows = []
         for dev in self.r.devices():
             rows += self.r.window(kind, dev, window, newest_first=True, limit=50)
-        rows.sort(key=lambda r: r.get("Timestamp") or "", reverse=True)
+        rows.sort(key=_when, reverse=True)
         return [_iso_ts({c: r.get(c) for c in cols}) for r in rows[:50]]
 
     def Alerts_Recent(self, window: timedelta) -> List[Dict]:
@@ -216,8 +216,8 @@ class AWSBackend:
             hz, err = v.get("LidarHz"), v.get("LidarErrorState")
             if fresh and ((err is not None and err > 0) or (hz is not None and hz < 10)):
                 out.append({"DeviceId": dev, "Severity": "medium", "Finding": f"Lidar degraded · {hz} Hz"})
-        for dev in by_dev:
-            ppe = [a for a in self.r.window("Alerts", dev, timedelta(minutes=15)) if "ppe" in (a.get("AlertType") or "")]
+        for dev in self.r.devices():                 # every device with alerts, with or without vitals
+            ppe = [a for a in self.r.window("Alerts", dev, timedelta(minutes=15)) if _PPE.search(a.get("AlertType") or "")]
             if ppe:
                 out.append({"DeviceId": dev, "Severity": "medium", "Finding": f"{len(ppe)} PPE alerts · 15 min"})
         return out
@@ -226,10 +226,10 @@ class AWSBackend:
     def _hot_line(s: Dict, v: Dict, now: datetime) -> str:
         t = s["Temperature"]
         ts = st.parse_ts(s.get("Timestamp"))
-        trail = [p for p in s.get("Trail") or [] if now.timestamp() - p[0] <= 600]
+        ref = [p for p in s.get("Samples") or [] if now.timestamp() - p[0] <= 600 and p[1] is not None]
         trend = ""
-        if trail and ts:
-            t0_epoch, t0 = trail[0]
+        if ref and ts:
+            t0_epoch, t0 = ref[0]
             win = round((ts.timestamp() - t0_epoch) / 60)
             d = t - t0
             if win >= 1:

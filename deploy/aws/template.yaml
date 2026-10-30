@@ -63,7 +63,7 @@ Resources:
                          kinesis:DescribeStreamSummary, kinesis:ListShards, kinesis:ListStreams]
                 Resource: !GetAtt TelemetryStream.Arn
               - Effect: Allow
-                Action: [dynamodb:BatchWriteItem, dynamodb:PutItem, dynamodb:BatchGetItem, dynamodb:GetItem]
+                Action: [dynamodb:BatchWriteItem, dynamodb:PutItem, dynamodb:GetItem]
                 Resource: !GetAtt TelemetryTable.Arn
 
   IngestFunction:
@@ -149,6 +149,11 @@ Resources:
               - Effect: Allow
                 Action: [dynamodb:Query, dynamodb:GetItem]
                 Resource: !GetAtt TelemetryTable.Arn
+              - Effect: Allow                    # the shared agent brief item only (pk "Brief")
+                Action: [dynamodb:PutItem, dynamodb:UpdateItem]
+                Resource: !GetAtt TelemetryTable.Arn
+                Condition:
+                  ForAllValues:StringEquals: { "dynamodb:LeadingKeys": ["Brief"] }
               - Effect: Allow
                 Action: [bedrock:InvokeModel, bedrock:InvokeModelWithResponseStream]
                 Resource:

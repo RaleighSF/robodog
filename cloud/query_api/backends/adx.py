@@ -5,7 +5,6 @@ import math
 import os
 import re
 
-_TIMESPAN = re.compile(r"^\d{1,4}[smhd]$")          # 30s, 15m, 1h, 7d
 
 
 class ADXBackend:
@@ -23,11 +22,9 @@ class ADXBackend:
         self.client = KustoClient(kcsb)
 
     def run(self, function_name: str, params: dict) -> list:
-        args = []
-        for k, v in params.items():
-            if not _TIMESPAN.match(str(v)):
-                raise ValueError(f"{k} must look like 15m / 1h / 7d")
-            args.append(f"timespan({v})")
+        from . import check_params
+        check_params(params)                        # same bounds as every other cloud
+        args = [f"timespan({v})" for v in params.values()]
         query = f"{function_name}({', '.join(args)})"
         resp = self.client.execute(self.database, query)
         table = resp.primary_results[0]

@@ -39,3 +39,10 @@ scene_narrator:
   model_label: Cosmos Reason 2
   # ~1.5 s per frame on Thor (vs 9-15 s for qwen2.5-VL on the AGX).
   interval_seconds: 8
+
+# The skin (demo profile) also picks where the booth watches the cloud path:
+# the header shows "Live on Azure / AWS" links for the clouds that skin streams to.
+ui:
+  cloud_dashboards:
+    azure: https://happy-desert-09316a110.2.azurestaticapps.net
+    aws: https://main.d12my2y3eahk9w.amplifyapp.com

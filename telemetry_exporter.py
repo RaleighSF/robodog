@@ -375,9 +375,12 @@ class KinesisExporter:
             with open(self._file) as f:
                 c = json.load(f)
             import boto3
+            from botocore.config import Config
             self._stream = self._stream or c["stream"]
             self._client = boto3.client("kinesis", region_name=c["region"], aws_access_key_id=c["access_key_id"],
-                                        aws_secret_access_key=c["secret_access_key"])
+                                        aws_secret_access_key=c["secret_access_key"],
+                                        config=Config(connect_timeout=5, read_timeout=10,
+                                                      retries={"max_attempts": 2, "mode": "standard"}))
         return self._client
 
     def put_json(self, key: str, data: Dict) -> bool:
@@ -402,33 +405,61 @@ SINK_CLOUD = {"azure_eventhub": "azure", "aws_kinesis": "aws"}
 
 
 class MultiExporter:
-    """Sends to every sink; an event counts as delivered if at least one sink
-    took it (each sink logs its own failures). An optional `cloud_selector`
-    returns the clouds that should receive right now (the conference demo
-    profile picks the path); cloud sinks outside it are skipped, not failed."""
+    """Fans every event out to every sink, each through its own bounded queue and
+    worker thread, so a slow or failing cloud never delays another (ADR 0011).
+    An optional `cloud_selector` returns the clouds that should receive right now
+    (the conference demo profile picks the path); cloud sinks outside it are
+    skipped. A full queue drops its oldest event (counted), never blocks."""
+
+    QUEUE_MAX = 500
 
     def __init__(self, sinks: List[tuple]):
         self.sinks = sinks                         # [(name, exporter), ...]
-        self.stats = {name: {"ok": 0, "failed": 0, "skipped": 0} for name, _ in sinks}
+        self.stats = {name: {"ok": 0, "failed": 0, "skipped": 0, "dropped": 0} for name, _ in sinks}
         self.cloud_selector = None
+        self._queues = {}
+        for name, ex in sinks:
+            q: "queue.Queue" = queue.Queue(maxsize=self.QUEUE_MAX)
+            self._queues[name] = q
+            threading.Thread(target=self._worker, args=(name, ex, q), name=f"TelemetrySink-{name}", daemon=True).start()
+
+    def _worker(self, name, ex, q):
+        while True:
+            method, key, payload = q.get()
+            try:
+                ok = getattr(ex, method)(key, payload)
+            except Exception as e:                 # a sink must never kill its worker
+                logger.error(f"[Telemetry] sink {name} raised: {e}")
+                ok = False
+            self.stats[name]["ok" if ok else "failed"] += 1
+
+    def _clouds(self):
+        if self.cloud_selector is None:
+            return None
+        try:
+            return set(self.cloud_selector())
+        except Exception as e:
+            logger.warning(f"[Telemetry] cloud selector failed ({e}); sending to all sinks")
+            return None
 
     def _fan(self, method: str, key: str, payload) -> bool:
-        any_ok, any_tried = False, False
-        clouds = None
-        if self.cloud_selector is not None:
-            try:
-                clouds = set(self.cloud_selector())
-            except Exception as e:
-                logger.warning(f"[Telemetry] cloud selector failed ({e}); sending to all sinks")
-        for name, ex in self.sinks:
+        clouds = self._clouds()
+        for name, _ in self.sinks:
             if clouds is not None and SINK_CLOUD.get(name) and SINK_CLOUD[name] not in clouds:
                 self.stats[name]["skipped"] += 1
                 continue
-            any_tried = True
-            ok = getattr(ex, method)(key, payload)
-            self.stats[name]["ok" if ok else "failed"] += 1
-            any_ok = any_ok or ok
-        return any_ok or not any_tried
+            q = self._queues[name]
+            while True:
+                try:
+                    q.put_nowait((method, key, payload))
+                    break
+                except queue.Full:
+                    try:
+                        q.get_nowait()
+                        self.stats[name]["dropped"] += 1
+                    except queue.Empty:
+                        pass
+        return True                                # accepted; each sink reports its own outcome
 
     def put_json(self, key: str, data: Dict) -> bool:
         return self._fan("put_json", key, data)

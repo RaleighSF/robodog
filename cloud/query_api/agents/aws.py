@@ -65,10 +65,14 @@ class BedrockAgent:
         t0 = time.time()
         messages = [{"role": "user", "content": question}]
         for _ in range(MAX_TURNS):
-            if time.time() - t0 > timeout_s:
+            remaining = timeout_s - (time.time() - t0)
+            if remaining < 2:
                 break
-            msg = self.client.messages.create(model=MODEL, max_tokens=2000, system=self.system, tools=[TOOL],
-                                              output_config={"effort": "low"}, messages=messages)
+            # The deadline bounds each model call too (including SDK retries), so
+            # the caller always gets control back with time to answer.
+            msg = self.client.with_options(timeout=remaining, max_retries=0).messages.create(
+                model=MODEL, max_tokens=2000, system=self.system, tools=[TOOL],
+                output_config={"effort": "low"}, messages=messages)
             if msg.stop_reason == "refusal":
                 return {"text": "I can't answer that one. Ask me about the dog's health or telemetry.",
                         "seconds": round(time.time() - t0, 1)}

@@ -12,7 +12,7 @@ import logging
 import threading
 import time
 
-from api_core import BriefCache, clean_question, staff_ok
+from api_core import BRIEF_PROMPT, clean_question, staff_ok
 from backends import OPERATIONS, get_backend
 from realtime import motion_client_url
 
@@ -21,6 +21,7 @@ log.setLevel(logging.INFO)
 
 ROUTES = {"/api/" + op.replace("_", "/", 1): op for op in OPERATIONS}   # vitals_latest -> /api/vitals/latest
 CACHE_S = 2.0      # several screens polling every 2.5 s share one read of the store
+CACHE_MAX = 64     # bounded: expired entries are evicted, and at most this many are kept
 _backend, _agent = None, None
 _cache: dict = {}
 _cache_lock = threading.Lock()
@@ -41,7 +42,53 @@ def _get_agent():
     return _agent
 
 
-_brief = BriefCache(_get_agent)
+class SharedBrief:
+    """One agent brief per minute across every Lambda instance (ADR 0011): the
+    brief lives in the store (pk "Brief"); whoever wins a short conditional lease
+    refreshes it, everyone else serves the stored copy."""
+    TTL_S, LEASE_S, ASK_S = 60, 50, 40
+
+    def __init__(self):
+        from backends.aws_store import _table
+        self.table = _table()
+        self.key = {"pk": "Brief", "sk": "current"}
+
+    def get(self):
+        from botocore.exceptions import ClientError
+        now = time.time()
+        item = self.table.get_item(Key=self.key, ConsistentRead=True).get("Item") or {}
+        body = json.loads(item["d"]) if "d" in item else None
+        if body and now - body["at"] < self.TTL_S:
+            return dict(body, age_s=round(now - body["at"], 1)), None
+        try:
+            self.table.update_item(Key=self.key, UpdateExpression="SET lease_until = :until",
+                                   ConditionExpression="attribute_not_exists(lease_until) OR lease_until < :now",
+                                   ExpressionAttributeValues={":until": int(now + self.LEASE_S), ":now": int(now)})
+        except ClientError as e:
+            if e.response.get("Error", {}).get("Code") != "ConditionalCheckFailedException":
+                raise
+            # Another instance is refreshing: serve what we have.
+            return (dict(body, age_s=round(now - body["at"], 1)), None) if body else (None, "brief is being prepared")
+        try:
+            r = _get_agent().ask(BRIEF_PROMPT, timeout_s=self.ASK_S)
+            body = {"text": r["text"], "at": time.time(), "seconds": r["seconds"]}
+            self.table.put_item(Item=dict(self.key, d=json.dumps(body), lease_until=0))
+            return dict(body, age_s=0.0), None
+        except Exception:
+            log.exception("agent brief failed")
+            self.table.update_item(Key=self.key, UpdateExpression="SET lease_until = :z",
+                                   ExpressionAttributeValues={":z": 0})
+            return (dict(body, age_s=round(time.time() - body["at"], 1)), None) if body else (None, "agent unavailable")
+
+
+_brief = None
+
+
+def _get_brief():
+    global _brief
+    if _brief is None:
+        _brief = SharedBrief()
+    return _brief
 
 
 def _resp(status, body, cache="no-store"):
@@ -65,7 +112,12 @@ def _operation(op, query):
         log.exception("query %s failed", op)
         return _resp(502, {"error": "query failed"})
     with _cache_lock:
-        _cache[key] = (time.time(), body)
+        now = time.time()
+        for k in [k for k, (t, _) in _cache.items() if now - t >= CACHE_S]:
+            del _cache[k]                                   # evict expired entries
+        while len(_cache) >= CACHE_MAX:
+            del _cache[min(_cache, key=lambda k: _cache[k][0])]
+        _cache[key] = (now, body)
     return _resp(200, body)
 
 
@@ -78,7 +130,11 @@ def handler(event, _context):
     if method == "GET" and path in ROUTES:
         return _operation(ROUTES[path], query)
     if method == "GET" and path == "/api/agent/brief":
-        body, err = _brief.get()
+        try:
+            body, err = _get_brief().get()
+        except Exception:
+            log.exception("brief store failed")
+            body, err = None, "agent unavailable"
         return _resp(502, {"error": err}) if err else _resp(200, body)
     if method == "POST" and path == "/api/agent/ask":
         if not staff_ok(headers.get("x-staff-key", "")):

@@ -130,6 +130,20 @@
             line-height: 1;
         }
 
+        .cloud-links { display: flex; gap: 8px; }
+        .cloud-link {
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            color: var(--ink-400);
+            text-decoration: none;
+            border: 1px solid currentColor;
+            border-radius: 999px;
+            padding: 4px 10px;
+            white-space: nowrap;
+        }
+        .cloud-link:hover, .cloud-link:focus-visible { color: var(--ink-100); }
+
         .partner-logo-img {
             height: 44px;
             width: auto;
@@ -1725,11 +1739,12 @@
                 </div>
             </div>
             {% set partner = profile.partner or {} %}
-            <div class="partner-section" id="partnerSection"{% if not profile.partner %} hidden{% endif %}>
-                <span class="partner-label" id="partnerLabel">{{ partner.label or '' }}</span>
+            <div class="partner-section" id="partnerSection"{% if not profile.partner and not profile.cloud_links %} hidden{% endif %}>
+                <span class="partner-label" id="partnerLabel"{% if not profile.partner %} hidden{% endif %}>{{ partner.label or '' }}</span>
                 <img class="partner-logo-img{% if partner.tile %} is-tile{% endif %}" id="partnerLogo"
                      src="{{ partner.logo if partner.has_logo else '' }}" alt="{{ partner.alt or '' }}"{% if not partner.has_logo %} hidden{% endif %}>
                 <span class="partner-wordmark" id="partnerWordmark"{% if partner.has_logo or not partner.wordmark %} hidden{% endif %}>{{ partner.wordmark or '' }}</span>
+                <span class="cloud-links" id="cloudLinks">{% for l in profile.cloud_links %}<a class="cloud-link" href="{{ l.url }}" target="_blank" rel="noopener" title="This skin streams telemetry and the live twin to {{ l.label[8:] }}">{{ l.label }} &#8599;</a>{% endfor %}</span>
             </div>
         </div>
     </nav>
@@ -4281,9 +4296,20 @@
                 font.disabled = true;
             }
             // Approved artwork when present on the edge, else a text reference.
+            // The skin also picks the cloud path: show where it can be watched live.
+            const links = document.getElementById('cloudLinks');
+            links.replaceChildren(...(p.cloud_links || []).map(l => {
+                const a = document.createElement('a');
+                a.className = 'cloud-link'; a.href = l.url; a.target = '_blank'; a.rel = 'noopener';
+                a.title = 'This skin streams telemetry and the live twin to ' + l.label.slice(8);
+                a.textContent = l.label + ' \u2197';
+                return a;
+            }));
             const section = document.getElementById('partnerSection');
-            section.hidden = !p.partner;
-            if (!p.partner) return;
+            section.hidden = !p.partner && !(p.cloud_links || []).length;
+            const brand = [document.getElementById('partnerLabel'), document.getElementById('partnerLogo'), document.getElementById('partnerWordmark')];
+            if (!p.partner) { brand.forEach(el => { el.hidden = true; }); return; }
+            document.getElementById('partnerLabel').hidden = false;
             const logo = document.getElementById('partnerLogo');
             logo.hidden = !p.partner.has_logo;
             logo.src = p.partner.has_logo ? p.partner.logo : '';
