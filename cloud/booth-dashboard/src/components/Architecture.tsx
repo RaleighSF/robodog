@@ -29,9 +29,9 @@ const FLOWS: Flow[] = [
   { d: "M276,400 H322 V129 H382", label: "telemetry events · every 2 s", lx: 312, ly: 265, rot: true },
   { d: `M${cx("hub")},166 V232`, label: arch.ingestLink, lx: cx("hub") + 10, ly: 203, anchor: "start" },
   { d: `M${cx("fn")},306 V372`, label: arch.storeLink, lx: cx("fn") + 10, ly: 343, anchor: "start" },
-  { d: "M700,129 H659 V252 H618", label: "OpenAPI tool", lx: 650, ly: 190, rot: true },
+  { d: "M700,129 H659 V252 H618", label: arch.agentLink, lx: 650, ly: 190, rot: true },
   { d: "M618,286 H700", label: "read API", lx: 659, ly: 279 },
-  { d: `M276,428 H340 V476 H${cx("rt")} V446`, label: "joint frames · send-only token", lx: 560, ly: 470, twin: true },
+  { d: `M276,428 H340 V476 H${cx("rt")} V446`, label: arch.twinLink, lx: 560, ly: 470, twin: true },
   { d: `M${cx("rt")},372 V306`, label: "receive-only", lx: cx("rt") + 10, ly: 343, anchor: "start", twin: true },
 ];
 
@@ -71,7 +71,7 @@ export function ArchitectureButton() {
           ))}
         </svg>
         <ul className="arch-notes">
-          <li><b>Keyless by design.</b> {arch.identity}.</li>
+          <li><b>{arch.identityHead}.</b> {arch.identity}.</li>
           <li><b>Read-only overwatch.</b> The {theme.agentHost} agent queries telemetry through a fixed API and can never command the robot.</li>
           <li><b>Live or clearly not.</b> Every value shows its age; the twin falls back to 5 s vitals when the stream pauses.</li>
         </ul>
