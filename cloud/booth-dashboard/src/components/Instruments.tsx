@@ -1,7 +1,9 @@
 "use client";
 // EICAS instruments drawn from data: joint dials, annunciators, freshness lamp,
 // crew-alerting stack, trend tapes. Colour always travels with a label or shape.
+import type { Brief } from "@/lib/agent";
 import { DIAL, Finding, Joint, jointState, LIMITS, SeriesPoint, Snapshot } from "@/lib/model";
+import { theme } from "@/lib/theme";
 
 const SWEEP = 210;                         // degrees, EICAS round-dial sweep
 const START = 90 + (360 - SWEEP) / 2;      // start angle (SVG: 0 = +x, clockwise)
@@ -109,11 +111,17 @@ export function RuntimeBudget({ soc, series, posture, stale }: { soc: number | n
   );
 }
 
-export function CasStack({ findings, stale, snapshot, socSeries }: { findings: Finding[]; stale: boolean; snapshot: Snapshot | null; socSeries: SeriesPoint[] }) {
+export function CasStack({ findings, stale, snapshot, socSeries, brief }: { findings: Finding[]; stale: boolean; snapshot: Snapshot | null; socSeries: SeriesPoint[]; brief?: Brief | null }) {
   return (
     <section className="cas panel" aria-label="Agent overwatch crew-alerting messages">
       <header className="cas-head"><h2 className="title">Overwatch · crew alerting</h2><span className="cas-count num">{findings.length}</span></header>
       {stale && <p className="cas-stale">Telemetry is stale. Findings below are not current.</p>}
+      {brief && (
+        <div className="cas-agent" aria-live="polite">
+          <div className="cas-meta"><span className="sev agent">Agent brief</span><span className="cas-metric">{theme.agentHost}</span><time className="num">{hhmmss(brief.at)}</time></div>
+          <p>{brief.text}</p>
+        </div>
+      )}
       <ol className="cas-list">
         {findings.length === 0 && <li className="cas-empty">No findings. All monitored systems inside limits.</li>}
         {findings.map((f) => (

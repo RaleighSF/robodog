@@ -8,9 +8,10 @@ const EMPTY: Telemetry = { snapshot: null, series: { soc: [], tempMax: [], tempA
 
 // Source: ?source=synthetic|live. Live needs QUERY_API_URL (build) or ?api=.
 // Live never falls back to synthetic on its own: stale stays visibly stale.
-export function useTelemetry(): { data: Telemetry; source: "live" | "synthetic" } {
+export function useTelemetry(): { data: Telemetry; source: "live" | "synthetic"; api: string } {
   const [data, setData] = useState<Telemetry>(EMPTY);
   const [source, setSource] = useState<"live" | "synthetic">("synthetic");
+  const [apiBase, setApiBase] = useState("");
   const synth = useRef<SyntheticSource | null>(null);
 
   useEffect(() => {
@@ -18,6 +19,7 @@ export function useTelemetry(): { data: Telemetry; source: "live" | "synthetic" 
     const api = qs.get("api") || process.env.NEXT_PUBLIC_QUERY_API_URL || "";
     const src = qs.get("source") === "live" || (qs.get("source") !== "synthetic" && api) ? "live" : "synthetic";
     setSource(src);
+    setApiBase(api);
     let stop = false;
     let last: Telemetry = EMPTY;
     const tick = async () => {
@@ -39,5 +41,5 @@ export function useTelemetry(): { data: Telemetry; source: "live" | "synthetic" 
     const age = setInterval(() => setData((d) => (d.snapshot ? { ...d, snapshot: { ...d.snapshot, ageS: (Date.now() - d.snapshot.t) / 1000 } } : d)), 1000);
     return () => { stop = true; clearInterval(id); clearInterval(age); };
   }, []);
-  return { data, source };
+  return { data, source, api: apiBase };
 }

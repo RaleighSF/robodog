@@ -1,6 +1,6 @@
 "use client";
 // Synoptic pages (EICAS): every vital not on the main display.
-import { LIMITS, Posture, Telemetry } from "@/lib/model";
+import { LIMITS, Posture, STATE_CODES, Telemetry } from "@/lib/model";
 import { TrendTape } from "./Instruments";
 
 export const PAGES = ["POWER", "GAIT", "ATTITUDE", "VISION", "EDGE", "LINK"] as const;
@@ -81,9 +81,9 @@ function Gait({ d, stale }: { d: Telemetry; stale: boolean }) {
       <div className="ro-grid">
         <Readout label="Speed" value={stale ? "--" : f(s.velocity ? Math.hypot(...s.velocity) : null, 2)} unit=" m/s" />
         <Readout label="Yaw rate" value={stale ? "--" : f(s.yawSpeed, 2)} unit=" rad/s" />
-        <Readout label="Gait" value={s.gaitType == null ? "--" : s.gaitType === 0 ? "IDLE" : `TROT ${s.gaitType}`} />
+        <Readout label="Gait" value={s.gaitType == null ? "N/A" : s.gaitType === 0 ? "IDLE" : `TROT ${s.gaitType}`} />
         <Readout label="Body" value={stale ? "--" : f(s.bodyHeight, 2)} unit=" m" />
-        <Readout label="Nearest" value={stale ? "--" : f(obs.length ? Math.min(...obs) : null, 2)} unit=" m" state={obs.length && Math.min(...obs) < 0.6 ? "caution" : undefined} />
+        <Readout label="Nearest" value={stale ? "--" : obs.length ? f(Math.min(...obs), 2) : "N/A"} unit={obs.length ? " m" : ""} state={obs.length && Math.min(...obs) < 0.6 ? "caution" : undefined} />
         <Readout label="Feet down" value={stale ? "--" : String(Object.values(feet).filter((x) => x > 4).length)} unit="/4" />
       </div>
     </div>
@@ -189,7 +189,8 @@ function Link({ d, stale, source }: { d: Telemetry; stale: boolean; source: stri
         <Readout label="Telemetry age" value={f(s.ageS, 1)} unit=" s" state={stale ? "warning" : undefined} />
         <Readout label="Source" value={source === "live" ? "LIVE" : "SYNTHETIC"} state={source === "live" ? undefined : "caution"} />
         <Readout label="Lost frames" value={String(lost)} state={lost > 0 ? "caution" : undefined} />
-        <Readout label="Error code" value={stale ? "--" : f(s.errorCode)} state={s.errorCode ? "caution" : undefined} />
+        <Readout label="Error code" value={stale ? "--" : s.errorCode != null && STATE_CODES[s.errorCode] ? `${s.errorCode} ${STATE_CODES[s.errorCode]}` : f(s.errorCode)}
+          state={s.errorCode && !STATE_CODES[s.errorCode] ? "caution" : undefined} />
       </div>
       <p className="note">Joint map: <strong>unconfirmed</strong>. Joint order follows the Unitree convention (FR, FL, RR, RL) until it is verified on the robot; the 3D legs follow posture, not raw angles.</p>
       {d.error && <p className="note warning">Query API: {d.error}</p>}

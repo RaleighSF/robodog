@@ -4,8 +4,10 @@
 // ?mode=staff: page keys, acknowledge, and the Ask Overwatch field.
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
+import { AskOverwatch } from "@/components/Ask";
 import { Annunciator, CasStack, FreshnessLamp, JointDial } from "@/components/Instruments";
 import { PAGES, Page, SynopticPage } from "@/components/Pages";
+import { useBrief } from "@/lib/agent";
 import { LEGS, LIMITS, Leg } from "@/lib/model";
 import { theme } from "@/lib/theme";
 import { useTelemetry } from "@/lib/useTelemetry";
@@ -34,7 +36,8 @@ const LEG_NAME: Record<Leg, string> = { FL: "Front left", FR: "Front right", RL:
 const QUADRANT: Record<Leg, string> = { FR: "q-tl", FL: "q-bl", RR: "q-tr", RL: "q-br" };
 
 export default function Home() {
-  const { data, source } = useTelemetry();
+  const { data, source, api } = useTelemetry();
+  const brief = useBrief(api, source === "live");
   const [mode, setMode] = useState<"booth" | "staff">("booth");
   const [page, setPage] = useState<Page>("POWER");
   const [acked, setAcked] = useState<Set<string>>(new Set());
@@ -83,7 +86,7 @@ export default function Home() {
         ))}
       </section>
 
-      <CasStack findings={data.findings} stale={stale} snapshot={s ?? null} socSeries={data.series.soc} />
+      <CasStack findings={data.findings} stale={stale} snapshot={s ?? null} socSeries={data.series.soc} brief={brief} />
 
       <section className="synoptic panel" aria-label={`Synoptic page ${page}`}>
         <nav className="keys" aria-label="Synoptic pages">
@@ -96,13 +99,7 @@ export default function Home() {
         <div className="page"><SynopticPage page={page} d={data} stale={stale} source={source} /></div>
       </section>
 
-      {mode === "staff" && (
-        <form className="ask panel" onSubmit={(e) => e.preventDefault()}>
-          <label htmlFor="ask" className="title">Ask overwatch</label>
-          <input id="ask" placeholder="e.g. Which joint is running hottest, and why?" disabled aria-describedby="ask-note" />
-          <span id="ask-note" className="muted">The agent is not connected yet. It arrives with the {theme.agentHost} deployment.</span>
-        </form>
-      )}
+      {mode === "staff" && <AskOverwatch api={api} live={source === "live"} />}
       <footer className="legal">Go2 model: MuJoCo Menagerie, BSD-3-Clause, © Unitree Robotics. Read-only view; this screen cannot command the robot.</footer>
     </main>
   );

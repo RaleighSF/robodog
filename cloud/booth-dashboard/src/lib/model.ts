@@ -8,6 +8,10 @@ export type Seg = (typeof SEGS)[number];
 export type Posture = "standing" | "low" | "lying" | "unknown";
 export type Severity = "warning" | "caution" | "advisory";
 
+// Go2 sport error_code values that report a posture state, not a fault
+// (observed on firmware 1.1.15, 2026-10-30). Mirrored in Overwatch_Findings (setup.kql).
+export const STATE_CODES: Record<number, string> = { 100: "STANDING", 1001: "LYING", 1002: "TRANSITION" };
+
 export interface Joint { name: string; leg: Leg; seg: Seg; temp: number | null; torque: number | null; q: number | null; lost: number }
 
 export interface Snapshot {
