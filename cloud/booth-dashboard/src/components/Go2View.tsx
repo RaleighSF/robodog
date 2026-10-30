@@ -51,7 +51,7 @@ async function loadPart(name: string, meta: PartMeta): Promise<THREE.BufferGeome
   return g;
 }
 
-export interface Go2Props { posture: Posture; walking: boolean; joints: Joint[]; roll: number; pitch: number; stale: boolean; orbit: boolean; motion?: MotionFeed }
+export interface Go2Props { posture: Posture; walking: boolean; joints: Joint[]; roll: number; pitch: number; side: "left" | "right"; stale: boolean; orbit: boolean; motion?: MotionFeed }
 
 // Live stream joint order: FR, FL, RR, RL legs x hip/thigh/calf (confirmed on the robot).
 const STREAM_LEG: Record<Leg, number> = { FR: 0, FL: 1, RR: 2, RL: 3 };
@@ -152,6 +152,7 @@ export default function Go2View(props: Go2Props) {
       const att = { r: 0, p: 0 };
       const footPos = new THREE.Vector3();
       const camLocal = new THREE.Vector3();
+      let viewAng = -1.22;                                  // eased camera azimuth (left side)
       const start = performance.now();
       const resize = () => {
         const w = el.clientWidth, h = el.clientHeight;
@@ -222,9 +223,13 @@ export default function Go2View(props: Go2Props) {
         let lowest = Infinity;
         for (const lg of Object.values(legs)) lowest = Math.min(lowest, world.worldToLocal(lg.foot.getWorldPosition(footPos)).z);
         base.position.z = FOOT_R - lowest;
-        // Dog faces screen-left with its left legs nearest; a gentle sway (not an
-        // orbit) keeps every leg inside its dial quadrant.
-        const ang = -1.22 + (p.orbit && !reduced ? 0.3 * Math.sin(t * 0.21) : 0);
+        // Left view: nose screen-left, left legs nearest. When the most severe
+        // flagged joint is on the right, turn through the front to the right view
+        // (the page re-maps the dial quadrants to match). A gentle sway, not an
+        // orbit, keeps every leg inside its dial quadrant.
+        const targetAng = p.side === "right" ? 1.22 : -1.22;
+        viewAng += (targetAng - viewAng) * (reduced ? 1 : 0.035);
+        const ang = viewAng + (p.orbit && !reduced ? 0.3 * Math.sin(t * 0.21) : 0);
         camera.position.set(Math.cos(ang) * 1.6, 0.66, Math.sin(ang) * 1.6);   // framed for the centre gap between dial quadrants
         camera.lookAt(0, base.position.z * 0.55 + 0.06, 0);
         // Name tags follow their flagged joint on screen.

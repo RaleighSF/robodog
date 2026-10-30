@@ -9,7 +9,7 @@ import { Annunciator, CasStack, FreshnessLamp, JointDial } from "@/components/In
 import { PAGES, Page, SynopticPage } from "@/components/Pages";
 import { useBrief } from "@/lib/agent";
 import { MANEUVER_LABEL, useMotion } from "@/lib/motion";
-import { LEGS, LIMITS, Leg } from "@/lib/model";
+import { LEGS, LIMITS, Leg, Snapshot, jointState } from "@/lib/model";
 import { theme } from "@/lib/theme";
 import { useTelemetry } from "@/lib/useTelemetry";
 
@@ -34,7 +34,23 @@ function AttitudeRing({ roll, pitch, invalid }: { roll: number; pitch: number; i
 
 const LEG_NAME: Record<Leg, string> = { FL: "Front left", FR: "Front right", RL: "Rear left", RR: "Rear right" };
 // Screen placement matches the camera: dog faces left, left legs nearest.
-const QUADRANT: Record<Leg, string> = { FR: "q-tl", FL: "q-bl", RR: "q-tr", RL: "q-br" };
+const QUADRANT: Record<"left" | "right", Record<Leg, string>> = {
+  left: { FR: "q-tl", FL: "q-bl", RR: "q-tr", RL: "q-br" },     // nose left, left legs nearest
+  right: { FR: "q-br", FL: "q-tr", RR: "q-bl", RL: "q-tl" },    // turned: nose right, right legs nearest
+};
+const SEV_RANK = { warning: 2, caution: 1, ok: 0, unknown: 0 } as const;
+
+/** Show the side of the most severe flagged joint (left by default), so a hot
+ *  joint is never hidden behind the body. */
+function viewSide(s: Snapshot | null | undefined, stale: boolean): "left" | "right" {
+  if (!s || stale) return "left";
+  let best: { rank: number; side: "left" | "right" } = { rank: 0, side: "left" };
+  for (const j of s.joints) {
+    const rank = SEV_RANK[jointState(j.temp)];
+    if (rank > best.rank) best = { rank, side: j.leg.endsWith("R") ? "right" : "left" };
+  }
+  return best.side;
+}
 
 export default function Home() {
   const { data, source, api } = useTelemetry();
@@ -56,6 +72,7 @@ export default function Home() {
 
   const s = data.snapshot;
   const stale = !s || s.ageS > LIMITS.staleS || !!(data.error && source === "live");
+  const side = viewSide(s, stale);
   const unacked = useMemo(() => data.findings.filter((f) => !acked.has(`${f.id}:${f.severity}`)), [data.findings, acked]);
   const warnLit = !stale && unacked.some((f) => f.severity === "warning");
   const cautionLit = !stale && unacked.some((f) => f.severity === "caution");
@@ -81,7 +98,7 @@ export default function Home() {
         <div className="stage">
           <AttitudeRing roll={stale ? 0 : s?.roll ?? 0} pitch={stale ? 0 : s?.pitch ?? 0} invalid={stale} />
           <Go2View posture={s?.posture ?? "unknown"} walking={!stale && !!s && Math.hypot(...(s.velocity ?? [0, 0])) > 0.05}
-            joints={s?.joints ?? []} roll={s?.roll ?? 0} pitch={s?.pitch ?? 0} stale={stale} orbit={mode === "booth"} motion={motion.feed} />
+            joints={s?.joints ?? []} roll={s?.roll ?? 0} pitch={s?.pitch ?? 0} side={side} stale={stale} orbit={mode === "booth"} motion={motion.feed} />
         </div>
         {source === "live" && (
           <div className={`mirror ${motion.live ? "on" : ""}`} aria-live="polite">
@@ -91,7 +108,7 @@ export default function Home() {
           </div>
         )}
         {LEGS.map((leg) => (
-          <div key={leg} className={`leg ${QUADRANT[leg]}`}>
+          <div key={`${leg}-${side}`} className={`leg ${QUADRANT[side][leg]}`}>
             <h3 className="title">{LEG_NAME[leg]}</h3>
             <div className="dials">{(s?.joints ?? []).filter((j) => j.leg === leg).map((j) => <JointDial key={j.name} joint={j} stale={stale} />)}</div>
           </div>
