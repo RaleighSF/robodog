@@ -600,8 +600,18 @@ class TelemetryManager:
 
     # -- Lifecycle -----------------------------------------------------------
 
+    def _alive_producers(self) -> List[str]:
+        return [t.name for t in (self._flush_thread, self._image_thread, self._heartbeat_thread, self._vitals_thread)
+                if t is not None and t.is_alive()]
+
     def start(self):
         if not self.enabled:
+            return
+        # Producers share one stop event: clearing it while a producer from the
+        # previous run survives its shutdown join would revive that producer.
+        alive = self._alive_producers()
+        if alive:
+            logger.error(f"[Telemetry] not restarting: previous producers still running ({', '.join(alive)})")
             return
         self._stop_event.clear()
         with self._lock:
@@ -614,7 +624,7 @@ class TelemetryManager:
 
     def start_heartbeat(self, collector_fn):
         """Start heartbeat timer. collector_fn() should return a TelemetryEvent."""
-        if not self.enabled:
+        if not self.enabled or self._stop_event.is_set():   # stopped, or start() refused
             return
         self._heartbeat_collector = collector_fn
         self._heartbeat_thread = threading.Thread(target=self._heartbeat_loop, name="TelemetryHeartbeat", daemon=True)
@@ -782,7 +792,7 @@ class TelemetryManager:
 
     def start_vitals(self, collector_fn, interval_s: float):
         """Periodic vitals collection (0 disables)."""
-        if not self.enabled or not interval_s or interval_s <= 0:
+        if not self.enabled or not interval_s or interval_s <= 0 or self._stop_event.is_set():
             return
         def loop():
             while not self._stop_event.wait(timeout=interval_s):
@@ -895,6 +905,7 @@ class TelemetryManager:
             # sinks they are queued per sink and "sinks" holds the real outcomes
             # (ok / failed / skipped by the skin / dropped on a full queue).
             "events_uploaded": self._events_uploaded,
+            "events_rejected": self._events_rejected,   # cumulative: events offered after stop()
             "events_queued_per_sink": isinstance(self._exporter, MultiExporter),
             "sinks": getattr(self._exporter, "stats", None),
             "events_failed": self._events_failed,
