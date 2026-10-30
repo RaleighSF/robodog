@@ -534,6 +534,9 @@ class TelemetryManager:
         self._flush_thread: Optional[threading.Thread] = None
         self._image_thread: Optional[threading.Thread] = None
         self._heartbeat_thread: Optional[threading.Thread] = None
+        self._vitals_thread: Optional[threading.Thread] = None
+        self._closed = False                       # set at shutdown: no event is accepted after the final flush
+        self._events_rejected = 0
 
         # Counters
         self._events_emitted = 0
@@ -601,6 +604,8 @@ class TelemetryManager:
         if not self.enabled:
             return
         self._stop_event.clear()
+        with self._lock:
+            self._closed = False
         self._flush_thread = threading.Thread(target=self._flush_loop, name="TelemetryFlush", daemon=True)
         self._flush_thread.start()
         self._image_thread = threading.Thread(target=self._image_upload_loop, name="TelemetryImages", daemon=True)
@@ -618,16 +623,24 @@ class TelemetryManager:
 
     def stop(self):
         self._stop_event.set()
-        # Producers first (a flush in progress may hold events it already took
-        # from the buffer), then the final flush, then let every sink worker
-        # finish what is queued (bounded).
-        for t in (self._flush_thread, self._image_thread, self._heartbeat_thread):
-            if t:
-                t.join(timeout=5)
+        # Producers first (a flush or collection in progress may still hand over
+        # events), then close the buffer, then the final flush, then let every
+        # sink worker finish what is queued (bounded). A join problem never
+        # skips the flush.
+        me = threading.current_thread()
+        for t in (self._flush_thread, self._image_thread, self._heartbeat_thread, self._vitals_thread):
+            if t is None or t is me or t.ident is None:
+                continue
+            t.join(timeout=5)
+            if t.is_alive():
+                logger.warning(f"[Telemetry] shutdown: {t.name} still running; its later events are rejected")
+        with self._lock:
+            self._closed = True
         self._flush_buffer()
         if isinstance(self._exporter, MultiExporter) and not self._exporter.drain(10.0):
             logger.warning("[Telemetry] shutdown: some queued events were not sent in time")
-        logger.info(f"[Telemetry] Stopped — emitted={self._events_emitted}, uploaded={self._events_uploaded}, failed={self._events_failed}")
+        logger.info(f"[Telemetry] Stopped — emitted={self._events_emitted}, uploaded={self._events_uploaded}, "
+                    f"failed={self._events_failed}, rejected after stop={self._events_rejected}")
 
     # -- Event emission ------------------------------------------------------
 
@@ -777,7 +790,8 @@ class TelemetryManager:
                     collector_fn()
                 except Exception as e:
                     logger.warning(f"[Telemetry] vitals collection failed: {e}")
-        threading.Thread(target=loop, name="TelemetryVitals", daemon=True).start()
+        self._vitals_thread = threading.Thread(target=loop, name="TelemetryVitals", daemon=True)
+        self._vitals_thread.start()
         logger.info(f"[Telemetry] Vitals started — interval={interval_s}s")
 
     # -- Internal helpers ----------------------------------------------------
@@ -809,6 +823,9 @@ class TelemetryManager:
 
     def _enqueue(self, event: TelemetryEvent):
         with self._lock:
+            if self._closed:
+                self._events_rejected += 1         # after the final flush nothing would send it
+                return
             self._buffer.append(event)
             self._events_emitted += 1
             count = self._events_emitted
