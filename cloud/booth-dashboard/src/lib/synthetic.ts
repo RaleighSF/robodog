@@ -167,6 +167,7 @@ export class SyntheticSource {
       joints,
       edge: { cpu: 21 + Math.sin(now / 9000) * 6, memAvailGb: 10.1, temp: this.series.edgeTemp[this.series.edgeTemp.length - 1]?.v ?? 54, fps: 14 + Math.sin(now / 7000) * 0.4, videoAgeS: 0.07 },
       actuator: { moving: !!ph.walking, stopConfirmed: !ph.walking },
+      lidar: { window: standing ? "clear" : "unknown", hz: 15.4, errorState: 0, avoidance: true },
     };
     void tempVals;
     this.updateFindings(snap);

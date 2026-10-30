@@ -33,6 +33,8 @@ export interface Snapshot {
   joints: Joint[];           // 12
   edge: { cpu: number | null; memAvailGb: number | null; temp: number | null; fps: number | null; videoAgeS: number | null };
   actuator: { moving: boolean; stopConfirmed: boolean };
+  // Head lidar: window from the near-field ring check on the robot link; null = not reported.
+  lidar: { window: "clear" | "obstructed" | "unknown"; hz: number | null; errorState: number | null; avoidance: boolean | null } | null;
 }
 
 export interface Finding { id: string; severity: Severity; t: number; metric: string; text: string; joint?: string }

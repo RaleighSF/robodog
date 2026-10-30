@@ -60,6 +60,8 @@ export async function readLive(base: string): Promise<Telemetry> {
       footForce: arr(s.FootForce).map((f) => (f === 0 ? null : f)), obstacles: arr(s.RangeObstacle).some((r) => r > 0) ? arr(s.RangeObstacle) : [], joints,
       edge: { cpu: num(s.EdgeCpuPercent), memAvailGb: num(s.EdgeMemAvailableGb), temp: num(s.EdgeTempMax), fps: num(s.EdgeDetectionFps), videoAgeS: null },
       actuator: { moving: false, stopConfirmed: true },
+      lidar: s.LidarWindow ? { window: s.LidarWindow === "obstructed" ? "obstructed" : s.LidarWindow === "clear" ? "clear" : "unknown",
+        hz: num(s.LidarHz), errorState: num(s.LidarErrorState), avoidance: typeof s.ObstacleAvoidance === "boolean" ? s.ObstacleAvoidance : null } : null,
     };
   }
   const series: Series = { soc: [], tempMax: [], tempAvg: [], fps: [], edgeTemp: [], pitch: [], roll: [], joint: {} };

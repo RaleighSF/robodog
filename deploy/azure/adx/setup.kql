@@ -144,7 +144,8 @@
     BatterySoc: real, PackVoltage: real, PackCurrentA: real, BmsCycles: int, BmsTempMax: real,
     BoardTempMax: real, ImuTemp: real, MotorTempMax: real, MotorTempAvg: real, HottestJoint: string,
     LostFrames: long, FootForce: dynamic, RangeObstacle: dynamic,
-    EdgeCpuPercent: real, EdgeMemAvailableGb: real, EdgeTempMax: real, EdgeDetectionFps: real, Raw: dynamic)
+    EdgeCpuPercent: real, EdgeMemAvailableGb: real, EdgeTempMax: real, EdgeDetectionFps: real, Raw: dynamic,
+    LidarWindow: string, LidarRingSectors: dynamic, LidarHz: real, LidarErrorState: int, ObstacleAvoidance: bool)
 
 .create-merge table Motors (
     Timestamp: datetime, DeviceId: string, Joint: string, Leg: string, Segment: string,
@@ -169,7 +170,10 @@
               HottestJoint = tostring(v.motor_summary.hottest_joint), LostFrames = tolong(v.motor_summary.lost_total),
               FootForce = v.feet.force, RangeObstacle = v.sport.range_obstacle,
               EdgeCpuPercent = toreal(e.cpu_percent), EdgeMemAvailableGb = toreal(e.mem_available_gb),
-              EdgeTempMax = toreal(e.temp_max_c), EdgeDetectionFps = toreal(e.detection_fps), Raw
+              EdgeTempMax = toreal(e.temp_max_c), EdgeDetectionFps = toreal(e.detection_fps), Raw,
+              LidarWindow = tostring(v.lidar.window), LidarRingSectors = v.lidar.ring_sectors,
+              LidarHz = toreal(v.lidar.cloud_hz), LidarErrorState = toint(v.lidar.error_state),
+              ObstacleAvoidance = tobool(v.lidar.avoidance)
 }
 
 .create-or-alter function with (folder="ingest") ExpandMotors() {
@@ -192,13 +196,15 @@
     let fromVitals = Vitals | summarize arg_max(Timestamp, *) by DeviceId
         | project DeviceId, Timestamp, BatterySoc, PackVoltage, Connected, HasVideo, Posture, BodyHeight,
                   MotorTempMax, MotorTempAvg, HottestJoint, Roll, Pitch, ErrorCode,
-                  DetectionFps = EdgeDetectionFps, EdgeTempMax, EdgeMemAvailableGb;
+                  DetectionFps = EdgeDetectionFps, EdgeTempMax, EdgeMemAvailableGb,
+                  LidarWindow, LidarHz, LidarErrorState, ObstacleAvoidance;
     let fromHeartbeats = Heartbeats | summarize arg_max(Timestamp, *) by DeviceId
         | where DeviceId !in ((fromVitals | project DeviceId))
         | project DeviceId, Timestamp, BatterySoc, PackVoltage = BatteryVoltage, Connected = RobotConnected,
                   HasVideo = bool(null), Posture, BodyHeight, MotorTempMax, MotorTempAvg = real(null),
                   HottestJoint = "", Roll = real(null), Pitch = real(null), ErrorCode = int(null),
-                  DetectionFps, EdgeTempMax = real(null), EdgeMemAvailableGb = real(null);
+                  DetectionFps, EdgeTempMax = real(null), EdgeMemAvailableGb = real(null),
+                  LidarWindow = "", LidarHz = real(null), LidarErrorState = int(null), ObstacleAvoidance = bool(null);
     union fromVitals, fromHeartbeats
     | extend AgeSeconds = datetime_diff('second', now(), Timestamp)
 }
@@ -235,6 +241,12 @@
          | project DeviceId, Severity = "medium", Finding = strcat("Robot error code ", ErrorCode)),
       (v | where abs(Roll) > 0.6 or abs(Pitch) > 0.6 | project DeviceId, Severity = "high", Finding = "Body tilted - possible fall"),
       (v | where EdgeTempMax > 85 | project DeviceId, Severity = "medium", Finding = strcat("Edge compute at ", EdgeTempMax, " C")),
+      (v | where LidarWindow == "obstructed" and AgeSeconds <= 120
+         | project DeviceId, Severity = "medium", Finding = iff(ObstacleAvoidance == true,
+             "Head lidar sees returns close on every side: sensor window dirty, or the dog is boxed in. Obstacle avoidance will block walking - wipe the head sensor or clear the space.",
+             "Head lidar sees returns close on every side: sensor window dirty, or the dog is boxed in. Wipe the head sensor before turning obstacle avoidance on.")),
+      (v | where (LidarErrorState > 0 or LidarHz < 10) and AgeSeconds <= 120
+         | project DeviceId, Severity = "medium", Finding = strcat("Head lidar degraded (error ", LidarErrorState, ", ", LidarHz, " Hz)")),
       (Motors | where Timestamp > ago(5m) and Lost > 0 | summarize n = max(Lost) by DeviceId, Joint
               | project DeviceId, Severity = "low", Finding = strcat(Joint, " motor lost ", n, " frames")),
       (Alerts | where Timestamp > ago(15m) and AlertType has "ppe" | summarize n = count() by DeviceId
@@ -266,6 +278,12 @@
          | project DeviceId, Severity = "medium", Finding = strcat("Robot error code ", ErrorCode)),
       (v | where abs(Roll) > 0.6 or abs(Pitch) > 0.6 | project DeviceId, Severity = "high", Finding = "Body tilted - possible fall"),
       (v | where EdgeTempMax > 85 | project DeviceId, Severity = "medium", Finding = strcat("Edge compute at ", EdgeTempMax, " C")),
+      (v | where LidarWindow == "obstructed" and AgeSeconds <= 120
+         | project DeviceId, Severity = "medium", Finding = iff(ObstacleAvoidance == true,
+             "Head lidar sees returns close on every side: sensor window dirty, or the dog is boxed in. Obstacle avoidance will block walking - wipe the head sensor or clear the space.",
+             "Head lidar sees returns close on every side: sensor window dirty, or the dog is boxed in. Wipe the head sensor before turning obstacle avoidance on.")),
+      (v | where (LidarErrorState > 0 or LidarHz < 10) and AgeSeconds <= 120
+         | project DeviceId, Severity = "medium", Finding = strcat("Head lidar degraded (error ", LidarErrorState, ", ", LidarHz, " Hz)")),
       (Motors | where Timestamp > ago(5m) and Lost > 0 | summarize n = max(Lost) by DeviceId, Joint
               | project DeviceId, Severity = "low", Finding = strcat(Joint, " motor lost ", n, " frames")),
       (Alerts | where Timestamp > ago(15m) and AlertType has "ppe" | summarize n = count() by DeviceId

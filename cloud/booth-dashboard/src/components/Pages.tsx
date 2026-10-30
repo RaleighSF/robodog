@@ -85,7 +85,8 @@ function Gait({ d, stale }: { d: Telemetry; stale: boolean }) {
         <Readout label="Yaw rate" value={stale ? "--" : f(s.yawSpeed, 2)} unit=" rad/s" />
         <Readout label="Gait" value={s.gaitType == null ? "N/A" : s.gaitType === 0 ? "IDLE" : `TROT ${s.gaitType}`} />
         <Readout label="Body" value={stale ? "--" : f(s.bodyHeight, 2)} unit=" m" />
-        <Readout label="Nearest" value={stale ? "--" : obs.length ? f(Math.min(...obs), 2) : "N/A"} unit={obs.length ? " m" : ""} state={obs.length && Math.min(...obs) < 0.6 ? "caution" : undefined} />
+        <Readout label="Lidar window" value={stale ? "--" : !s.lidar ? "N/A" : s.lidar.window === "unknown" ? "STANDBY" : s.lidar.window.toUpperCase()} state={s.lidar?.window === "obstructed" ? "caution" : undefined} />
+        <Readout label="Avoidance" value={stale ? "--" : s.lidar?.avoidance == null ? "N/A" : s.lidar.avoidance ? "ON" : "OFF"} />
         <Readout label="Feet down" value={stale ? "--" : reporting.length ? String(reporting.filter((x) => x > 4).length) : "N/A"} unit={reporting.length ? `/${reporting.length} sensing` : ""} />
       </div>
     </div>

@@ -144,8 +144,16 @@ It carries two extra objects:
   - `feet`: `force[4]`, `force_est[4]`;
   - `motors[12]`, one per joint: `joint`, `mode`, `q`, `dq`, `ddq`, `tau_est`,
     `temperature`, `lost`. Joints are ordered FR, FL, RR, RL legs, each
-    hip / thigh / calf (Unitree order; to be confirmed on the dog);
-  - `motor_summary`: `temp_max`, `temp_avg`, `hottest_joint`, `lost_total`.
+    hip / thigh / calf (Unitree order, confirmed on the dog 2026-10-30);
+  - `motor_summary`: `temp_max`, `temp_avg`, `hottest_joint`, `lost_total`;
+  - `lidar` (additive, ADR 0009): `window` (`clear | obstructed | unknown`;
+    unknown when not standing), `ring_sectors[6]` (near-field returns per
+    second in 45° sectors from -135° to +135°), `ring_hold_s`, `error_state`,
+    `cloud_hz`, `packet_loss`, `avoidance` (the robot's obstacle-avoidance
+    switch), `age_s`.
+
+  On firmware 1.1.15, `sport.mode`, `gait_type` and `range_obstacle` always read
+  0. On the booth dog, foot-force sensors 1 and 2 (FL, RR) always read 0.
 - `edge`: Thor health, with `cpu_percent`, `mem_used_gb`, `mem_available_gb`,
   `temp_max_c`, `detection_fps` and `video_frame_age_s`.
 

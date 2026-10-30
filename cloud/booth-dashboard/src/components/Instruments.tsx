@@ -72,7 +72,7 @@ function hhmmss(t: number) { return new Date(t).toLocaleTimeString([], { hour12:
 
 type St = "ok" | "caution" | "warning" | "unknown";
 function systems(s: Snapshot | null, stale: boolean): { name: string; state: St; text: string }[] {
-  if (!s || stale) return ["Joint motors", "Battery", "Attitude", "Robot link", "Video", "Edge compute"].map((name) => ({ name, state: "unknown" as St, text: "NO DATA" }));
+  if (!s || stale) return ["Joint motors", "Battery", "Attitude", "Robot link", "Video", "Head lidar", "Edge compute"].map((name) => ({ name, state: "unknown" as St, text: "NO DATA" }));
   const temps = s.joints.map((j) => j.temp).filter((t): t is number => t != null);
   const tmax = temps.length ? Math.max(...temps) : null;
   const soc = s.battery.soc;
@@ -83,8 +83,16 @@ function systems(s: Snapshot | null, stale: boolean): { name: string; state: St;
     { name: "Attitude", state: tilt > LIMITS.tiltWarning ? "warning" : "ok", text: `${s.posture === "low" ? "sitting" : s.posture} · tilt ${(tilt * 57.3).toFixed(0)}°` },
     { name: "Robot link", state: s.connected ? "ok" : "warning", text: s.connected ? "DDS up" : "down" },
     { name: "Video", state: s.hasVideo ? "ok" : "caution", text: s.hasVideo ? "streaming" : "no video" },
+    lidarSystem(s.lidar),
     { name: "Edge compute", state: s.edge.temp != null && s.edge.temp > LIMITS.edgeCaution ? "caution" : s.edge.temp == null ? "unknown" : "ok", text: s.edge.temp == null ? "NO DATA" : `Thor ${s.edge.temp.toFixed(0)} °C` },
   ];
+}
+function lidarSystem(l: Snapshot["lidar"]): { name: string; state: St; text: string } {
+  const name = "Head lidar";
+  if (!l) return { name, state: "unknown", text: "NO DATA" };
+  if ((l.errorState ?? 0) > 0 || (l.hz != null && l.hz < 10)) return { name, state: "caution", text: "degraded" };
+  if (l.window === "obstructed") return { name, state: "caution", text: "window obstructed" };
+  return { name, state: l.window === "clear" ? "ok" : "unknown", text: `${l.window === "clear" ? "clear" : "standby"} · avoid ${l.avoidance == null ? "?" : l.avoidance ? "on" : "off"}` };
 }
 const SHAPE: Record<St, string> = { ok: "M6 1 A5 5 0 1 1 5.99 1 Z", caution: "M6 1 L11 11 L1 11 Z", warning: "M2 2 L10 10 M10 2 L2 10", unknown: "M2 6 L10 6" };
 

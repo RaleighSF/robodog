@@ -261,6 +261,124 @@ def telemetry_posture():
     return "standing"
 
 
+# ── Head lidar sensor window ─────────────────────────────────────────────────
+# A smudged lidar window returns a halo of points close to the sensor in every
+# direction; obstacle avoidance then sees walls all round and will not walk
+# (field case 2026-10-30, cleared by wiping the dome). Read-only, in its own
+# DDS context and thread, so point clouds never share the executor that carries
+# sport state for the deadman, and a failure here only blanks the lidar block.
+RING_R = (0.30, 0.60)        # m from the body centre, horizontal
+RING_H = (0.06, 0.35)        # m above the floor (floor = -body_height in base_link)
+RING_SECTOR_MIN = 20         # returns per 45-degree sector per second to count as occupied
+RING_SECTORS_MIN = 5         # of the 6 front/side sectors (the L1 barely sees behind)
+RING_HOLD_S = 10.0           # sustained this long before the window is "obstructed"
+
+
+def ring_counts(xyz, body_height):
+    """Near-field returns per 45-degree sector, -135..+135 deg (0 = ahead, + = left)."""
+    import numpy as np
+    d = np.hypot(xyz[:, 0], xyz[:, 1])
+    h = xyz[:, 2] + body_height
+    a = np.degrees(np.arctan2(xyz[:, 1], xyz[:, 0]))
+    m = (d >= RING_R[0]) & (d < RING_R[1]) & (h >= RING_H[0]) & (h < RING_H[1]) & (np.abs(a) < 135)
+    return np.bincount(np.clip(((a[m] + 135) // 45).astype(int), 0, 5), minlength=6)
+
+
+class SensorWindow:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.state = {"window": "unknown"}
+        self._acc = None
+        self._ring_since = None
+
+    def snapshot(self):
+        with self.lock:
+            s = dict(self.state)
+        if "t" in s:
+            s["age_s"] = round(time.monotonic() - s.pop("t"), 1)
+        return s
+
+    def _on_cloud(self, m):
+        import numpy as np
+        d = link()
+        if telemetry_posture() != "standing" or d is None or not d.body_height:
+            self._acc = None
+            return
+        off = {f.name: f.offset for f in m.fields}
+        buf = np.frombuffer(bytes(m.data), dtype=np.uint8).reshape(-1, m.point_step)
+        xyz = np.stack([buf[:, off[k]:off[k] + 4].copy().view(np.float32).ravel() for k in "xyz"], 1)
+        c = ring_counts(xyz[np.isfinite(xyz).all(1)], float(d.body_height))
+        self._acc = c if self._acc is None else self._acc + c
+
+    def _evaluate(self, now, t0):
+        counts, self._acc = self._acc, None
+        if counts is None:                       # not standing (or no clouds): no verdict
+            self._ring_since = None
+            with self.lock:
+                self.state.update(window="unknown", ring_sectors=None, ring_hold_s=0.0)
+            return
+        per_s = [int(round(c / max(now - t0, 0.5))) for c in counts]
+        ring = sum(c >= RING_SECTOR_MIN for c in per_s) >= RING_SECTORS_MIN
+        self._ring_since = (self._ring_since or now) if ring else None
+        held = now - self._ring_since if ring else 0.0
+        with self.lock:
+            self.state.update(window="obstructed" if held >= RING_HOLD_S else "clear",
+                              ring_sectors=per_s, ring_hold_s=round(held, 1))
+
+    def run(self):
+        while True:
+            ctx = None
+            try:
+                import rclpy
+                from rclpy.executors import SingleThreadedExecutor
+                from rclpy.qos import qos_profile_sensor_data
+                from sensor_msgs.msg import PointCloud2
+                from std_msgs.msg import String
+                from unitree_go.msg import LidarState
+                ctx = rclpy.Context()
+                rclpy.init(args=None, context=ctx)
+                node = rclpy.create_node("watchdog_sensor_window", context=ctx)
+
+                def on_state(m):
+                    with self.lock:
+                        self.state.update(error_state=int(m.error_state), cloud_hz=round(float(m.cloud_frequency), 1),
+                                          packet_loss=round(float(m.cloud_packet_loss_rate), 3), t=time.monotonic())
+
+                def on_multi(m):
+                    try:
+                        sw = json.loads(m.data).get("obstaclesAvoidSwitch")
+                    except ValueError:
+                        return
+                    with self.lock:
+                        self.state["avoidance"] = bool(sw) if sw is not None else None
+                node.create_subscription(PointCloud2, "/utlidar/cloud_base", self._on_cloud, qos_profile_sensor_data)
+                node.create_subscription(LidarState, "/utlidar/lidar_state", on_state, qos_profile_sensor_data)
+                node.create_subscription(String, "/multiplestate", on_multi, 10)
+                t0 = time.monotonic()
+                ex = SingleThreadedExecutor(context=ctx)
+                ex.add_node(node)
+                while rclpy.ok(context=ctx):
+                    ex.spin_once(timeout_sec=0.1)
+                    now = time.monotonic()
+                    if now - t0 >= 1.0:
+                        self._evaluate(now, t0)
+                        t0 = now
+            except Exception as e:                   # noqa: BLE001
+                log("[Lidar] sensor-window monitor stopped: %s - retrying in 10s" % e)
+                with self.lock:
+                    self.state = {"window": "unknown"}
+            finally:
+                try:
+                    if ctx is not None and ctx.ok():
+                        rclpy.shutdown(context=ctx)
+                except Exception:                    # noqa: BLE001
+                    pass
+            time.sleep(10)
+
+
+sensor_window = SensorWindow()
+
+
 # ── Actuation (Azimuth's teleop model) ───────────────────────────────────────
 #
 # * Drive sessions: every D-pad press is a new session id with its own
@@ -733,6 +851,7 @@ def vitals():
         out["motors"] = motors
         out["motor_summary"] = {"temp_max": max(temps), "temp_avg": round(sum(temps) / len(temps), 1),
                                 "hottest_joint": hot["joint"], "lost_total": sum(mm["lost"] for mm in motors)}
+    out["lidar"] = sensor_window.snapshot()
     return jsonify(out)
 
 
@@ -904,4 +1023,5 @@ if __name__ == "__main__":
     threading.Thread(target=act.supervise, name="deadman", daemon=True).start()
     threading.Thread(target=encoder, name="jpeg-encoder", daemon=True).start()
     threading.Thread(target=start_video, name="video", daemon=True).start()
+    threading.Thread(target=sensor_window.run, name="sensor-window", daemon=True).start()
     app.run(host="0.0.0.0", port=5001, threaded=True, ssl_context=tls)
