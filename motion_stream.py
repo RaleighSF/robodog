@@ -63,14 +63,16 @@ class ManeuverRecognizer:
         gap = self._prev_t is not None and t - self._prev_t > GAP_RESET_S
         self._prev_t = t
         if gap or h is None:
+            # Unobserved interval: forget holds AND the posture baseline. The next
+            # posture is re-established without reporting a transition across the gap.
             self._paw_since = {k: None for k in self._paw_since}
-            self._cand = None
+            self._cand, self.posture = None, "unknown"
             if h is None:
                 return None
         # Hello / shake: one front thigh swung well forward, held briefly, while upright.
         # One event per raise: it re-arms only after that paw comes back down.
         for idx, side in ((FR_THIGH, "front right"), (FL_THIGH, "front left")):
-            if q[idx] < HELLO_THIGH_MAX and self.posture in ("standing", "low"):
+            if q[idx] < HELLO_THIGH_MAX and self.posture in ("standing", "low") and posture_of(h) in ("standing", "low"):
                 self._paw_since[idx] = self._paw_since[idx] or t
                 if not self._paw_fired[idx] and t - self._paw_since[idx] >= HELLO_HOLD_S:
                     m = self._fire("hello", t, paw=side)
@@ -131,7 +133,7 @@ class MotionStream:
                             self._frames.append(f)
                             self.stats["frames_in"] += 1
                             if m:
-                                self._maneuvers.append(m)
+                                self._maneuvers.append(dict(m, _rx=time.monotonic()))
                                 self.stats["maneuvers"] += 1
                         if m:
                             logger.info("[Motion] maneuver %s", m)
@@ -165,9 +167,9 @@ class MotionStream:
                         time.sleep(BATCH_S)
                         with self._lock:
                             frames, self._frames = list(self._frames), deque(maxlen=200)
-                            newest = frames[-1]["t"] if frames else None
-                            mans = [m for m in self._maneuvers
-                                    if newest is None or newest - m["t"] <= MANEUVER_MAX_AGE_S]
+                            now = time.monotonic()
+                            mans = [{k: v for k, v in m.items() if k != "_rx"} for m in self._maneuvers
+                                    if now - m["_rx"] <= MANEUVER_MAX_AGE_S]
                             self._maneuvers.clear()
                         if not frames and not mans:
                             continue

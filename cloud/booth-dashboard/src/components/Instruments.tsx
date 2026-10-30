@@ -90,6 +90,7 @@ function systems(s: Snapshot | null, stale: boolean): { name: string; state: St;
 function lidarSystem(l: Snapshot["lidar"]): { name: string; state: St; text: string } {
   const name = "Head lidar";
   if (!l) return { name, state: "unknown", text: "NO DATA" };
+  if (l.errorState == null || l.hz == null) return { name, state: "unknown", text: "no health data" };
   if ((l.errorState ?? 0) > 0 || (l.hz != null && l.hz < 10)) return { name, state: "caution", text: "degraded" };
   if (l.window === "obstructed") return { name, state: "caution", text: "window obstructed" };
   return { name, state: l.window === "clear" ? "ok" : "unknown", text: `${l.window === "clear" ? "clear" : "standby"} · avoid ${l.avoidance == null ? "?" : l.avoidance ? "on" : "off"}` };

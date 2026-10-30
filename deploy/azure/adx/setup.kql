@@ -149,12 +149,15 @@
     RawEvents
     | where tostring(Raw.event_type) == "vitals"
     | extend v = Raw.robot_vitals, e = Raw.edge
+    // Sport state can stop while LowState continues: attitude and height count only while fresh.
+    | extend SportFresh = isnull(v.sport_age_s) or toreal(v.sport_age_s) <= 2.0
     | project Timestamp = todatetime(Raw.timestamp), DeviceId = tostring(Raw.device.device_id),
               SessionId = tostring(Raw.session_id), Connected = tobool(v.connected), HasVideo = tobool(v.has_video),
-              Posture = tostring(v.posture), BodyHeight = toreal(v.sport.body_height),
+              Posture = tostring(v.posture), BodyHeight = iff(SportFresh, toreal(v.sport.body_height), real(null)),
               SportMode = toint(v.sport.mode), GaitType = toint(v.sport.gait_type), ErrorCode = toint(v.sport.error_code),
               VelocityX = toreal(v.sport.velocity[0]), VelocityY = toreal(v.sport.velocity[1]), YawSpeed = toreal(v.sport.yaw_speed),
-              Roll = toreal(v.imu.rpy[0]), Pitch = toreal(v.imu.rpy[1]), Yaw = toreal(v.imu.rpy[2]),
+              Roll = iff(SportFresh, toreal(v.imu.rpy[0]), real(null)), Pitch = iff(SportFresh, toreal(v.imu.rpy[1]), real(null)),
+              Yaw = iff(SportFresh, toreal(v.imu.rpy[2]), real(null)),
               BatterySoc = toreal(v.power.bms.soc), PackVoltage = toreal(v.power.power_v), PackCurrentA = toreal(v.power.power_a),
               BmsCycles = toint(v.power.bms.cycle),
               BmsTempMax = toreal(array_sort_desc(array_concat(v.power.bms.bq_ntc, v.power.bms.mcu_ntc))[0]),

@@ -98,7 +98,7 @@ export default function Home() {
 
       <section className="body panel" aria-label="Robot body and joint motors">
         <div className="stage">
-          <AttitudeRing roll={stale ? 0 : s?.roll ?? 0} pitch={stale ? 0 : s?.pitch ?? 0} invalid={stale} />
+          <AttitudeRing roll={stale ? 0 : s?.roll ?? 0} pitch={stale ? 0 : s?.pitch ?? 0} invalid={stale || s?.roll == null || s?.pitch == null} />
           <Go2View posture={s?.posture ?? "unknown"} walking={!stale && !!s && Math.hypot(...(s.velocity ?? [0, 0])) > 0.05}
             joints={s?.joints ?? []} roll={s?.roll ?? 0} pitch={s?.pitch ?? 0} side={side} stale={stale} orbit={mode === "booth"} motion={motion.feed} />
         </div>
