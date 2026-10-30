@@ -332,3 +332,30 @@ body {
 .leg h3 { margin-bottom: 0; }
 .pg { align-content: start; }
 @media (max-width: 900px) { .leg { background: var(--surface-1); } }
+
+/* ---------- Final batch (verdict pass 1) ---------- */
+/* Bottom band sized to its content (pages are short); the body takes the rest. */
+.cockpit { grid-template-rows: auto minmax(0, 1fr) calc(var(--u) * 15.5) auto; }
+.cockpit.staff { grid-template-rows: auto minmax(0, 1fr) calc(var(--u) * 15.5) auto auto; }
+.cas-msg p { text-wrap: pretty; }
+.ro-v { white-space: nowrap; }
+/* Phone: this block must come last - it overrides the desktop dial size. */
+@media (max-width: 900px) {
+  .cockpit, .cockpit.staff { grid-template-rows: none; }
+  .body { grid-template-columns: 1fr; }
+  .leg { overflow: visible; }
+  .leg .dials { display: grid; grid-template-columns: repeat(3, 1fr); justify-items: center; }
+  .dial { --d: 72px; }
+  .dial .readout { font-size: 16px; }
+  .cas { max-height: none; }
+  .cas-list { overflow: visible; }
+  .synoptic { min-height: 0; }
+  .pg, .pg-power, .pg-vision, .pg-edge, .pg-link { grid-template-rows: none; align-content: start; }
+  .ro { flex-wrap: nowrap; }
+}
+/* six page keys must fit the band */
+.cockpit { grid-template-rows: auto minmax(0, 1fr) calc(var(--u) * 17.5) auto; }
+.cockpit.staff { grid-template-rows: auto minmax(0, 1fr) calc(var(--u) * 17.5) auto auto; }
+.keys { gap: calc(var(--u) * 0.25); }
+.keys button { padding: calc(var(--u) * 0.32) calc(var(--u) * 0.9); }
+@media (max-width: 900px) { .cockpit, .cockpit.staff { grid-template-rows: none; } }
