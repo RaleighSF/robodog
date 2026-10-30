@@ -102,3 +102,68 @@ def test_parameter_bounds(store):
     for bad in ({"window": "7d"}, {"window": "1h", "bin_size": "1s"}, {"window": "1d", "bin_size": "10s"}, {"window": "x"}):
         with pytest.raises(ValueError):
             b.run("Vitals_Series", dict({"window": "1h", "bin_size": "1m"}, **bad))
+
+
+def _fr_hip(b):
+    return next(r for r in b.r.joint_states("dog") if r["Joint"] == "FR_hip")
+
+
+def test_long_run_survives_sample_pruning(store):
+    ingest, b = store
+    push(ingest, vitals(1500, temp=60))              # run starts 25 min ago, outside the 11-min sample window
+    for ago in range(1440, -1, -60):
+        push(ingest, vitals(ago, temp=60))
+    assert _fr_hip(b)["Since55"].startswith(ts(1500)[:16])
+    push(ingest, vitals(1200, temp=40))              # a late cool sample older than the sample window
+    since = datetime.fromisoformat(_fr_hip(b)["Since55"])
+    # Bound (aws_store._run): the run restarts no earlier than the true restart
+    # (19 min ago), at the oldest retained hot sample: shorter, never longer.
+    assert NOW - timedelta(seconds=1140) <= since <= NOW - timedelta(seconds=540)
+
+
+def test_null_temperature_is_neither_hot_nor_cool(store):
+    ingest, b = store
+    push(ingest, vitals(120, temp=60))
+    push(ingest, vitals(60, temp=None))
+    push(ingest, vitals(0, temp=60))
+    assert _fr_hip(b)["Since55"].startswith(ts(120)[:16])
+
+
+def test_legacy_latest_row_without_tsms(store):
+    ingest, b = store
+    from backends.aws_store import _dumps
+    from backends.rows import vitals_row
+    row = dict(vitals_row(vitals(5, soc=70)), _kind="vitals")
+    b.r.table.put_item(Item={"pk": "Latest#dog", "sk": "vitals", "d": _dumps(row)})   # pre-tsms item
+    push(ingest, vitals(10, soc=90))                 # older: must not replace it
+    assert b.run("Vitals_Latest", {})[0]["BatterySoc"] == 70
+    push(ingest, vitals(1, soc=60))                  # newer: replaces it and gains tsms
+    assert b.run("Vitals_Latest", {})[0]["BatterySoc"] == 60
+
+
+def test_findings_are_deterministic(store):
+    ingest, b = store
+    push(ingest, vitals(300, temp=60), vitals(0, temp=62))
+    f = [(x["DeviceId"], x["Severity"], x["Finding"].split(" · ")[0]) for x in b.run("Overwatch_Findings", {})]
+    assert f == [(x["DeviceId"], x["Severity"], x["Finding"].split(" · ")[0]) for x in b.run("Overwatch_Findings", {})]
+    assert any(d == "dog" and "FR hip 62 °C" in t for d, _, t in f)
+
+
+def test_brief_lease_is_owned_and_stale_checked(store, monkeypatch):
+    import aws_handler
+    calls = []
+
+    class FakeAgent:
+        def ask(self, q, timeout_s=0):
+            calls.append(q)
+            return {"text": f"brief {len(calls)}", "seconds": 0.1}
+    monkeypatch.setattr(aws_handler, "_get_agent", lambda: FakeAgent())
+    sb = aws_handler.SharedBrief()
+    body, err = sb.get()
+    assert err is None and body["text"] == "brief 1"
+    assert sb.get()[0]["text"] == "brief 1" and len(calls) == 1          # fresh: served, not regenerated
+    # A stale instance that lost its lease cannot publish or release over a newer owner.
+    sb.table.update_item(Key=sb.key, UpdateExpression="SET lease_owner = :o, lease_until = :u",
+                         ExpressionAttributeValues={":o": "other", ":u": 2**31})
+    sb._release("me")
+    assert sb.table.get_item(Key=sb.key)["Item"]["lease_owner"] == "other"

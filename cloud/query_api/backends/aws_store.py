@@ -117,41 +117,67 @@ class Writer:
         self._puts.clear()
         for item in self._newest.values():
             try:
-                self.table.put_item(Item=item, ConditionExpression="attribute_not_exists(tsms) OR tsms < :t",
+                self.table.put_item(Item=item, ConditionExpression="attribute_not_exists(pk) OR tsms < :t",
                                     ExpressionAttributeValues={":t": item["tsms"]})
             except ClientError as e:
                 if e.response.get("Error", {}).get("Code") != "ConditionalCheckFailedException":
-                    raise                        # an older row lost to newer stored state: expected
+                    raise
+                self._replace_legacy(item)       # else an older row lost to newer stored state: expected
         self._newest.clear()
 
+    def _replace_legacy(self, item: Dict):
+        """A Latest item written before `tsms` existed: compare by its row
+        Timestamp, and replace it only if it is older and still unchanged."""
+        from botocore.exceptions import ClientError
+        cur = self.get_consistent(item["pk"], item["sk"])
+        if not cur or "tsms" in cur:
+            return
+        try:
+            old = parse_ts(json.loads(cur["d"]).get("Timestamp"))
+        except (KeyError, TypeError, ValueError):
+            old = None
+        if old is not None and int(old.timestamp() * 1000) >= item["tsms"]:
+            return
+        try:
+            self.table.put_item(Item=item, ConditionExpression="attribute_not_exists(tsms) AND d = :old",
+                                ExpressionAttributeValues={":old": cur["d"]})
+        except ClientError as e:
+            if e.response.get("Error", {}).get("Code") != "ConditionalCheckFailedException":
+                raise
 
-def _since(samples: List[list], threshold: float, carried: Optional[str]) -> Optional[str]:
-    """Start of the current run at or above threshold, from the sample window.
-    If every sample in the window is at or above it, the run began earlier: keep
-    the carried start (KQL counts it from its 2 h history)."""
-    start = None
-    for e, t in samples:
-        if t is not None and t >= threshold:
-            start = start if start is not None else e
-        else:
-            start = None
-    if start is None:
-        return None
-    if start == samples[0][0] and carried:
-        c = parse_ts(carried)
-        if c is not None and c.timestamp() <= start:
-            return carried
-    return iso(datetime.fromtimestamp(start, tz=timezone.utc))
+
+def _run(samples: List[list], threshold: float, prev: Dict, key: str):
+    """(start of the current run at or above threshold, epoch of the last sample
+    below it) over the merged, unpruned samples. Null temperatures are neither
+    hot nor cool. The last-below time and the run start carry across folds, so
+    pruning old samples never moves a run start later (KQL reads 2 h of history;
+    runs here are exact as long as the joint keeps reporting). Bound: a cool
+    sample arriving later than SAMPLE_KEEP_S restarts the run at the oldest
+    retained hot sample, so a run can read shorter than KQL's, never longer."""
+    below = prev.get("LastBelow" + key)
+    hot = [e for e, t in samples if t is not None and t >= threshold]
+    cool = [e for e, t in samples if t is not None and t < threshold]
+    if cool:
+        below = max(cool + ([below] if below is not None else []))
+    reading = [(e, t) for e, t in samples if t is not None]
+    if not reading or reading[-1][1] < threshold:
+        return None, below
+    starts = [e for e in hot if below is None or e > below]
+    carried = parse_ts(prev.get("Since" + key))
+    if carried is not None and (below is None or carried.timestamp() > below):
+        starts.append(carried.timestamp())
+    return (iso(datetime.fromtimestamp(min(starts), tz=timezone.utc)) if starts else None), below
 
 
 def fold_joint_state(prev: Optional[Dict], motors: List[Dict]) -> Optional[Dict]:
     """New JointState from the previous one and this batch's motor rows for one
-    joint, in any order. Late samples within the window are folded into the
-    sample history, so runs and trends are recomputed as KQL would; the newest
-    sample supplies the latest motor reading. None if nothing changed."""
+    joint, in any order. Late samples are folded into the sample history and the
+    runs are computed before old samples are pruned, so runs and trends match
+    KQL; the newest sample supplies the latest motor reading. None if nothing changed."""
     prev = prev or {}
+    derived = ("Samples", "Since55", "Since70", "LastBelow55", "LastBelow70")
     samples = {round(e, 3): t for e, t in prev.get("Samples") or []}
-    latest = {k: prev.get(k) for k in prev if k not in ("Samples", "Since55", "Since70")} if prev else {}
+    latest = {k: v for k, v in prev.items() if k not in derived}
     latest_ts = parse_ts(latest.get("Timestamp"))
     changed = False
     for m in motors:
@@ -166,12 +192,12 @@ def fold_joint_state(prev: Optional[Dict], motors: List[Dict]) -> Optional[Dict]
             latest, latest_ts, changed = dict(m), ts, True
     if not changed or latest_ts is None:
         return None
+    merged = sorted([e, t] for e, t in samples.items())
+    state = dict(latest)
+    for key, threshold in (("55", CAUTION_C), ("70", LIMIT_C)):
+        state["Since" + key], state["LastBelow" + key] = _run(merged, threshold, prev, key)
     newest = latest_ts.timestamp()
-    window = sorted([e, t] for e, t in samples.items() if newest - e <= SAMPLE_KEEP_S)
-    state = dict(latest, Samples=window)
-    t = latest.get("Temperature")
-    state["Since55"] = _since(window, CAUTION_C, prev.get("Since55")) if t is not None and t >= CAUTION_C else None
-    state["Since70"] = _since(window, LIMIT_C, prev.get("Since70")) if t is not None and t >= LIMIT_C else None
+    state["Samples"] = [p for p in merged if newest - p[0] <= SAMPLE_KEEP_S]
     return state
 
 

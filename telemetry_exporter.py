@@ -427,11 +427,29 @@ class MultiExporter:
         while True:
             method, key, payload = q.get()
             try:
-                ok = getattr(ex, method)(key, payload)
-            except Exception as e:                 # a sink must never kill its worker
-                logger.error(f"[Telemetry] sink {name} raised: {e}")
-                ok = False
-            self.stats[name]["ok" if ok else "failed"] += 1
+                # Routing is decided again at send time: a backlog queued for a
+                # cloud the skin has since deselected is dropped, never sent.
+                clouds = self._clouds()
+                if clouds is not None and SINK_CLOUD.get(name) and SINK_CLOUD[name] not in clouds:
+                    self.stats[name]["skipped"] += 1
+                    continue
+                try:
+                    ok = getattr(ex, method)(key, payload)
+                except Exception as e:             # a sink must never kill its worker
+                    logger.error(f"[Telemetry] sink {name} raised: {e}")
+                    ok = False
+                self.stats[name]["ok" if ok else "failed"] += 1
+            finally:
+                q.task_done()
+
+    def drain(self, timeout_s: float = 10.0) -> bool:
+        """Wait (bounded) until every queued event has been sent or dropped.
+        True if all queues emptied in time (used on shutdown)."""
+        deadline = time.monotonic() + timeout_s
+        for q in self._queues.values():
+            while q.unfinished_tasks and time.monotonic() < deadline:
+                time.sleep(0.05)
+        return all(q.unfinished_tasks == 0 for q in self._queues.values())
 
     def _clouds(self):
         if self.cloud_selector is None:
@@ -456,6 +474,7 @@ class MultiExporter:
                 except queue.Full:
                     try:
                         q.get_nowait()
+                        q.task_done()              # the dropped event counts as finished
                         self.stats[name]["dropped"] += 1
                     except queue.Empty:
                         pass
@@ -599,8 +618,10 @@ class TelemetryManager:
 
     def stop(self):
         self._stop_event.set()
-        # Final flush
+        # Final flush, then let every sink worker finish what is queued (bounded).
         self._flush_buffer()
+        if isinstance(self._exporter, MultiExporter) and not self._exporter.drain(10.0):
+            logger.warning("[Telemetry] shutdown: some queued events were not sent in time")
         if self._flush_thread:
             self._flush_thread.join(timeout=5)
         if self._image_thread:
@@ -813,6 +834,7 @@ class TelemetryManager:
             hive = _hive_prefix(dt)
             key = f"events/{hive}/{event.event_id}.json"
             if self._exporter.put_json(key, event.to_dict()):
+                # With per-sink queues this means "queued"; delivery is per sink in stats["sinks"].
                 self._events_uploaded += 1
             else:
                 self._events_failed += 1
@@ -853,7 +875,11 @@ class TelemetryManager:
             "deployment_id": self.deployment_id,
             "session_id": self._session_id,
             "events_emitted": self._events_emitted,
+            # events_uploaded counts events handed to the exporter; with several
+            # sinks they are queued per sink and "sinks" holds the real outcomes
+            # (ok / failed / skipped by the skin / dropped on a full queue).
             "events_uploaded": self._events_uploaded,
+            "events_queued_per_sink": isinstance(self._exporter, MultiExporter),
             "sinks": getattr(self._exporter, "stats", None),
             "events_failed": self._events_failed,
             "buffer_size": len(self._buffer),

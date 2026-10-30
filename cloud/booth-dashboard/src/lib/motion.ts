@@ -117,18 +117,30 @@ const b64url = (s: string) => btoa(s).replace(/\+/g, "-").replace(/\//g, "_").re
 // a failed subscribe, or a missed keep-alive closes the socket, and the hook's
 // onclose renegotiates.
 const ACK_DEADLINE_MS = 10_000;
-const watchdogs = new WeakMap<WebSocket, ReturnType<typeof setTimeout>>();
+// Two independent timers per socket: the handshake deadline (ack, then
+// subscribe_success) is cleared only by subscribe_success, so keep-alives can
+// never extend it; the keep-alive timer is reset by any traffic.
+type Timers = { handshake?: ReturnType<typeof setTimeout>; alive?: ReturnType<typeof setTimeout> };
+const watchdogs = new WeakMap<WebSocket, Timers>();
 
-function arm(sock: WebSocket, ms: number) {
-  clearTimeout(watchdogs.get(sock));
-  watchdogs.set(sock, setTimeout(() => sock.close(), ms));
+function arm(sock: WebSocket, which: keyof Timers, ms: number) {
+  const t = watchdogs.get(sock) ?? {};
+  clearTimeout(t[which]);
+  t[which] = setTimeout(() => sock.close(), ms);
+  watchdogs.set(sock, t);
+}
+
+function disarm(sock: WebSocket, which?: keyof Timers) {
+  const t = watchdogs.get(sock);
+  if (!t) return;
+  for (const k of which ? [which] : (["handshake", "alive"] as const)) { clearTimeout(t[k]); t[k] = undefined; }
 }
 
 function appSyncSocket(n: Extract<Negotiated, { provider: "aws-appsync-events" }>): WebSocket {
   const auth = { host: n.httpDomain, "x-api-key": n.apiKey };   // subscribe-only key; publishing needs IAM
   const sock = new WebSocket(`wss://${n.realtimeDomain}/event/realtime`, ["aws-appsync-event-ws", `header-${b64url(JSON.stringify(auth))}`]);
-  sock.onopen = () => { sock.send(JSON.stringify({ type: "connection_init" })); arm(sock, ACK_DEADLINE_MS); };
-  sock.addEventListener("close", () => clearTimeout(watchdogs.get(sock)));
+  sock.onopen = () => { sock.send(JSON.stringify({ type: "connection_init" })); arm(sock, "handshake", ACK_DEADLINE_MS); };
+  sock.addEventListener("close", () => disarm(sock));
   return sock;
 }
 
@@ -138,16 +150,17 @@ function appSyncData(sock: WebSocket, n: Extract<Negotiated, { provider: "aws-ap
   let m: { type?: string; event?: unknown; connectionTimeoutMs?: number };
   try { m = JSON.parse(String(ev.data)); } catch { return []; }
   const ka = keepAliveMs.get(sock);
-  if (ka) arm(sock, ka);                                         // any traffic counts as alive
+  if (ka) arm(sock, "alive", ka);                                // any traffic counts as alive
   switch (m.type) {
     case "connection_ack":
       keepAliveMs.set(sock, m.connectionTimeoutMs ?? 300_000);
-      arm(sock, ACK_DEADLINE_MS);                                // now waiting for subscribe_success
+      arm(sock, "handshake", ACK_DEADLINE_MS);                   // now waiting for subscribe_success
+      arm(sock, "alive", keepAliveMs.get(sock)!);
       sock.send(JSON.stringify({ type: "subscribe", id: crypto.randomUUID(), channel: n.channel,
         authorization: { host: n.httpDomain, "x-api-key": n.apiKey } }));
       return [];
     case "subscribe_success":
-      arm(sock, keepAliveMs.get(sock) ?? 300_000);
+      disarm(sock, "handshake");
       return [];
     case "subscribe_error":
     case "connection_error":

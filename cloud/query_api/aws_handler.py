@@ -11,6 +11,7 @@ import json
 import logging
 import threading
 import time
+import uuid
 
 from api_core import BRIEF_PROMPT, clean_question, staff_ok
 from backends import OPERATIONS, get_backend
@@ -45,7 +46,11 @@ def _get_agent():
 class SharedBrief:
     """One agent brief per minute across every Lambda instance (ADR 0011): the
     brief lives in the store (pk "Brief"); whoever wins a short conditional lease
-    refreshes it, everyone else serves the stored copy."""
+    refreshes it, everyone else serves the stored copy.
+
+    The lease is taken only if the stored brief is still stale (`atms`, epoch ms,
+    checked in the same condition) and carries an owner token, so a slow instance
+    whose lease expired can neither publish over nor release a newer owner's work."""
     TTL_S, LEASE_S, ASK_S = 60, 50, 40
 
     def __init__(self):
@@ -53,32 +58,62 @@ class SharedBrief:
         self.table = _table()
         self.key = {"pk": "Brief", "sk": "current"}
 
+    @staticmethod
+    def _conflict(e) -> bool:
+        return e.response.get("Error", {}).get("Code") == "ConditionalCheckFailedException"
+
+    def _served(self, body):
+        return dict(body, age_s=round(time.time() - body["at"], 1)), None
+
     def get(self):
         from botocore.exceptions import ClientError
         now = time.time()
         item = self.table.get_item(Key=self.key, ConsistentRead=True).get("Item") or {}
         body = json.loads(item["d"]) if "d" in item else None
         if body and now - body["at"] < self.TTL_S:
-            return dict(body, age_s=round(now - body["at"], 1)), None
+            return self._served(body)
+        me = uuid.uuid4().hex
         try:
-            self.table.update_item(Key=self.key, UpdateExpression="SET lease_until = :until",
-                                   ConditionExpression="attribute_not_exists(lease_until) OR lease_until < :now",
-                                   ExpressionAttributeValues={":until": int(now + self.LEASE_S), ":now": int(now)})
+            self.table.update_item(
+                Key=self.key, UpdateExpression="SET lease_until = :until, lease_owner = :me",
+                ConditionExpression=("(attribute_not_exists(lease_until) OR lease_until < :now) "
+                                     "AND (attribute_not_exists(atms) OR atms < :stale)"),
+                ExpressionAttributeValues={":until": int(now + self.LEASE_S), ":now": int(now), ":me": me,
+                                           ":stale": int((now - self.TTL_S) * 1000)})
         except ClientError as e:
-            if e.response.get("Error", {}).get("Code") != "ConditionalCheckFailedException":
+            if not self._conflict(e):
                 raise
-            # Another instance is refreshing: serve what we have.
-            return (dict(body, age_s=round(now - body["at"], 1)), None) if body else (None, "brief is being prepared")
+            # Another instance is refreshing, or just did: serve the freshest copy.
+            item = self.table.get_item(Key=self.key, ConsistentRead=True).get("Item") or {}
+            body = json.loads(item["d"]) if "d" in item else body
+            return self._served(body) if body else (None, "brief is being prepared")
         try:
             r = _get_agent().ask(BRIEF_PROMPT, timeout_s=self.ASK_S)
-            body = {"text": r["text"], "at": time.time(), "seconds": r["seconds"]}
-            self.table.put_item(Item=dict(self.key, d=json.dumps(body), lease_until=0))
-            return dict(body, age_s=0.0), None
         except Exception:
             log.exception("agent brief failed")
-            self.table.update_item(Key=self.key, UpdateExpression="SET lease_until = :z",
-                                   ExpressionAttributeValues={":z": 0})
-            return (dict(body, age_s=round(time.time() - body["at"], 1)), None) if body else (None, "agent unavailable")
+            self._release(me)
+            return self._served(body) if body else (None, "agent unavailable")
+        at = time.time()
+        fresh = {"text": r["text"], "at": at, "seconds": r["seconds"]}
+        try:
+            self.table.update_item(
+                Key=self.key, UpdateExpression="SET d = :d, atms = :at REMOVE lease_until, lease_owner",
+                ConditionExpression="lease_owner = :me",
+                ExpressionAttributeValues={":d": json.dumps(fresh), ":at": int(at * 1000), ":me": me})
+        except ClientError as e:
+            if not self._conflict(e):
+                raise
+            log.warning("brief lease lost before publish; answer served but not stored")
+        return dict(fresh, age_s=0.0), None
+
+    def _release(self, me: str):
+        from botocore.exceptions import ClientError
+        try:
+            self.table.update_item(Key=self.key, UpdateExpression="REMOVE lease_until, lease_owner",
+                                   ConditionExpression="lease_owner = :me", ExpressionAttributeValues={":me": me})
+        except ClientError as e:
+            if not self._conflict(e):
+                raise
 
 
 _brief = None
