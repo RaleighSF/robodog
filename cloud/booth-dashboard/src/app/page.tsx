@@ -103,7 +103,7 @@ export default function Home() {
         {source === "live" && (
           <div className={`mirror ${motion.live ? "on" : ""}`} aria-live="polite">
             <span className="mirror-lamp" aria-hidden="true" />
-            <span className="title">{motion.live ? "Live mirror" : "Mirror · posture only"}</span>
+            <span className="title">{motion.live ? "Live twin" : "Twin · posture only"}</span>
             {recent && <b className="maneuver" key={recent.t}>{MANEUVER_LABEL[recent.name] ?? recent.name.toUpperCase()}{recent.paw ? <small> · {recent.paw} paw</small> : null}</b>}
           </div>
         )}
