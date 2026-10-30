@@ -18,7 +18,7 @@ az deployment group create -g "$RG" -n watchdog-ingest -f "$HERE/main.bicep" \
   -p namespaceName="$NS" -o table
 mkdir -p "$HERE/secrets" && chmod 700 "$HERE/secrets"
 az eventhubs eventhub authorization-rule keys list -g "$RG" --namespace-name "$NS" \
-  --eventhub-name watchdog-telemetry -n edge-send --query primaryConnectionString -o tsv \
+  --eventhub-name watchdog-telemetry --authorization-rule-name edge-send --query primaryConnectionString -o tsv \
   > "$HERE/secrets/eventhub.conn"
 chmod 600 "$HERE/secrets/eventhub.conn"
 echo "send-only connection string -> $HERE/secrets/eventhub.conn (copy to the Thor's /state/eventhub.conn)"
