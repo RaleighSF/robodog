@@ -13,6 +13,7 @@ these records plus `cloud/PARITY.md`, and it must pass the same contract tests.
 | [0004](0004-agent-overwatch.md) | Agent overwatch: read-only, alerts, staff-only chat | Accepted |
 | [0005](0005-booth-dashboard.md) | Booth dashboard: Next.js + TS, EICAS direction, themeable per cloud | Accepted |
 | [0006](0006-telemetry-schema-1-1.md) | Schema 1.1: full robot superset (joints, IMU, BMS, feet, gait, edge) | Accepted |
+| [0008](0008-function-ingest.md) | Event Hubs → ADX via a Function trigger (streaming ingest), not a data connection | Accepted |
 
 New decisions: copy the template below, take the next number, and add a row.
 

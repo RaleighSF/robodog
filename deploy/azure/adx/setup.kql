@@ -10,6 +10,14 @@
 
 .alter-merge table RawEvents policy retention softdelete = 30d
 
+// The query API's ingest function streams Event Hubs batches into RawEvents
+// (ADR 0008). Grant its managed identity separately, once per deployment:
+//   .add database watchdog ingestors ('aadapp=<function MI app id>;<tenant id>')
+//   .add database watchdog viewers   ('aadapp=<function MI app id>;<tenant id>')
+.alter database watchdog policy streamingingestion enable
+
+.alter table RawEvents policy streamingingestion enable
+
 // 2) Typed tables, filled automatically by update policies.
 .create-merge table Heartbeats (
     Timestamp: datetime, DeviceId: string, DeviceType: string, SessionId: string,

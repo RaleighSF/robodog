@@ -23,7 +23,7 @@ may be cloud-specific.
 | Role | Azure (Ignite), built | AWS (re:Invent), planned; verify availability at build time |
 |---|---|---|
 | Edge sink | `azure_eventhub` (`EventHubExporter`) | `aws_kinesis` sink, same JSON |
-| Ingest | Event Hubs Basic `watchdog-ignite-28628191/watchdog-telemetry` | Kinesis Data Streams (on-demand) |
+| Ingest | Event Hubs Basic `watchdog-ignite-28628191/watchdog-telemetry` → `telemetry_ingest` Function (ADR 0008) | Kinesis Data Streams (on-demand) |
 | Store and analytics | ADX free cluster, KQL update policies + functions | Firehose → S3 (Parquet) + Athena views mirroring the tables/functions |
 | Query API host | Azure Functions (Python), `cloud/query_api` | Lambda (Python) behind a function URL or API Gateway, same handler |
 | Agent | Azure AI Foundry agent + OpenAPI tool | Amazon Bedrock agent / AgentCore + the same OpenAPI tool |
@@ -49,3 +49,5 @@ may be cloud-specific.
 - 2026-10-28: Edge sinks, ADX schema, query API (ADX backend), schema 1.1.
 - 2026-10-30: Azure subscription live; Event Hubs deployed (rg-watchdog-ignite,
   southcentralus); EICAS dashboard direction chosen.
+- 2026-10-30: Live path working end to end: Thor → Event Hubs → Function ingest → ADX →
+  query API → dashboard and Foundry agent (ADR 0008).
