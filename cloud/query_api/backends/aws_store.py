@@ -160,10 +160,13 @@ def _run(samples: List[list], threshold: float, prev: Dict, key: str):
     if cool:
         below = max(cool + ([below] if below is not None else []))
     reading = [(e, t) for e, t in samples if t is not None]
-    if not reading or reading[-1][1] < threshold:
+    carried = parse_ts(prev.get("Since" + key))
+    if not reading:                       # only nulls retained: nothing hot or cool seen, keep the run
+        keep = carried is not None and (below is None or carried.timestamp() > below)
+        return (prev.get("Since" + key) if keep else None), below
+    if reading[-1][1] < threshold:
         return None, below
     starts = [e for e in hot if below is None or e > below]
-    carried = parse_ts(prev.get("Since" + key))
     if carried is not None and (below is None or carried.timestamp() > below):
         starts.append(carried.timestamp())
     return (iso(datetime.fromtimestamp(min(starts), tz=timezone.utc)) if starts else None), below

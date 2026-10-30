@@ -618,16 +618,15 @@ class TelemetryManager:
 
     def stop(self):
         self._stop_event.set()
-        # Final flush, then let every sink worker finish what is queued (bounded).
+        # Producers first (a flush in progress may hold events it already took
+        # from the buffer), then the final flush, then let every sink worker
+        # finish what is queued (bounded).
+        for t in (self._flush_thread, self._image_thread, self._heartbeat_thread):
+            if t:
+                t.join(timeout=5)
         self._flush_buffer()
         if isinstance(self._exporter, MultiExporter) and not self._exporter.drain(10.0):
             logger.warning("[Telemetry] shutdown: some queued events were not sent in time")
-        if self._flush_thread:
-            self._flush_thread.join(timeout=5)
-        if self._image_thread:
-            self._image_thread.join(timeout=5)
-        if self._heartbeat_thread:
-            self._heartbeat_thread.join(timeout=5)
         logger.info(f"[Telemetry] Stopped — emitted={self._events_emitted}, uploaded={self._events_uploaded}, failed={self._events_failed}")
 
     # -- Event emission ------------------------------------------------------

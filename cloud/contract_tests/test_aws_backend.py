@@ -167,3 +167,25 @@ def test_brief_lease_is_owned_and_stale_checked(store, monkeypatch):
                          ExpressionAttributeValues={":o": "other", ":u": 2**31})
     sb._release("me")
     assert sb.table.get_item(Key=sb.key)["Item"]["lease_owner"] == "other"
+
+
+def test_null_interval_longer_than_window_keeps_run(store):
+    ingest, b = store
+    push(ingest, vitals(900, temp=60))
+    push(ingest, vitals(140, temp=None), vitals(120, temp=None))   # 60 C sample now pruned, only nulls kept
+    push(ingest, vitals(0, temp=60))
+    assert _fr_hip(b)["Since55"].startswith(ts(900)[:16])
+
+
+def test_brief_lost_lease_serves_stored_copy(store, monkeypatch):
+    import aws_handler
+    sb = aws_handler.SharedBrief()
+
+    class Thief:
+        def ask(self, q, timeout_s=0):     # while we ask, another owner takes the lease and publishes
+            import json as _j, time as _t
+            sb.table.put_item(Item=dict(sb.key, d=_j.dumps({"text": "new owner brief", "at": _t.time(), "seconds": 1}),
+                                        atms=int(_t.time() * 1000), lease_owner="other"))
+            return {"text": "lost owner brief", "seconds": 0.1}
+    monkeypatch.setattr(aws_handler, "_get_agent", lambda: Thief())
+    assert sb.get()[0]["text"] == "new owner brief"

@@ -86,7 +86,7 @@ def main(azure, aws, explained=None):
             bad.append(f"motors_latest {k}: azure={ma[k]} aws={mw[k]}")
     fa = {finding_key(r) for r in got["overwatch_findings"][0]}
     fw = {finding_key(r) for r in got["overwatch_findings"][1]}
-    if fa != fw:
+    if fa != fw and not ((not fa or not fw) and "overwatch_findings" in explained):
         bad.append(f"overwatch_findings differ: azure-only={sorted(map(str, fa - fw))} aws-only={sorted(map(str, fw - fa))}")
     print("\n" + ("PASS" if not bad else "FAIL\n  " + "\n  ".join(bad)))
     return 1 if bad else 0

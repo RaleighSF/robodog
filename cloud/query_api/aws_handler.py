@@ -103,7 +103,11 @@ class SharedBrief:
         except ClientError as e:
             if not self._conflict(e):
                 raise
-            log.warning("brief lease lost before publish; answer served but not stored")
+            # Another owner took over: serve what it stored, never our discarded answer.
+            log.warning("brief lease lost before publish; serving the stored brief")
+            item = self.table.get_item(Key=self.key, ConsistentRead=True).get("Item") or {}
+            stored = json.loads(item["d"]) if "d" in item else body
+            return self._served(stored) if stored else (None, "brief is being prepared")
         return dict(fresh, age_s=0.0), None
 
     def _release(self, me: str):
