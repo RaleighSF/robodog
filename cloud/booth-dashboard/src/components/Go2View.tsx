@@ -81,7 +81,7 @@ export default function Go2View(props: Go2Props) {
     for (const [a, b] of [[[-0.62, 0], [0.62, 0]], [[0, -0.62], [0, 0.62]]] as const) {
       floor.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(a[0], 0.001, a[1]), new THREE.Vector3(b[0], 0.001, b[1])]), tick));
     }
-    scene.add(floor);
+    void floor;   // floor hairlines removed: they competed with the attitude ring (finish review)
 
     // MuJoCo is Z-up; three is Y-up.
     const world = new THREE.Group(); world.rotation.x = -Math.PI / 2; scene.add(world);
@@ -173,7 +173,7 @@ export default function Go2View(props: Go2Props) {
         // Dog faces screen-left with its left legs nearest; a gentle sway (not an
         // orbit) keeps every leg inside its dial quadrant.
         const ang = -1.22 + (p.orbit && !reduced ? 0.3 * Math.sin(t * 0.21) : 0);
-        camera.position.set(Math.cos(ang) * 1.45, 0.62, Math.sin(ang) * 1.45);
+        camera.position.set(Math.cos(ang) * 1.6, 0.66, Math.sin(ang) * 1.6);   // framed for the centre gap between dial quadrants
         camera.lookAt(0, base.position.z * 0.55 + 0.06, 0);
         renderer.render(scene, camera);
         raf = requestAnimationFrame(loop);

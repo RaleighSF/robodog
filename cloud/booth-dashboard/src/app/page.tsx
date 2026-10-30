@@ -12,6 +12,23 @@ import { useTelemetry } from "@/lib/useTelemetry";
 
 const Go2View = dynamic(() => import("@/components/Go2View"), { ssr: false });
 
+/** Bank scale (fixed) + roll pointer and horizon (move with the IMU), behind the dog. */
+function AttitudeRing({ roll, pitch, invalid }: { roll: number; pitch: number; invalid: boolean }) {
+  const deg = roll * 57.3, R = 100;
+  const tick = (a: number, len: number) => { const t = ((a - 90) * Math.PI) / 180; return <line key={a} x1={100 + R * Math.cos(t)} y1={100 + R * Math.sin(t)} x2={100 + (R - len) * Math.cos(t)} y2={100 + (R - len) * Math.sin(t)} />; };
+  return (
+    <svg className="att-ring" viewBox="-4 -4 208 208" aria-hidden="true">
+      <defs><clipPath id="ring-clip"><circle cx="100" cy="100" r={R} /></clipPath></defs>
+      <circle cx="100" cy="100" r={R} className="ring" />
+      <g className="bank">{[-30, -20, -10, 10, 20, 30].map((a) => tick(a, Math.abs(a) === 30 ? 9 : 6))}{tick(0, 11)}</g>
+      <g clipPath="url(#ring-clip)" style={{ transform: `rotate(${-deg}deg)`, transformOrigin: "100px 100px", transition: "transform 600ms var(--ease-out)" }}>
+        <line x1="-20" x2="220" y1={100 + pitch * 57.3 * 1.4} y2={100 + pitch * 57.3 * 1.4} className={`hz ${invalid ? "invalid" : ""}`} />
+        <path d="M100 4 L95 13 L105 13 Z" className={`ptr ${invalid ? "invalid" : ""}`} />
+      </g>
+    </svg>
+  );
+}
+
 const LEG_NAME: Record<Leg, string> = { FL: "Front left", FR: "Front right", RL: "Rear left", RR: "Rear right" };
 // Screen placement matches the camera: dog faces left, left legs nearest.
 const QUADRANT: Record<Leg, string> = { FR: "q-tl", FL: "q-bl", RR: "q-tr", RL: "q-br" };
@@ -35,7 +52,6 @@ export default function Home() {
   const warnLit = !stale && unacked.some((f) => f.severity === "warning");
   const cautionLit = !stale && unacked.some((f) => f.severity === "caution");
   const ack = (sev: "warning" | "caution") => setAcked((a) => new Set([...a, ...data.findings.filter((f) => f.severity === sev).map((f) => `${f.id}:${f.severity}`)]));
-  const hot = s?.joints.reduce((m, j) => (j.temp != null && (m == null || j.temp > (m.temp ?? -1)) ? j : m), s?.joints[0]);
 
   return (
     <main className={`cockpit ${mode}`}>
@@ -54,23 +70,20 @@ export default function Home() {
       </header>
 
       <section className="body panel" aria-label="Robot body and joint motors">
-        <div className="horizon" aria-hidden="true" style={{ transform: `rotate(${-(s?.roll ?? 0) * 57.3}deg) translateY(${(s?.pitch ?? 0) * 57.3 * 1.2}px)` }} />
-        <Go2View posture={s?.posture ?? "unknown"} walking={!stale && !!s && Math.hypot(...(s.velocity ?? [0, 0])) > 0.05}
-          joints={s?.joints ?? []} roll={s?.roll ?? 0} stale={stale} orbit={mode === "booth"} />
+        <div className="stage">
+          <AttitudeRing roll={stale ? 0 : s?.roll ?? 0} pitch={stale ? 0 : s?.pitch ?? 0} invalid={stale} />
+          <Go2View posture={s?.posture ?? "unknown"} walking={!stale && !!s && Math.hypot(...(s.velocity ?? [0, 0])) > 0.05}
+            joints={s?.joints ?? []} roll={s?.roll ?? 0} stale={stale} orbit={mode === "booth"} />
+        </div>
         {LEGS.map((leg) => (
           <div key={leg} className={`leg ${QUADRANT[leg]}`}>
             <h3 className="title">{LEG_NAME[leg]}</h3>
             <div className="dials">{(s?.joints ?? []).filter((j) => j.leg === leg).map((j) => <JointDial key={j.name} joint={j} stale={stale} />)}</div>
           </div>
         ))}
-        <div className="body-foot">
-          <span className="title">Posture</span><b className="num">{stale ? "--" : (s?.posture === "low" ? "sitting" : s?.posture ?? "--").toUpperCase()}</b>
-          <span className="title">Hottest</span><b className="num">{stale || !hot?.temp ? "--" : `${hot.name.replace("_", " ")} ${hot.temp.toFixed(0)}°C`}</b>
-          <span className="title">Battery</span><b className="num">{stale || s?.battery.soc == null ? "--" : `${s.battery.soc.toFixed(0)}%`}</b>
-        </div>
       </section>
 
-      <CasStack findings={data.findings} stale={stale} />
+      <CasStack findings={data.findings} stale={stale} snapshot={s ?? null} socSeries={data.series.soc} />
 
       <section className="synoptic panel" aria-label={`Synoptic page ${page}`}>
         <nav className="keys" aria-label="Synoptic pages">

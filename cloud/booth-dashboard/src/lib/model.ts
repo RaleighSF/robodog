@@ -56,6 +56,7 @@ export const LIMITS = {
   batteryCaution: 20, batteryWarning: 10,      // %
   tiltWarning: 0.6,                            // rad (~34 deg)
   edgeCaution: 85,                             // degC
+  cellImbalanceMv: 50,                         // mV spread before a cell is flagged (placeholder)
   staleS: 15,                                  // telemetry older than this is shown invalid
 };
 

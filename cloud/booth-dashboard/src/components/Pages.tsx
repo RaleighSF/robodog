@@ -21,40 +21,27 @@ function Power({ d, stale }: { d: Telemetry; stale: boolean }) {
   const s = d.snapshot!;
   const b = s.battery;
   const series = d.series.soc;
-  let mins: number | null = null;
-  if (series.length > 8 && b.soc != null) {
-    const a = series[Math.max(0, series.length - 60)], z = series[series.length - 1];
-    const rate = (a.v - z.v) / Math.max((z.t - a.t) / 60000, 0.01);
-    if (rate > 0.01) mins = Math.max(0, (b.soc - LIMITS.batteryWarning) / rate);
-  }
-  const cells = b.cellV;
+  const cells = stale ? [] : b.cellV;
   const cmin = cells.length ? Math.min(...cells) : null, cmax = cells.length ? Math.max(...cells) : null;
-  const budget = Math.min((mins ?? 0) / 90, 1);
+  const spreadMv = cmin != null ? (cmax! - cmin) * 1000 : null;
+  const imbalanced = spreadMv != null && spreadMv > LIMITS.cellImbalanceMv;
   return (
     <div className="pg pg-power">
-      <div className="budget">
-        <div className="budget-head"><span className="title">Runtime budget</span><span className="num">{stale || mins == null ? "--" : `${Math.round(mins)} min`}</span></div>
-        <div className="budget-tape" role="img" aria-label={`About ${mins == null ? "unknown" : Math.round(mins)} minutes of demo left`}>
-          {Array.from({ length: 18 }, (_, i) => <i key={i} className={i / 18 < budget ? (budget < 0.2 ? "warn" : "on") : ""} />)}
-        </div>
-        <div className="budget-scale num"><span>0</span><span>30</span><span>60</span><span>90 min</span></div>
-      </div>
       <div className="cells">
         <span className="title">Cells · {cells.length || "--"}S</span>
         <div className="cell-bars" role="img" aria-label="Cell voltages">
           {cells.map((v, i) => (
-            <div key={i} className="cell"><i style={{ height: `${Math.max(4, ((v - 3.3) / 0.9) * 100)}%` }} className={cmin != null && v === cmin && cmax! - cmin > 0.01 ? "low" : ""} /><span className="num">{v.toFixed(2)}</span></div>
+            <div key={i} className="cell"><i style={{ height: `${Math.max(4, ((v - 3.3) / 0.9) * 100)}%` }} className={imbalanced && v === cmin ? "low" : "ok"} /><span className="num">{v.toFixed(2)}</span></div>
           ))}
         </div>
-        <span className="num cell-delta">Δ {cmin != null ? ((cmax! - cmin) * 1000).toFixed(0) : "--"} mV</span>
+        <span className={`num cell-delta ${imbalanced ? "caution" : ""}`}>Δ {spreadMv != null ? spreadMv.toFixed(0) : "--"}{"\u00a0"}mV{imbalanced ? " · imbalance" : " · balanced"}</span>
       </div>
       <div className="ro-grid">
-        <Readout label="SOC" value={stale ? "--" : f(b.soc, 0)} unit="%" state={b.soc != null && b.soc < LIMITS.batteryCaution ? "caution" : undefined} />
         <Readout label="Pack" value={stale ? "--" : f(b.packV, 1)} unit=" V" />
         <Readout label="Current" value={stale ? "--" : f(b.packA, 1)} unit=" A" />
-        <Readout label="Cycles" value={f(b.cycles)} />
-        <Readout label="BMS max" value={f(b.bmsTemps.length ? Math.max(...b.bmsTemps) : null, 0)} unit=" °C" />
-        <Readout label="Board" value={f(b.boardTemps.length ? Math.max(...b.boardTemps) : null, 0)} unit=" °C" />
+        <Readout label="Cycles" value={stale ? "--" : f(b.cycles)} />
+        <Readout label="BMS max" value={stale ? "--" : f(b.bmsTemps.length ? Math.max(...b.bmsTemps) : null, 0)} unit=" °C" />
+        <Readout label="Board" value={stale ? "--" : f(b.boardTemps.length ? Math.max(...b.boardTemps) : null, 0)} unit=" °C" />
       </div>
       <TrendTape label="State of charge" unit="%" data={series} min={0} max={100} limits={[{ v: LIMITS.batteryCaution, kind: "caution" }, { v: LIMITS.batteryWarning, kind: "warning" }]} />
     </div>
@@ -140,7 +127,7 @@ function Attitude({ d, stale }: { d: Telemetry; stale: boolean }) {
         <div className="ro-grid two">
           <Readout label="Roll" value={stale ? "--" : f(deg(roll), 1)} unit="°" state={Math.abs(roll) > LIMITS.tiltWarning ? "warning" : undefined} />
           <Readout label="Pitch" value={stale ? "--" : f(deg(pitch), 1)} unit="°" state={Math.abs(pitch) > LIMITS.tiltWarning ? "warning" : undefined} />
-          <Readout label="IMU temp" value={f(s.imuTemp, 0)} unit=" °C" />
+          <Readout label="IMU temp" value={stale ? "--" : f(s.imuTemp, 0)} unit=" °C" />
           <Readout label="Posture" value={stale ? "--" : s.posture.toUpperCase()} />
         </div>
         <div className="sil-strip" aria-label="Posture history">

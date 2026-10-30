@@ -1,7 +1,7 @@
 "use client";
 // EICAS instruments drawn from data: joint dials, annunciators, freshness lamp,
 // crew-alerting stack, trend tapes. Colour always travels with a label or shape.
-import { DIAL, Finding, Joint, jointState, LIMITS, SeriesPoint } from "@/lib/model";
+import { DIAL, Finding, Joint, jointState, LIMITS, SeriesPoint, Snapshot } from "@/lib/model";
 
 const SWEEP = 210;                         // degrees, EICAS round-dial sweep
 const START = 90 + (360 - SWEEP) / 2;      // start angle (SVG: 0 = +x, clockwise)
@@ -30,7 +30,11 @@ export function JointDial({ joint, stale, size = 100 }: { joint: Joint; stale: b
         {(() => { const [x0, y0] = polar(c, c, r - 7, toDeg(LIMITS.jointWarning)); const [x1, y1] = polar(c, c, r + 5, toDeg(LIMITS.jointWarning));
           return <line x1={x0} y1={y0} x2={x1} y2={y1} stroke="var(--status-danger)" strokeWidth={3} />; })()}
         {/* torque: thin inner arc, proportion of 20 Nm */}
-        {valid && tq > 0.01 && <path d={arc(c, c, r - 9, START, START + tq * SWEEP)} stroke="var(--text-tertiary)" strokeWidth={2} fill="none" />}
+        {[30, 40, 50, 60, 70, 80].map((v) => { const [x0, y0] = polar(c, c, r + 2, toDeg(v)); const [x1, y1] = polar(c, c, r + 5, toDeg(v));
+          return <line key={v} x1={x0} y1={y0} x2={x1} y2={y1} stroke="var(--border-strong)" strokeWidth={1} />; })}
+        {/* torque: inner arc, proportion of 20 Nm */}
+        <path d={arc(c, c, r - 9, START, START + SWEEP)} stroke="var(--border-subtle)" strokeWidth={3} fill="none" />
+        {valid && tq > 0.01 && <path d={arc(c, c, r - 9, START, START + tq * SWEEP)} stroke="var(--text-secondary)" strokeWidth={3} fill="none" style={{ transition: "d 400ms var(--ease-out)" }} />}
         {valid && (() => { const [x, y] = polar(c, c, r - 2, toDeg(joint.temp!)); return <line x1={c} y1={c} x2={x} y2={y} stroke={STATUS_VAR[st]} strokeWidth={st === "ok" ? 2.5 : 3.5} strokeLinecap="round" style={{ transition: "all 600ms var(--ease-out)" }} />; })()}
         <circle cx={c} cy={c} r={3.2} fill="var(--surface-3)" stroke="var(--border-strong)" />
       </svg>
@@ -64,7 +68,48 @@ export function Annunciator({ kind, lit, onAck }: { kind: "warning" | "caution";
 const SEV_LABEL = { warning: "WARNING", caution: "CAUTION", advisory: "ADVISORY" } as const;
 function hhmmss(t: number) { return new Date(t).toLocaleTimeString([], { hour12: false }); }
 
-export function CasStack({ findings, stale }: { findings: Finding[]; stale: boolean }) {
+type St = "ok" | "caution" | "warning" | "unknown";
+function systems(s: Snapshot | null, stale: boolean): { name: string; state: St; text: string }[] {
+  if (!s || stale) return ["Joint motors", "Battery", "Attitude", "Robot link", "Video", "Edge compute"].map((name) => ({ name, state: "unknown" as St, text: "NO DATA" }));
+  const temps = s.joints.map((j) => j.temp).filter((t): t is number => t != null);
+  const tmax = temps.length ? Math.max(...temps) : null;
+  const soc = s.battery.soc;
+  const tilt = Math.max(Math.abs(s.roll ?? 0), Math.abs(s.pitch ?? 0));
+  return [
+    { name: "Joint motors", state: jointState(tmax), text: tmax == null ? "NO DATA" : `12 · max ${tmax.toFixed(0)} °C` },
+    { name: "Battery", state: soc == null ? "unknown" : soc < LIMITS.batteryWarning ? "warning" : soc < LIMITS.batteryCaution ? "caution" : "ok", text: soc == null ? "NO DATA" : `${soc.toFixed(0)} %` },
+    { name: "Attitude", state: tilt > LIMITS.tiltWarning ? "warning" : "ok", text: `${s.posture === "low" ? "sitting" : s.posture} · tilt ${(tilt * 57.3).toFixed(0)}°` },
+    { name: "Robot link", state: s.connected ? "ok" : "warning", text: s.connected ? "DDS up" : "down" },
+    { name: "Video", state: s.hasVideo ? "ok" : "caution", text: s.hasVideo ? "streaming" : "no video" },
+    { name: "Edge compute", state: s.edge.temp != null && s.edge.temp > LIMITS.edgeCaution ? "caution" : s.edge.temp == null ? "unknown" : "ok", text: s.edge.temp == null ? "NO DATA" : `Thor ${s.edge.temp.toFixed(0)} °C` },
+  ];
+}
+const SHAPE: Record<St, string> = { ok: "M6 1 A5 5 0 1 1 5.99 1 Z", caution: "M6 1 L11 11 L1 11 Z", warning: "M2 2 L10 10 M10 2 L2 10", unknown: "M2 6 L10 6" };
+
+export function RuntimeBudget({ soc, series, posture, stale }: { soc: number | null; series: SeriesPoint[]; posture: string; stale: boolean }) {
+  let mins: number | null = null;
+  if (series.length > 8 && soc != null) {
+    const a = series[Math.max(0, series.length - 60)], z = series[series.length - 1];
+    const rate = (a.v - z.v) / Math.max((z.t - a.t) / 60000, 0.01);
+    if (rate > 0.01) mins = Math.max(0, (soc - LIMITS.batteryWarning) / rate);
+  }
+  const budget = stale || mins == null ? 0 : Math.min(mins / 90, 1);
+  return (
+    <div className="pinned">
+      <div className="pin-posture"><span className="title">Posture</span><b className="num">{stale ? "--" : (posture === "low" ? "sitting" : posture).toUpperCase()}</b></div>
+      <div className="budget">
+        <div className="budget-head"><span className="title">Battery · runtime budget</span>
+          <span className="num"><b>{stale || soc == null ? "--" : `${soc.toFixed(0)}\u00a0%`}</b> · {stale || mins == null ? "--" : `${Math.round(mins)}\u00a0min`}</span></div>
+        <div className="budget-tape" role="img" aria-label={`About ${mins == null ? "unknown" : Math.round(mins)} minutes of demo left`}>
+          {Array.from({ length: 18 }, (_, i) => <i key={i} className={i / 18 < budget ? (budget < 0.2 ? "warn" : "on") : ""} />)}
+        </div>
+        <div className="budget-scale num"><span>0</span><span>30</span><span>60</span><span>90 min</span></div>
+      </div>
+    </div>
+  );
+}
+
+export function CasStack({ findings, stale, snapshot, socSeries }: { findings: Finding[]; stale: boolean; snapshot: Snapshot | null; socSeries: SeriesPoint[] }) {
   return (
     <section className="cas panel" aria-label="Agent overwatch crew-alerting messages">
       <header className="cas-head"><h2 className="title">Overwatch · crew alerting</h2><span className="cas-count num">{findings.length}</span></header>
@@ -82,6 +127,18 @@ export function CasStack({ findings, stale }: { findings: Finding[]; stale: bool
           </li>
         ))}
       </ol>
+      <div className="status">
+        <h3 className="title">Status · monitored systems</h3>
+        <ul>
+          {systems(snapshot, stale).map((x) => (
+            <li key={x.name} className={x.state}>
+              <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d={SHAPE[x.state]} fill={x.state === "warning" || x.state === "unknown" ? "none" : "currentColor"} stroke="currentColor" strokeWidth={2} /></svg>
+              <span>{x.name}</span><span className="num">{x.text}</span>
+            </li>
+          ))}
+        </ul>
+      </div>
+      <RuntimeBudget soc={snapshot?.battery.soc ?? null} series={socSeries} posture={snapshot?.posture ?? "unknown"} stale={stale} />
     </section>
   );
 }

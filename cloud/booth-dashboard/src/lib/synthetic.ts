@@ -106,12 +106,13 @@ export class SyntheticSource {
       if (j.temp >= LIMITS.jointWarning) {
         live.add(j.name);
         this.upsert(`joint:${j.name}`, "warning", now, `${j.name} ${j.temp.toFixed(0)} °C`,
-          `${label(j)} motor reached ${j.temp.toFixed(0)} °C, over the ${LIMITS.jointWarning} °C limit. Sit or lie the dog down now.`, j.name);
+          `${label(j)} motor reached ${j.temp.toFixed(0)}\u00a0°C, over the ${LIMITS.jointWarning}\u00a0°C limit. Sit or lie the dog down now.`, j.name);
       } else if (j.temp >= LIMITS.jointCaution) {
         live.add(j.name);
-        const toLimit = rate > 0.2 ? ` At this rate it reaches ${LIMITS.jointWarning} °C in about ${Math.max(1, Math.round((LIMITS.jointWarning - j.temp) / rate))} min.` : "";
-        this.upsert(`joint:${j.name}`, "caution", now, `${j.name} ${j.temp.toFixed(0)} °C ${rate >= 0 ? "+" : ""}${rate.toFixed(1)} °C/min`,
-          `${label(j)} motor is at ${j.temp.toFixed(0)} °C and ${rate > 0.2 ? "climbing" : "steady"} while ${snap.posture}.${toLimit}`, j.name);
+        const eta = rate > 0.2 ? Math.max(1, Math.round((LIMITS.jointWarning - j.temp) / rate)) : null;
+        const toLimit = eta != null ? ` It reaches ${LIMITS.jointWarning}\u00a0°C in about ${eta}\u00a0min at this rate.` : "";
+        this.upsert(`joint:${j.name}`, "caution", now, `${j.name} ${j.temp.toFixed(0)}\u00a0°C ${rate >= 0 ? "+" : ""}${rate.toFixed(1)}\u00a0°C/min`,
+          `${label(j)} motor is at ${j.temp.toFixed(0)}\u00a0°C and ${rate > 0.2 ? "climbing" : "steady"} while ${snap.posture}.${toLimit} Sit the dog to cool it.`, j.name);
       }
     }
     // A joint that cooled back below caution clears its message (EICAS: messages leave when the condition clears).
@@ -121,7 +122,7 @@ export class SyntheticSource {
     const drainPerMin = this.series.soc.length > 30 ? (this.series.soc[this.series.soc.length - 31].v - soc) / ((snap.t - this.series.soc[this.series.soc.length - 31].t) / 60000) : 0;
     const mins = drainPerMin > 0.01 ? Math.round((soc - 10) / drainPerMin) : null;
     this.upsert("battery", soc < LIMITS.batteryWarning ? "warning" : soc < LIMITS.batteryCaution ? "caution" : "advisory", now,
-      `SOC ${soc.toFixed(0)} %`, mins != null ? `Battery ${soc.toFixed(0)} %, about ${mins} min of demo left at the current draw.` : `Battery ${soc.toFixed(0)} %, draw is light while ${snap.posture}.`);
+      `SOC ${soc.toFixed(0)}\u00a0%`, mins != null ? `Battery ${soc.toFixed(0)}\u00a0%, about ${mins}\u00a0min of demo left at the current draw.` : `Battery ${soc.toFixed(0)}\u00a0%, draw is light while ${snap.posture}.`);
 
     const pc = this.postures[this.postures.length - 1];
     if (pc && now - pc.t < 20000) {

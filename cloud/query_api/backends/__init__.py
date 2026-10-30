@@ -9,6 +9,7 @@ import os
 OPERATIONS = {
     # name: (backend function name, allowed parameters with defaults)
     "vitals_latest": ("Vitals_Latest", {}),
+    "vitals_snapshot": ("Vitals_Snapshot", {}),
     "vitals_series": ("Vitals_Series", {"window": "1h", "bin_size": "1m"}),
     "detections_summary": ("Detections_Summary", {"window": "1h"}),
     "alerts_recent": ("Alerts_Recent", {"window": "1h"}),

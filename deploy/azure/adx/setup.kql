@@ -231,3 +231,33 @@
       (Alerts | where Timestamp > ago(15m) and AlertType has "ppe" | summarize n = count() by DeviceId
               | project DeviceId, Severity = "medium", Finding = strcat(n, " PPE violation alerts in 15 min"))
 }
+
+// ---------------------------------------------------------------------------
+// Booth dashboard (live mode): the full latest vitals row, incl. Raw for cell
+// voltages / BMS temperatures. Same name on every cloud (ADR 0002).
+// ---------------------------------------------------------------------------
+.create-or-alter function with (folder="api", docstring="Full latest vitals row per device (dashboard live mode)") Vitals_Snapshot() {
+    Vitals | summarize arg_max(Timestamp, *) by DeviceId
+    | extend AgeSeconds = datetime_diff('second', now(), Timestamp)
+}
+
+// Overwatch: joint CAUTION band (55 C) mirrored from the dashboard's LIMITS
+// (cloud/booth-dashboard/src/lib/model.ts). Thresholds are placeholders.
+.create-or-alter function with (folder="api", docstring="Health checks the overwatch agent alerts on") Overwatch_Findings() {
+    let v = Vitals_Latest();
+    let hotJoints = Motors_Latest() | where Temperature >= 55;
+    union
+      (v | where AgeSeconds > 120 | project DeviceId, Severity = "high", Finding = strcat("No telemetry for ", AgeSeconds, " s")),
+      (v | where BatterySoc < 20 | project DeviceId, Severity = iff(BatterySoc < 10, "high", "medium"), Finding = strcat("Battery at ", BatterySoc, "%")),
+      (hotJoints | project DeviceId, Severity = iff(Temperature >= 70, "high", "medium"),
+                   Finding = iff(Temperature >= 70, strcat(Joint, " at ", Temperature, " C - over the 70 C limit; sit or lie the dog down now"),
+                                                  strcat(Joint, " at ", Temperature, " C - in the caution band; watch it or sit the dog"))),
+      (v | where Connected == false | project DeviceId, Severity = "high", Finding = "Robot link down"),
+      (v | where isnotnull(ErrorCode) and ErrorCode != 0 | project DeviceId, Severity = "medium", Finding = strcat("Robot error code ", ErrorCode)),
+      (v | where abs(Roll) > 0.6 or abs(Pitch) > 0.6 | project DeviceId, Severity = "high", Finding = "Body tilted - possible fall"),
+      (v | where EdgeTempMax > 85 | project DeviceId, Severity = "medium", Finding = strcat("Edge compute at ", EdgeTempMax, " C")),
+      (Motors | where Timestamp > ago(5m) and Lost > 0 | summarize n = max(Lost) by DeviceId, Joint
+              | project DeviceId, Severity = "low", Finding = strcat(Joint, " motor lost ", n, " frames")),
+      (Alerts | where Timestamp > ago(15m) and AlertType has "ppe" | summarize n = count() by DeviceId
+              | project DeviceId, Severity = "medium", Finding = strcat(n, " PPE violation alerts in 15 min"))
+}
