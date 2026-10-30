@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-10-30T16:13:55+00:00",
+  "generatedAt": "2026-10-30T21:14:01+00:00",
   "title": "Design System: Watch Dog Overwatch (booth dashboard)",
   "extensions": {
     "colorMeta": {
@@ -712,14 +712,6 @@
       "css": ":host{--u:12px;--bg-base:#0B0E12;--surface-1:#111519;--surface-2:#161B21;--surface-inset:#0A0D10;--border-subtle:#1E262E;--border:#2C363F;--border-strong:#4A5A68;--bevel-top:rgba(255,255,255,.06);--text-primary:#E6EDF3;--text-secondary:#9FB0C0;--text-tertiary:#8494A3;--status-ok:#3FD68C;--status-warn:#FFB224;--status-danger:#FF5C5C;--accent:#3A9BF0;--accent-ink:#06121F;--focus:#7DF0FF;}.ds-num{font-family:'JetBrains Mono',monospace;font-variant-numeric:tabular-nums;}.ds-row{display:flex;gap:12px;background:var(--surface-1);padding:12px}.ds-fresh{display:flex;align-items:center;gap:calc(var(--u)*.6);font-size:calc(var(--u)*1.5);padding:calc(var(--u)*.5) calc(var(--u)*.9);border:1px solid var(--border);border-radius:4px;background:var(--surface-inset)}.ds-ok{color:var(--status-ok)}.ds-stale{color:var(--status-warn);border-color:var(--status-warn)}.ds-syn{font-family:'Chakra Petch',sans-serif;letter-spacing:.08em;font-size:calc(var(--u)*.95);color:var(--status-warn);border:1px solid var(--status-warn);padding:0 calc(var(--u)*.4);border-radius:2px}"
     },
     {
-      "name": "Crew-Alerting Message",
-      "kind": "card",
-      "refersTo": "cas-message",
-      "description": "Agent finding: severity tag, cited metric, time, and the agent's sentence coloured by severity.",
-      "html": "<ol class=\"ds-cas\"><li class=\"ds-msg ds-caution\"><div class=\"ds-meta\"><span class=\"ds-sev ds-caution\">CAUTION</span><span class=\"ds-num ds-metric\">RL_calf 59 °C +12.3 °C/min</span><time class=\"ds-num\">11:08:36</time></div><p>RL calf motor is at 59 °C and climbing while standing. Sit the dog to cool it.</p></li><li class=\"ds-msg ds-advisory\"><div class=\"ds-meta\"><span class=\"ds-sev ds-advisory\">ADVISORY</span><span class=\"ds-num ds-metric\">SOC 72 %</span><time class=\"ds-num\">11:07:48</time></div><p>Battery 72 %, about 52 min of demo left at the current draw.</p></li></ol>",
-      "css": ":host{--u:12px;--bg-base:#0B0E12;--surface-1:#111519;--surface-2:#161B21;--surface-inset:#0A0D10;--border-subtle:#1E262E;--border:#2C363F;--border-strong:#4A5A68;--bevel-top:rgba(255,255,255,.06);--text-primary:#E6EDF3;--text-secondary:#9FB0C0;--text-tertiary:#8494A3;--status-ok:#3FD68C;--status-warn:#FFB224;--status-danger:#FF5C5C;--accent:#3A9BF0;--accent-ink:#06121F;--focus:#7DF0FF;}.ds-num{font-family:'JetBrains Mono',monospace;font-variant-numeric:tabular-nums;}.ds-cas{list-style:none;display:grid;gap:calc(var(--u)*.6);background:var(--surface-1);padding:12px;margin:0;font-family:'IBM Plex Sans',sans-serif}.ds-msg{padding:calc(var(--u)*.6) calc(var(--u)*.8);border:1px solid var(--border-subtle);border-radius:4px;background:var(--surface-2)}.ds-msg.ds-warning{border-color:var(--status-danger)}.ds-msg.ds-caution{border-color:color-mix(in srgb,var(--status-warn) 70%,var(--border))}.ds-meta{display:flex;align-items:center;gap:calc(var(--u)*.8);font-size:calc(var(--u)*1.35);color:var(--text-tertiary)}.ds-meta time{margin-left:auto}.ds-metric{color:var(--text-secondary)}.ds-sev{font-family:'Chakra Petch',sans-serif;font-weight:700;letter-spacing:.08em;font-size:calc(var(--u)*1.35);padding:0 calc(var(--u)*.45);border-radius:2px}.ds-sev.ds-warning{background:var(--status-danger);color:#1A0505}.ds-sev.ds-caution{background:var(--status-warn);color:#0B0E12}.ds-sev.ds-advisory{color:var(--accent);border:1px solid var(--accent)}.ds-msg p{margin:calc(var(--u)*.35) 0 0;font-size:calc(var(--u)*2.05);line-height:1.28;max-width:60ch;color:var(--text-primary)}.ds-msg.ds-warning p{color:#FF8A8A}.ds-msg.ds-caution p{color:var(--status-warn)}"
-    },
-    {
       "name": "Joint Dial",
       "kind": "custom",
       "refersTo": "readout-dial",
@@ -750,6 +742,46 @@
       "description": "Staff-only question field (currently disabled).",
       "html": "<form class=\"ds-ask\"><label class=\"ds-title\" for=\"ds-q\">Ask overwatch</label><input id=\"ds-q\" class=\"ds-input\" placeholder=\"e.g. Which joint is running hottest, and why?\"></form>",
       "css": ":host{--u:12px;--bg-base:#0B0E12;--surface-1:#111519;--surface-2:#161B21;--surface-inset:#0A0D10;--border-subtle:#1E262E;--border:#2C363F;--border-strong:#4A5A68;--bevel-top:rgba(255,255,255,.06);--text-primary:#E6EDF3;--text-secondary:#9FB0C0;--text-tertiary:#8494A3;--status-ok:#3FD68C;--status-warn:#FFB224;--status-danger:#FF5C5C;--accent:#3A9BF0;--accent-ink:#06121F;--focus:#7DF0FF;}.ds-title{font-family:'Chakra Petch',sans-serif;text-transform:uppercase;letter-spacing:.08em;font-weight:600;color:var(--text-secondary);font-size:calc(var(--u)*1.2);}.ds-ask{display:grid;grid-template-columns:auto 1fr;align-items:center;gap:calc(var(--u)*1);background:var(--surface-1);padding:12px}.ds-input{font-family:'IBM Plex Sans',sans-serif;font-size:calc(var(--u)*1.45);color:var(--text-primary);background:var(--surface-2);border:1px solid var(--border);border-radius:4px;padding:calc(var(--u)*.5) calc(var(--u)*.8)}.ds-input::placeholder{color:var(--text-tertiary)}.ds-input:hover{border-color:var(--border-strong)}.ds-input:focus-visible{outline:2px solid var(--focus);outline-offset:2px}.ds-input:disabled{opacity:.7}"
+    },
+    {
+      "name": "Crew-Alerting Line",
+      "kind": "custom",
+      "refersTo": "cas-message",
+      "description": "One terse, severity-tagged line with its own history; advisories are a quieter unboxed line.",
+      "html": "<ol class=\"ds-cas\"><li class=\"ds-cas-msg caution\"><span class=\"ds-sev caution\">CAUTION</span><p>FR hip 56 °C · +1° in 10 min · 14 min in caution · standing</p></li><li class=\"ds-cas-msg advisory\"><span class=\"ds-sev advisory\">ADVISORY</span><p>Now sitting</p></li></ol>",
+      "css": ".ds-cas{list-style:none;display:grid;gap:8px;padding:0;margin:0} .ds-cas-msg{display:grid;grid-template-columns:108px 1fr;align-items:baseline;gap:11px;padding:6px 10px;border:1px solid var(--border-subtle,#1E262E);border-radius:4px;background:var(--surface-2,#161B21)} .ds-cas-msg.caution{border-color:color-mix(in srgb,#FFB224 70%,#2C363F)} .ds-cas-msg p{margin:0;font:400 24px/1.2 'IBM Plex Sans',system-ui,sans-serif} .ds-cas-msg.caution p{color:#FFB224} .ds-cas-msg.advisory{background:none;border-color:transparent;padding-block:2px} .ds-cas-msg.advisory p{font-size:17px;color:#9FB0C0} .ds-sev{justify-self:start;font:700 15px 'Chakra Petch',sans-serif;letter-spacing:.08em;padding:0 5px;border-radius:2px} .ds-sev.caution{background:#FFB224;color:#0B0E12} .ds-sev.advisory{color:var(--accent,#3A9BF0);border:1px solid var(--accent,#3A9BF0)}"
+    },
+    {
+      "name": "Agent Line",
+      "kind": "custom",
+      "refersTo": "agent-line",
+      "description": "The agent's brief, quoted once at the top of the Overwatch column, with host and age.",
+      "html": "<figure class=\"ds-agent\"><blockquote>The front-right hip is at 56 °C and rising slowly while standing. Lie the dog down between demos to cool the hips.</blockquote><figcaption>Agent · Azure AI Foundry · 12 s ago</figcaption></figure>",
+      "css": ".ds-agent{margin:0} .ds-agent blockquote{margin:0;font:400 21px/1.3 'IBM Plex Sans',system-ui,sans-serif;color:#E6EDF3;max-width:46ch;text-wrap:pretty} .ds-agent figcaption{margin-top:5px;font:400 12.5px 'IBM Plex Sans',sans-serif;color:#8494A3}"
+    },
+    {
+      "name": "Joint Tag",
+      "kind": "chip",
+      "refersTo": "joint-tag-caution",
+      "description": "Name chip that follows a flagged joint on the 3D twin.",
+      "html": "<span class=\"ds-jtag\">FR HIP 56°</span> <span class=\"ds-jtag warning\">RL CALF 72°</span>",
+      "css": ".ds-jtag{font:700 14px 'JetBrains Mono',monospace;letter-spacing:.04em;text-transform:uppercase;padding:0 5px;border-radius:2px;background:#FFB224;color:#0B0E12;font-variant-numeric:tabular-nums} .ds-jtag.warning{background:#FF5C5C;color:#1A0505}"
+    },
+    {
+      "name": "How It Works Button",
+      "kind": "button",
+      "refersTo": "arch-button",
+      "description": "Quiet outlined placard button in the top strip that opens the architecture dialog.",
+      "html": "<button class=\"ds-arch-btn\" type=\"button\">How it works</button>",
+      "css": ".ds-arch-btn{font:600 12.5px 'Chakra Petch',sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#9FB0C0;background:none;border:1px solid #2C363F;border-radius:2px;padding:4px 10px;cursor:pointer} .ds-arch-btn:hover{color:#E6EDF3;border-color:#4A5A68} .ds-arch-btn:focus-visible{outline:2px solid #7DF0FF;outline-offset:2px}"
+    },
+    {
+      "name": "Live Twin Badge",
+      "kind": "custom",
+      "refersTo": "agent-line",
+      "description": "Stream state lamp under the 3D twin, with a recognized maneuver for 6 s.",
+      "html": "<div class=\"ds-twin\"><i></i><span>LIVE TWIN</span><b>HELLO <small>· front right paw</small></b></div>",
+      "css": ".ds-twin{display:inline-flex;align-items:center;gap:10px;padding:5px 12px;border:1px solid #1E262E;border-radius:4px;background:color-mix(in srgb,#111519 80%,transparent)} .ds-twin i{width:8px;height:8px;border-radius:50%;background:var(--accent,#3A9BF0)} .ds-twin span{font:600 14px 'Chakra Petch',sans-serif;letter-spacing:.08em;color:#9FB0C0} .ds-twin b{font:700 21px 'Chakra Petch',sans-serif;letter-spacing:.06em;color:var(--accent,#3A9BF0)} .ds-twin small{font-size:13px;color:#9FB0C0;letter-spacing:0}"
     }
   ],
   "narrative": {
@@ -761,7 +793,8 @@
       "One cloud accent (Azure or AWS), used only for advisories, the selected page key, the attitude pointer and the brand word.",
       "Three typefaces with strict jobs: Chakra Petch uppercase for titles and alerts, IBM Plex Sans for sentences, JetBrains Mono tabular figures for every number.",
       "Instruments are drawn as inline SVG from data. There is no chart library and there are no pictorial icons.",
-      "A live 3D Go2 is the hero. Its joint housings take on the status colour."
+      "A live 3D twin of the Go2 is the hero. It follows the real joint angles at about 15 frames/s, its joint housings take on the status colour, and the view turns so a flagged joint is never hidden.",
+      "The Overwatch column says each thing once: one agent line, terse severity-sorted messages, and lamps that only show values when something is off."
     ],
     "rules": [
       {
@@ -791,7 +824,7 @@
       },
       {
         "name": "The No-Glow Rule",
-        "body": "There is no outer shadow, glow, gradient, blur or glass anywhere. Translucency is used once: leg quadrants are `surface-1` at 45% over the 3D stage, with a 70% border.",
+        "body": "There is no outer shadow, glow, gradient, blur or glass anywhere, including lamps and the architecture dialog. The dialog separates from the page with its dimmed backdrop (`rgba(4,6,8,0.72)`) and the panel bevel, not a drop shadow. Translucency is used for the leg quadrants (`surface-1` at 45% over the 3D stage, with a 70% border) and the live-twin badge (`surface-1` at 80%).",
         "section": "elevation"
       }
     ],
@@ -802,7 +835,10 @@
       "**Do** put text on an amber fill in `bg-base` (#0B0E12) and text on a red fill in `danger-ink` (#1A0505).",
       "**Do** size new cockpit elements in `--u` multiples so they scale with the booth screen.",
       "**Do** set every changing number in JetBrains Mono with `tabular-nums`.",
-      "**Do** label synthetic data on screen, using the amber SYNTHETIC DATA tag."
+      "**Do** label synthetic data on screen, using the amber SYNTHETIC DATA tag.",
+      "**Do** keep a flagged joint in view: turn the camera to its side and re-map the quadrants, ghost any marker the body hides, and name the joint with a tag.",
+      "**Do** write crew-alerting lines as terse labels with their own history (\"+1° in 10 min · 14 min in caution\"). The agent line carries the explanation and the action.",
+      "**Do** keep the booth list to warnings and cautions. Advisories and full system values belong to the staff view."
     ],
     "donts": [
       "**Don't** use a glow, gradient, blur or glass, or any outer drop shadow. Depth is borders plus the 1px top bevel.",
@@ -810,7 +846,9 @@
       "**Don't** use a radius above 6px on any structural surface.",
       "**Don't** add entrance animations, count-ups or bouncy easing to telemetry.",
       "**Don't** set sentences in Chakra Petch, or numbers in Plex.",
-      "**Don't** hard-code a cloud name or a cloud hex in component code or copy."
+      "**Don't** hard-code a cloud name or a cloud hex in component code or copy. Service names come from `ARCH` in `theme.ts`.",
+      "**Don't** repeat in the Overwatch column a value already on a dial or readout, or show per-row device IDs and render timestamps.",
+      "**Don't** let a 3D marker draw through the body at full strength, or alert on undocumented counters (such as motor lost frames)."
     ]
   }
 }

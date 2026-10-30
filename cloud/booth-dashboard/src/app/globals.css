@@ -365,7 +365,7 @@ body {
   padding: calc(var(--u) * 0.4) calc(var(--u) * 1); border: 1px solid var(--border-subtle); border-radius: var(--r-ctl); background: color-mix(in srgb, var(--surface-1) 80%, transparent); z-index: 2; }
 .mirror .title { color: var(--text-tertiary); }
 .mirror-lamp { width: 8px; height: 8px; border-radius: 50%; background: var(--status-offline); }
-.mirror.on .mirror-lamp { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+.mirror.on .mirror-lamp { background: var(--accent); }
 .mirror.on .title { color: var(--text-secondary); }
 .maneuver { font-family: var(--font-chakra); font-weight: 700; font-size: calc(var(--u) * 1.8); letter-spacing: 0.06em; color: var(--accent); animation: maneuver-in 280ms var(--ease-out); }
 .maneuver small { font-size: calc(var(--u) * 1.1); color: var(--text-secondary); letter-spacing: 0; }
@@ -407,7 +407,7 @@ body {
 .arch-btn:hover { color: var(--text-primary); border-color: var(--border-strong); }
 .arch-btn:focus-visible, .arch-close:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .arch-dlg { margin: auto; width: min(1180px, 94vw); max-height: 92vh; overflow: auto; padding: calc(var(--u) * 1.6) calc(var(--u) * 2); color: var(--text-primary);
-  background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--r-panel); box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55); }
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--r-panel); box-shadow: inset 0 1px 0 var(--bevel-top); }
 .arch-dlg::backdrop { background: rgba(4, 6, 8, 0.72); }
 .arch-dlg[open] { animation: arch-in 260ms var(--ease-out); }
 @keyframes arch-in { from { opacity: 0; transform: translateY(8px) scale(0.99); } to { opacity: 1; transform: none; } }

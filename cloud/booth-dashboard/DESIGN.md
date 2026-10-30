@@ -89,6 +89,17 @@ typography:
     fontSize: "calc(var(--u) * 1.35)"
     fontWeight: 700
     letterSpacing: "0.08em"
+  agent-line:
+    fontFamily: "IBM Plex Sans, system-ui, -apple-system, sans-serif"
+    fontSize: "calc(var(--u) * 1.75)"
+    fontWeight: 400
+    lineHeight: 1.3
+  joint-tag:
+    fontFamily: "JetBrains Mono, ui-monospace, monospace"
+    fontSize: "calc(var(--u) * 1.15)"
+    fontWeight: 700
+    letterSpacing: "0.04em"
+    fontFeature: "tnum"
   fine:
     fontFamily: "IBM Plex Sans, system-ui, sans-serif"
     fontSize: "calc(var(--u) * 0.95)"
@@ -157,7 +168,32 @@ components:
     backgroundColor: "{colors.surface-2}"
     typography: "{typography.headline}"
     rounded: "{rounded.ctl}"
-    padding: "calc(var(--u) * 0.6) calc(var(--u) * 0.8)"
+    padding: "calc(var(--u) * 0.5) calc(var(--u) * 0.8)"
+  cas-advisory:
+    textColor: "{colors.text-secondary}"
+    typography: "{typography.body}"
+  agent-line:
+    textColor: "{colors.text-primary}"
+    typography: "{typography.agent-line}"
+  joint-tag-caution:
+    backgroundColor: "{colors.status-warn}"
+    textColor: "{colors.bg-base}"
+    typography: "{typography.joint-tag}"
+    rounded: "{rounded.chip}"
+  joint-tag-warning:
+    backgroundColor: "{colors.status-danger}"
+    textColor: "{colors.danger-ink}"
+    typography: "{typography.joint-tag}"
+    rounded: "{rounded.chip}"
+  arch-button:
+    textColor: "{colors.text-secondary}"
+    typography: "{typography.title}"
+    rounded: "{rounded.chip}"
+    padding: "calc(var(--u) * 0.3) calc(var(--u) * 0.8)"
+  arch-dialog:
+    backgroundColor: "{colors.surface-1}"
+    textColor: "{colors.text-primary}"
+    rounded: "{rounded.panel}"
   readout-cell:
     backgroundColor: "{colors.surface-inset}"
     typography: "{typography.readout}"
@@ -198,18 +234,19 @@ The whole cockpit is sized from one viewport unit, `--u` (`spacing.u`, about 11.
 - One cloud accent (Azure or AWS), used only for advisories, the selected page key, the attitude pointer and the brand word.
 - Three typefaces with strict jobs: Chakra Petch uppercase for titles and alerts, IBM Plex Sans for sentences, JetBrains Mono tabular figures for every number.
 - Instruments are drawn as inline SVG from data. There is no chart library and there are no pictorial icons.
-- A live 3D Go2 is the hero. Its joint housings take on the status colour.
+- A live 3D twin of the Go2 is the hero. It follows the real joint angles at about 15 frames/s, its joint housings take on the status colour, and the view turns so a flagged joint is never hidden.
+- The Overwatch column says each thing once: one agent line, terse severity-sorted messages, and lamps that only show values when something is off.
 
 ## Colors
 
 The palette is a cold, almost-black instrument panel. Saturated colour appears only when a status or the cloud accent calls for it.
 
 ### Primary (cloud accent, swapped per show)
-- **Azure Signal Blue** (`accent-azure`): the Ignite accent. It is Azure's #0078D4 lifted for a dark chassis and passes AA on surface-1. Used for the ADVISORY tag and its outline, the selected synoptic page key, the page-cycle progress bar, the attitude-ring pointer, the word "OVERWATCH" in the title, and text selection. Its press tone (`accent-azure-press`) and ink (`accent-azure-ink`, for text on a filled accent) travel with it.
+- **Azure Signal Blue** (`accent-azure`): the Ignite accent. It is Azure's #0078D4 lifted for a dark chassis and passes AA on surface-1. Used for the ADVISORY tag and its outline and count, the selected synoptic page key, the page-cycle progress bar, the attitude-ring pointer, the word "OVERWATCH" in the title, the live-twin lamp and maneuver word, lit segments of the charging strip, the cloud zone and live-twin flows in the architecture dialog, and text selection. Its press tone (`accent-azure-press`) and ink (`accent-azure-ink`, for text on a filled accent) travel with it.
 - **AWS Smile Orange** (`accent-aws`): the re:Invent accent, with `accent-aws-press` and `accent-aws-ink`. It fills exactly the same roles.
 
 ### Tertiary (fixed status semantics)
-- **Nominal Green** (`status-ok`): live lamp, nominal dial arc (at 55% opacity), nominal needle, cell bars and the runtime-budget segments that are lit, foot contact, "OK" command results.
+- **Nominal Green** (`status-ok`): live lamp, nominal dial arc (at 55% opacity), nominal needle, cell bars and the runtime-budget segments that are lit, foot contact, "OK" command results, the "all clear" tally and the Charging readout.
 - **Caution Amber** (`status-warn`): caution severity, the lit MASTER CAUTION, the dial caution band (at 75% opacity), caution needles and readouts, the stale lamp, the SYNTHETIC DATA tag, every invalid-data dash, ATT FAIL, and the ADI aircraft symbol.
 - **Warning Red** (`status-danger`): warning severity, the lit MASTER WARNING, the dial redline, warning needles, readouts filled red, failed commands, and dashed limit lines on trend tapes.
 - **Warning Message Red** (`warning-text`): a lighter red used only for the sentence text of a WARNING message, so a long sentence stays readable on surface-2.
@@ -253,11 +290,13 @@ All sizes are multiples of `--u`. The pixel values below are at 1920 px wide.
 - **Annunciator** (Chakra 700, 1.6u ≈ 19px, uppercase, 0.08em): the words MASTER WARNING and MASTER CAUTION. "MASTER" above them is a 0.9u title.
 - **Readout, dial** (Mono 700, 2.25u ≈ 27px): joint temperature in the box under each needle. The unit is set at 0.55em in tertiary.
 - **Readout** (Mono 700, 2.05u ≈ 24px): synoptic readout cells. The unit is set at 0.5em, weight 500, in tertiary. Posture is shown at 2.3u.
-- **Headline** (Plex 400, 2.05u ≈ 24px, 1.28, max 60ch, `text-wrap: pretty`): the agent's sentence in each crew-alerting message. This is the line that makes passers-by stop.
+- **Headline** (Plex 400, 2.05u ≈ 24px, 1.2): one terse crew-alerting line, for example "FR hip 56 °C · +1° in 10 min · 14 min in caution". Lines are labels, not sentences.
+- **Agent line** (Plex 400, 1.75u ≈ 21px, 1.3, max 46ch, `text-wrap: pretty`): the agent's brief, at most two sentences, quoted at the top of the Overwatch column with a fine caption ("Agent · Azure AI Foundry · 12 s ago"). This is the line that makes passers-by stop.
 - **Body** (Plex 400, 1.45u ≈ 17px, 1.35): default interface text.
-- **Data** (Mono 400, 1.35u): message metadata such as the cited metric and the time, status values, and timestamps.
+- **Data** (Mono 400, 1.35u): status values, tally counts and timestamps.
+- **Joint tag** (Mono 700, 1.15u, uppercase, 0.04em): the name chip beside a flagged joint on the 3D twin ("FR HIP 56°").
 - **Title** (Chakra 600, 1.2u ≈ 14px, uppercase, 0.08em, text-secondary): every panel, readout and instrument label. Inside cells it drops to 0.95–1.05u.
-- **Severity tag** (Chakra 700, 1.35u, 0.08em): WARNING, CAUTION, ADVISORY.
+- **Severity tag** (Chakra 700, 1.25u, 0.08em): WARNING, CAUTION, ADVISORY.
 - **Fine** (Plex 400, 0.95u ≈ 11px, tertiary): the legal footer, dial scales and budget scales.
 
 ### Named Rules
@@ -268,13 +307,15 @@ All sizes are multiples of `--u`. The pixel values below are at 1920 px wide.
 ## Layout
 
 **Booth (wider than 900px):** a full-viewport grid with no page scroll (`body { overflow: hidden }`). Padding is 1.2u and gaps are 1u. Columns are 1.62fr and 1fr, which gives roughly 62% to the body and 38% to the crew-alerting stack. Rows, from top:
-1. **Top strip** (auto height): NTT DATA mark, then the identity block (title plus "UNITREE GO2 · device id" in mono), then the two master annunciators pushed right, then the freshness lamp, then the brand marks ("Built on …", "Powered by NVIDIA").
-2. **Body and crew-alerting stack** (`minmax(0, 1fr)`): on the left, the 3D stage inside the attitude ring, with four translucent leg quadrants in the corners. Screen placement follows the camera: FR top-left, RR top-right, FL bottom-left, RL bottom-right. Each quadrant holds three joint dials (hip, thigh, calf). On the right, the crew-alerting list scrolls inside its panel. Below it are pinned the monitored-systems status list (two columns) and the posture and runtime-budget strip, which never cycle away.
+1. **Top strip** (auto height): NTT DATA mark, then the identity block (title plus "UNITREE GO2 · device id" in mono), then the two master annunciators pushed right, then the freshness lamp, the small **How it works** button, and the brand marks ("Built on …", "Powered by NVIDIA").
+2. **Body and Overwatch column** (`minmax(0, 1fr)`):
+   - **Body (left):** the 3D twin inside the attitude ring, with four translucent leg quadrants in the corners, each holding three joint dials (hip, thigh, calf). Quadrants follow the camera. In the default left view (nose screen-left, left legs nearest): FR top-left, RR top-right, FL bottom-left, RL bottom-right. When the most severe flagged joint is on the right, the view turns (nose screen-right) and the quadrants re-map: FR bottom-right, RR bottom-left, FL top-right, RL top-left. The live-twin badge sits bottom-centre.
+   - **Overwatch column (right), top to bottom:** a header with a severity tally ("1 caution", or "all clear"); the agent line with its caption; the crew-alerting list, which scrolls; then, pinned and never cycling away, the **Systems** lamps (two columns) and the posture and battery strip.
 3. **Synoptic band** (fixed at 17.5u, full width): a vertical column of page keys on the left (POWER, GAIT, ATTITUDE, VISION, EDGE, LINK), with the page itself to the right. Each page is a short horizontal grid of readout cells, trend tapes and SVG instruments.
 4. **Ask** (staff mode only, auto height): label, input and note.
 5. **Legal footer** (auto height).
 
-**Modes:** `?mode=booth` (the default) runs unattended. Page keys are disabled and the page cycles every 12 s. `?mode=staff` enables the page keys, lets staff acknowledge annunciators, and shows the Ask row.
+**Modes:** `?mode=booth` (the default) runs unattended. Page keys are disabled and the page cycles every 12 s. The crew-alerting list shows warnings and cautions only, and system lamps show a value only when that system is off-nominal (or charging). `?mode=staff` enables the page keys, lets staff acknowledge annunciators, shows advisories and every system value, and shows the Ask row.
 
 **Phone and tablet (900px and narrower):** everything stacks in one column (strip, body, crew alerting, synoptic, ask, legal), the page scrolls, and `--u` is fixed at 9px. The 3D stage becomes a 78vw-tall block, and the leg quadrants flow below it as solid panels, each with a three-column dial grid at 72px. Page keys wrap into a row and the cycle bar is hidden. Readout grids collapse to one column of label/value rows, with values at 18px.
 
@@ -289,11 +330,11 @@ The cockpit is flat and tonal. Depth comes from stepping up surface lightness (i
 - **Key cap** (`box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), inset 0 -2px 0 rgba(0,0,0,0.35)`): synoptic page keys, so they read as physical keys. The selected key keeps only `inset 0 -2px 0 rgba(0,0,0,0.25)`.
 
 ### Named Rules
-**The No-Glow Rule.** There is no outer shadow, glow, gradient, blur or glass anywhere. Translucency is used once: leg quadrants are `surface-1` at 45% over the 3D stage, with a 70% border.
+**The No-Glow Rule.** There is no outer shadow, glow, gradient, blur or glass anywhere, including lamps and the architecture dialog. The dialog separates from the page with its dimmed backdrop (`rgba(4,6,8,0.72)`) and the panel bevel, not a drop shadow. Translucency is used for the leg quadrants (`surface-1` at 45% over the 3D stage, with a 70% border) and the live-twin badge (`surface-1` at 80%).
 
 ## Shapes
 
-The language is small and square, like avionics. Radii are 6px on panels and leg quadrants, 4px on controls (annunciators, lamp, messages, readout cells, inputs, tape plots), 2px on chips (severity tags, SYNTHETIC tag, page keys, dial readout boxes), and 1px on bar segments. Nothing is larger than 6px. The only circles are instruments: dials, the attitude ring, the ADI, and the 3D status markers. Status glyphs are 12px stroked SVG: a filled circle for ok, a filled triangle for caution, a hollow X for warning, and a dash for unknown.
+The language is small and square, like avionics. Radii are 6px on panels and leg quadrants, 4px on controls (annunciators, lamp, messages, readout cells, inputs, tape plots), 2px on chips (severity tags, SYNTHETIC tag, page keys, dial readout boxes), and 1px on bar segments. Nothing is larger than 6px. The only circles are instruments: dials, the attitude ring, the ADI, the live-twin lamp, and the 3D joint reticles. A **reticle** is a thin ring (about 1.5u across on screen) with four crosshair ticks outside it and a centre dot, billboarded to the camera. Status glyphs are 12px stroked SVG: a filled circle for ok, a filled triangle for caution, a hollow X for warning, and a dash for unknown.
 
 ## Components
 
@@ -307,11 +348,17 @@ An EICAS round engine dial with a 210° sweep, spanning 20–90 °C.
 ### Master annunciators
 Two buttons, MASTER WARNING and MASTER CAUTION. When off they are a dark well with tertiary text. A lit CAUTION is solid amber with bg-base ink. A lit WARNING is solid red with danger-ink text and flashes at 1 Hz in two steps (inverting to well and red text). Annunciators latch while any unacknowledged finding of that severity exists. In staff mode, pressing one acknowledges it. They never light while telemetry is stale.
 
-### Crew-alerting stack
-An ordered list of messages on surface-2. Each message has a severity tag, the cited metric in mono, and the time on the right, then the agent's sentence below at headline size. The severity colours the border and the sentence: a WARNING has a red border and warning-text sentence, a CAUTION has an amber-mixed border and amber sentence, and an ADVISORY has an accent-outlined tag and a primary-text sentence. While telemetry is stale, an amber notice line ("Telemetry is stale…") sits above the list. When there are no findings, the stack says so plainly.
+### Overwatch column (crew alerting)
+The column says each fact once.
+- **Header:** the title OVERWATCH and a severity tally: mono counts coloured by severity ("1 caution · 2 advisory"), or a green "all clear".
+- **Agent line:** the agent's brief as a quotation at agent-line size, at most two sentences, with a fine tertiary caption naming the agent host and the brief's age. There is no box, border or accent stripe.
+- **Messages:** one line each, sorted warning, then caution, then advisory. Each is a two-column row: a severity tag (fixed 9u column), then the terse line at headline size. A WARNING has a red border and warning-text line. A CAUTION has an amber-mixed border and amber line. An ADVISORY has no box and is a quieter body-size line in text-secondary. There is no per-row device ID or render timestamp. Concerning lines carry their own history and context, for example "FR hip 56 °C · +1° in 10 min · 14 min in caution · lying, charging".
+- **Stale:** an amber notice line ("Telemetry is stale…") sits above the list.
+- **Empty:** "All monitored systems inside limits."
+- **Systems:** a lamp glyph and a name per system. A value appears only when the system is off-nominal or charging (always in staff view).
 
 ### Freshness lamp
-A mono label in a well. **LIVE 0.9 s** shows a filled green circle. **STALE 45 s** (or **NO DATA**) shows a filled amber triangle and an amber border. Telemetry is stale after 15 s. An amber outlined **SYNTHETIC DATA** tag sits inside the lamp whenever the source is synthetic.
+A mono label in a well. **LIVE 0.9 s** shows a filled green circle. **STALE 45 s** (or **NO DATA**) shows a filled amber triangle and an amber border. Telemetry is stale after 25 s (edge sample 5 s, flush 2 s, ingest and query). An amber outlined **SYNTHETIC DATA** tag sits inside the lamp whenever the source is synthetic.
 
 ### Synoptic page keys
 Chakra keys with a key-cap bevel on surface-2. The selected key is filled with the accent and set in accent-ink. Hover (staff mode, enabled keys only) raises the border to border-strong and the text to primary. In booth mode a 2px accent bar grows down the right edge of the key column over 12 s to show the auto-cycle.
@@ -322,17 +369,44 @@ A well holding a title above a mono value. Caution turns the value amber and war
 ### Trend tape
 A 300×60 strip chart plotted in a well. It has three `border-subtle` gridlines, dashed amber or red limit lines, and the trace drawn as a 1.5px `text-primary` line. The header shows a title and the last value in mono.
 
-### Runtime-budget strip
-Eighteen segments for 0–90 minutes. Lit segments are green at 85%, and all lit segments turn amber when less than 20% of the budget remains. A mono scale sits below. The strip is pinned under the crew-alerting stack next to the posture word.
+### Battery strip
+Pinned under the Overwatch column next to the posture word. It has two states:
+- **Discharging:** "Battery · at current draw 2.6 A" with the battery percentage and the time left ("~3 h 45 min"). The time is the usable charge above the 10% reserve (15 Ah pack) divided by the measured 10-minute mean battery current. Eighteen segments span 0–4 h on a mono scale. Lit segments are green and turn amber under 30 minutes.
+- **Charging** (battery current above +0.5 A): "Battery · charging +6.2 A" with the percentage and "full in ~26 min". The segments show charge level from 0–100% in the accent, with the leading segment pulsing gently.
 
-### 3D Go2 and attitude ring
-A Go2 built from MuJoCo Menagerie meshes, faced screen-left, with a gentle ±0.3 rad camera sway in booth mode. Joint housings lerp toward amber (by 0.55) or red (by 0.75) as their joint's status changes. Billboard markers appear at caution (scale 1.5) and warning (scale 2.2, with a slight pulse). Behind the dog, a thin `border` ring carries a fixed bank scale in `border-strong` (ticks every 10° to ±30°). An accent pointer and the horizon line rotate with roll and move with pitch. When telemetry is invalid they turn amber and dashed.
+### 3D twin and attitude ring
+A Go2 built from MuJoCo Menagerie meshes, with a gentle ±0.3 rad camera sway in booth mode.
+- **Pose:** when the live twin is streaming, the twelve joints follow the real angles (rendered 250 ms behind for smoothness). Otherwise they follow the 5 s vitals, then a posture pose. Body roll and pitch come from the dog's IMU. Body height comes from forward kinematics, so the lowest foot meets the floor and a raised paw never tips the body.
+- **View side:** the camera shows the side of the most severe flagged joint, turning through the front in about 1.5 s. The leg quadrants re-map to match (see Layout), and the view returns to the left side when the condition clears.
+- **Joint status:** housings lerp toward amber (by 0.55) or red (by 0.75). A flagged joint gets a reticle, drawn solid where the joint is visible and as a 30% ghost where the body hides it, so a far-side marker never sits on a near-side joint. It also gets a joint tag (amber or red chip) that follows it on screen.
+- **Ring:** behind the dog, a thin `border` ring carries a fixed bank scale in `border-strong` (ticks every 10° to ±30°). An accent pointer and the horizon line rotate with roll and move with pitch. When telemetry is invalid they turn amber and dashed.
+
+### Live-twin badge
+A small translucent chip at the bottom centre of the body: an 8px lamp and the title **LIVE TWIN** (accent lamp) or **TWIN · POSTURE ONLY** (grey lamp). A recognized maneuver appears beside it for 6 s in accent Chakra ("HELLO · front right paw").
 
 ### Ask overwatch (staff only)
-A title label, a surface-2 input with a 4px radius, and a tertiary note. The input is currently disabled at 70% opacity.
+A title label, a surface-2 input with a 4px radius, and a tertiary note.
+- **Passcode:** the first use asks for the staff passcode (a password field). A rejected passcode is forgotten, with an amber note.
+- **Asking:** while a question runs, the input is disabled and the note reads "Asking…".
+- **Answer:** the answer appears beneath, across the full row: the question in tertiary, then the answer.
+
+### How it works (architecture dialog)
+A small outlined title-style button in the top strip opens a native modal dialog. It traps focus, and Esc or a click on the backdrop closes it.
+- **Diagram:** an inline SVG of the live data path in two zones. The booth edge has a well fill. The cloud zone is named from the theme and tinted 5% accent. Nodes are surface-2 boxes with a sans title and a note, and flows are dashed lines labelled in mono with the real rate or access level. Live-twin flows are drawn in the accent.
+- **Notes:** three short points sit below the diagram.
+- **Service names** come from `ARCH` in `src/lib/theme.ts`, so the AWS build shows its own services, in text only and with no cloud logos.
 
 ### Motion
-Motion is instrument-like and nothing has an entrance animation. Needles, the torque arc, the attitude ring and the ADI ease with `cubic-bezier(0.16, 1, 0.3, 1)` over 400–600 ms (the ADI uses 500 ms). The WARNING annunciator flashes. The page-cycle bar runs linearly over 12 s. With `prefers-reduced-motion`, every CSS transition and animation drops to 0 ms, and the 3D gait, camera sway and marker pulse stop.
+Motion is instrument-like. Telemetry values never animate in.
+- **Instruments:** needles, the torque arc, the attitude ring and the ADI ease with `cubic-bezier(0.16, 1, 0.3, 1)` over 400–600 ms (the ADI uses 500 ms).
+- **Signals:** the WARNING annunciator flashes, and the page-cycle bar runs linearly over 12 s.
+- **Sanctioned moments, all event-driven:**
+  - the view turn and the 500 ms quadrant fade;
+  - the 280 ms rise of a maneuver word;
+  - the slow pulse of the charging edge;
+  - the 260 ms dialog entrance;
+  - the dashed flows in the architecture diagram.
+- **Reduced motion:** with `prefers-reduced-motion`, every CSS transition and animation drops to 0 ms. The 3D gait, camera sway and marker pulse stop, and the view turns instantly.
 
 ## Do's and Don'ts
 
@@ -344,6 +418,9 @@ Motion is instrument-like and nothing has an entrance animation. Needles, the to
 - **Do** size new cockpit elements in `--u` multiples so they scale with the booth screen.
 - **Do** set every changing number in JetBrains Mono with `tabular-nums`.
 - **Do** label synthetic data on screen, using the amber SYNTHETIC DATA tag.
+- **Do** keep a flagged joint in view: turn the camera to its side and re-map the quadrants, ghost any marker the body hides, and name the joint with a tag.
+- **Do** write crew-alerting lines as terse labels with their own history ("+1° in 10 min · 14 min in caution"). The agent line carries the explanation and the action.
+- **Do** keep the booth list to warnings and cautions. Advisories and full system values belong to the staff view.
 
 ### Don't:
 - **Don't** use a glow, gradient, blur or glass, or any outer drop shadow. Depth is borders plus the 1px top bevel.
@@ -351,4 +428,6 @@ Motion is instrument-like and nothing has an entrance animation. Needles, the to
 - **Don't** use a radius above 6px on any structural surface.
 - **Don't** add entrance animations, count-ups or bouncy easing to telemetry.
 - **Don't** set sentences in Chakra Petch, or numbers in Plex.
-- **Don't** hard-code a cloud name or a cloud hex in component code or copy.
+- **Don't** hard-code a cloud name or a cloud hex in component code or copy. Service names come from `ARCH` in `theme.ts`.
+- **Don't** repeat in the Overwatch column a value already on a dial or readout, or show per-row device IDs and render timestamps.
+- **Don't** let a 3D marker draw through the body at full strength, or alert on undocumented counters (such as motor lost frames).
