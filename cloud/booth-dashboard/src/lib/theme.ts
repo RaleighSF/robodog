@@ -24,11 +24,11 @@ export const ARCH: Record<CloudTheme, ArchLabels> = {
     storeNote: "KQL tables · update policies · Overwatch rules", computeNote: "stream ingest · read-only query API",
     identity: "Managed identities and Entra ID tokens: no keys in the browser, send-only token at the edge",
     ingestLink: "trigger", storeLink: "streaming ingest · KQL", agentNote: "GPT-4.1 mini · read-only tool" },
-  aws: { region: "AWS", ingest: "Amazon Kinesis Data Streams", compute: "Data Firehose + Lambda", store: "Amazon S3 + Athena",
-    agent: "Amazon Bedrock Agent", realtime: "API Gateway WebSockets", hosting: "AWS Amplify Hosting",
-    storeNote: "Parquet tables · views · Overwatch rules", computeNote: "Parquet delivery · read-only query API",
-    identity: "IAM roles and scoped tokens: no keys in the browser, publish-only credentials at the edge",
-    ingestLink: "delivery stream", storeLink: "Parquet to S3 · Athena SQL", agentNote: "read-only tool" },
+  aws: { region: "AWS", ingest: "Amazon Kinesis Data Streams", compute: "AWS Lambda", store: "Amazon DynamoDB",
+    agent: "Amazon Bedrock · Claude", realtime: "AWS AppSync Events", hosting: "AWS Amplify Hosting",
+    storeNote: "live rows (TTL 24 h) · Overwatch rules", computeNote: "stream ingest · read-only query API",
+    identity: "IAM roles and a send-only edge key: no keys in the browser, a subscribe-only key for the live twin",
+    ingestLink: "event source mapping", storeLink: "batch writes · queries", agentNote: "Claude Haiku 5.5 · read-only tool" },
 };
 export const arch = ARCH[CLOUD];
 

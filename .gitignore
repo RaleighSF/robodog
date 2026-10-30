@@ -60,3 +60,7 @@ deploy/azure/secrets/
 
 # dev virtualenvs
 cloud/query_api/.venv/
+
+# AWS secrets (staff key, Thor edge access key) and build output
+deploy/aws/secrets/
+build/

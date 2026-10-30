@@ -1914,12 +1914,34 @@ def _init_telemetry():
     tm.start_heartbeat(_build_heartbeat_event)
     tm.start_vitals(_build_vitals_event, float(telemetry_cfg.get('vitals_interval_seconds', 5)))
     atexit.register(tm.stop)
+    selector = _cloud_selector(telemetry_cfg.get('cloud_routing'))
+    tm.set_cloud_selector(selector)
     try:
         import motion_stream
         web_app._motion = motion_stream.start_from_config(cfg.config.get('motion_stream') or {},
-                                                          telemetry_cfg.get('device_id', ''), tm.emit_maneuver)
+                                                          telemetry_cfg.get('device_id', ''), tm.emit_maneuver,
+                                                          cloud_selector=selector)
     except Exception as e:
-        logger.warning(f"[Motion] live mirror not started: {e}")
+        logger.warning(f"[Motion] live twin not started: {e}")
+
+
+# The conference demo profile (UI settings) picks the cloud path: Azure for
+# Ignite, AWS for re:Invent, both on the default profile (ADR 0011).
+_DEFAULT_CLOUD_ROUTES = {'azure': ['azure'], 'aws': ['aws'], 'default': ['azure', 'aws']}
+
+
+def _cloud_selector(routes=None):
+    import ui_profiles
+    routes = routes or _DEFAULT_CLOUD_ROUTES
+    cache = {'t': 0.0, 'clouds': ['azure', 'aws']}
+
+    def select():
+        now = time.monotonic()
+        if now - cache['t'] > 1.0:                 # the twin asks 20 times a second; read the profile once a second
+            cache['clouds'] = routes.get(ui_profiles.get_active_profile_id(), ['azure', 'aws'])
+            cache['t'] = now
+        return cache['clouds']
+    return select
     logger.info("[Telemetry] Initialized and running")
 
 

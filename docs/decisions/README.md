@@ -16,6 +16,7 @@ these records plus `cloud/PARITY.md`, and it must pass the same contract tests.
 | [0008](0008-function-ingest.md) | Event Hubs → ADX via a Function trigger (streaming ingest), not a data connection | Accepted |
 | [0009](0009-lidar-window-check.md) | Head lidar sensor-window check on the robot link (dirty-dome detector) | Accepted |
 | [0010](0010-live-motion-mirror.md) | Live motion mirror over a managed real-time channel + maneuver recognition | Accepted |
+| [0011](0011-aws-reinvent-stack.md) | AWS (re:Invent) stack mirroring Azure; demo profile picks the cloud path | Accepted |
 
 New decisions: copy the template below, take the next number, and add a row.
 

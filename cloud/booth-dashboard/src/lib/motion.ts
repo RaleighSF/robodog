@@ -1,6 +1,6 @@
 // Live motion mirror (ADR 0010): joint frames pushed from the edge over the
 // cloud real-time channel. The query API hands out a short-lived receive-only
-// URL (GET motion/negotiate); the same {url, protocol} contract on every cloud.
+// channel (GET motion/negotiate): Azure Web PubSub or AWS AppSync Events.
 "use client";
 import { useEffect, useRef, useState } from "react";
 
@@ -64,17 +64,16 @@ export function useMotion(api: string, enabled: boolean): { feed: MotionFeed; ma
       try {
         const r = await fetch(`${api.replace(/\/$/, "")}/motion/negotiate`, { cache: "no-store" });
         if (!r.ok) throw new Error(String(r.status));
-        const { url, protocol } = (await r.json()) as { url: string; protocol: string };
+        const n = (await r.json()) as Negotiated;
         if (stop) return;
-        const sock = new WebSocket(url, protocol);
+        const sock = n.provider === "aws-appsync-events" ? appSyncSocket(n) : new WebSocket(n.url, n.protocol);
         ws = sock;
         sock.onmessage = (ev) => {
-          let m: { type?: string; data?: { frames?: MotionFrame[]; maneuvers?: Maneuver[] } };
-          try { m = JSON.parse(String(ev.data)); } catch { return; }
-          if (m.type !== "message" || !m.data) return;
-          feed.push(m.data.frames ?? []);
+          const data = n.provider === "aws-appsync-events" ? appSyncData(sock, n, ev) : webPubSubData(ev);
+          if (!data) return;
+          feed.push(data.frames ?? []);
           // Keep each maneuver's real time (robot clock); ignore any that are already old.
-          const mans = m.data.maneuvers ?? [];
+          const mans = data.maneuvers ?? [];
           const last = mans[mans.length - 1];
           const at = last ? feed.toLocalMs(last.t) : null;
           if (last && at != null && Date.now() - at < MANEUVER_SHOW_MS) setManeuver({ ...last, t: at });
@@ -91,6 +90,42 @@ export function useMotion(api: string, enabled: boolean): { feed: MotionFeed; ma
   }, [api, enabled, feed]);
 
   return { feed, maneuver, live };
+}
+
+// -- cloud channels -----------------------------------------------------------
+// negotiate returns Azure Web PubSub {url, protocol} or AWS AppSync Events
+// {provider: "aws-appsync-events", httpDomain, realtimeDomain, apiKey, channel}.
+type Negotiated =
+  | { provider?: undefined; url: string; protocol: string }
+  | { provider: "aws-appsync-events"; httpDomain: string; realtimeDomain: string; apiKey: string; channel: string };
+type Batch = { frames?: MotionFrame[]; maneuvers?: Maneuver[] };
+
+function webPubSubData(ev: MessageEvent): Batch | null {
+  try {
+    const m = JSON.parse(String(ev.data)) as { type?: string; data?: Batch };
+    return m.type === "message" && m.data ? m.data : null;
+  } catch { return null; }
+}
+
+const b64url = (s: string) => btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+
+function appSyncSocket(n: Extract<Negotiated, { provider: "aws-appsync-events" }>): WebSocket {
+  const auth = { host: n.httpDomain, "x-api-key": n.apiKey };   // subscribe-only key; publishing needs IAM
+  const sock = new WebSocket(`wss://${n.realtimeDomain}/event/realtime`, ["aws-appsync-event-ws", `header-${b64url(JSON.stringify(auth))}`]);
+  sock.onopen = () => sock.send(JSON.stringify({ type: "connection_init" }));
+  return sock;
+}
+
+function appSyncData(sock: WebSocket, n: Extract<Negotiated, { provider: "aws-appsync-events" }>, ev: MessageEvent): Batch | null {
+  let m: { type?: string; event?: unknown };
+  try { m = JSON.parse(String(ev.data)); } catch { return null; }
+  if (m.type === "connection_ack") {
+    sock.send(JSON.stringify({ type: "subscribe", id: crypto.randomUUID(), channel: n.channel,
+      authorization: { host: n.httpDomain, "x-api-key": n.apiKey } }));
+    return null;
+  }
+  if (m.type !== "data" || m.event == null) return null;
+  try { return (typeof m.event === "string" ? JSON.parse(m.event) : m.event) as Batch; } catch { return null; }
 }
 
 export const MANEUVER_LABEL: Record<string, string> = { hello: "HELLO", sit: "SIT", stand_up: "STAND UP", lie_down: "LIE DOWN" };

@@ -358,21 +358,77 @@ class EventHubExporter:
 # Fan-out: several sinks at once (e.g. local + azure_eventhub)
 # ---------------------------------------------------------------------------
 
+class KinesisExporter:
+    """Sends each telemetry event as one Kinesis record (the same JSON as every
+    other sink) for the re:Invent stack (ADR 0011). Credentials are a send-only
+    IAM user's key in `credentials_file` (Thor: /state/aws-edge.json, written by
+    deploy/aws/deploy.sh). Never in config or git. Images are not sent."""
+
+    def __init__(self, credentials_file: str = "/state/aws-edge.json", stream_name: Optional[str] = None):
+        self._file = credentials_file
+        self._stream = stream_name
+        self._client = None
+        self._lock = threading.Lock()
+
+    def _get_client(self):
+        if self._client is None:
+            with open(self._file) as f:
+                c = json.load(f)
+            import boto3
+            self._stream = self._stream or c["stream"]
+            self._client = boto3.client("kinesis", region_name=c["region"], aws_access_key_id=c["access_key_id"],
+                                        aws_secret_access_key=c["secret_access_key"])
+        return self._client
+
+    def put_json(self, key: str, data: Dict) -> bool:
+        try:
+            with self._lock:
+                client = self._get_client()
+                client.put_record(StreamName=self._stream, PartitionKey=str((data.get("device") or {}).get("device_id") or "watchdog"),
+                                  Data=json.dumps(data, default=str, separators=(",", ":")).encode())
+            return True
+        except Exception as e:
+            logger.error(f"[Telemetry] Kinesis send failed ({key}): {e}")
+            with self._lock:
+                self._client = None
+            return False
+
+    def put_image(self, key: str, image_bytes: bytes) -> bool:
+        return True
+
+
+# Which cloud a sink belongs to; sinks not listed (local, s3) always receive.
+SINK_CLOUD = {"azure_eventhub": "azure", "aws_kinesis": "aws"}
+
+
 class MultiExporter:
     """Sends to every sink; an event counts as delivered if at least one sink
-    took it (each sink logs its own failures)."""
+    took it (each sink logs its own failures). An optional `cloud_selector`
+    returns the clouds that should receive right now (the conference demo
+    profile picks the path); cloud sinks outside it are skipped, not failed."""
 
     def __init__(self, sinks: List[tuple]):
         self.sinks = sinks                         # [(name, exporter), ...]
-        self.stats = {name: {"ok": 0, "failed": 0} for name, _ in sinks}
+        self.stats = {name: {"ok": 0, "failed": 0, "skipped": 0} for name, _ in sinks}
+        self.cloud_selector = None
 
     def _fan(self, method: str, key: str, payload) -> bool:
-        any_ok = False
+        any_ok, any_tried = False, False
+        clouds = None
+        if self.cloud_selector is not None:
+            try:
+                clouds = set(self.cloud_selector())
+            except Exception as e:
+                logger.warning(f"[Telemetry] cloud selector failed ({e}); sending to all sinks")
         for name, ex in self.sinks:
+            if clouds is not None and SINK_CLOUD.get(name) and SINK_CLOUD[name] not in clouds:
+                self.stats[name]["skipped"] += 1
+                continue
+            any_tried = True
             ok = getattr(ex, method)(key, payload)
             self.stats[name]["ok" if ok else "failed"] += 1
             any_ok = any_ok or ok
-        return any_ok
+        return any_ok or not any_tried
 
     def put_json(self, key: str, data: Dict) -> bool:
         return self._fan("put_json", key, data)
@@ -471,6 +527,10 @@ class TelemetryManager:
                 send_timeout_s=float(az.get("send_timeout_s", 10)),
                 partition_key=telem_cfg.get("device_id", "watchdog"),
             )
+        if backend == "aws_kinesis":
+            aws = telem_cfg.get("aws_kinesis") or {}
+            return KinesisExporter(credentials_file=aws.get("credentials_file", "/state/aws-edge.json"),
+                                   stream_name=aws.get("stream_name"))
         if backend == "s3":
             return S3Exporter(
                 bucket=telem_cfg.get("s3_bucket", "watchdog-telemetry"),
@@ -641,6 +701,11 @@ class TelemetryManager:
         event.robot_vitals = vitals
         event.edge = edge
         self._enqueue(event)
+
+    def set_cloud_selector(self, fn):
+        """fn() -> iterable of clouds ("azure", "aws") that should receive now."""
+        if isinstance(self._exporter, MultiExporter):
+            self._exporter.cloud_selector = fn
 
     def emit_maneuver(self, maneuver: Dict):
         """Emit a 1.2 `maneuver` event (hello, sit, stand_up, lie_down) recognized

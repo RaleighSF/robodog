@@ -1,9 +1,13 @@
-"""Real-time channel for the live motion mirror (ADR 0010).
+"""Real-time channel for the live twin (ADR 0010, ADR 0011).
 
-Azure: Web PubSub, hub `motion`. Dashboards get a receive-only token that joins
-group `motion` at connect; only the Thor holds a send-to-group token. AWS
-(re:Invent) swaps this module for API Gateway WebSockets or IoT Core and keeps
-the same {url, protocol, expires_in_s} contract."""
+MOTION_PROVIDER picks the cloud:
+  azure: Web PubSub, hub `motion`. Dashboards get a receive-only token that joins
+         group `motion` at connect; only the Thor holds a send-to-group token.
+         Returns {url, protocol, group, expires_in_s}.
+  aws:   AppSync Events, namespace `motion`. Publishing needs IAM (only the
+         Thor's edge user has it); subscribing uses the API key handed out here,
+         which can only subscribe. Returns {provider: "aws-appsync-events",
+         httpDomain, realtimeDomain, apiKey, channel}."""
 import json
 import os
 import threading
@@ -26,6 +30,14 @@ def _bearer() -> str:
 
 
 def motion_client_url() -> dict:
+    if os.environ.get("MOTION_PROVIDER", "azure").lower() == "aws":
+        return {"provider": "aws-appsync-events", "httpDomain": os.environ["MOTION_HTTP_DOMAIN"],
+                "realtimeDomain": os.environ["MOTION_REALTIME_DOMAIN"], "apiKey": os.environ["MOTION_API_KEY"],
+                "channel": os.environ.get("MOTION_CHANNEL", "/motion/booth")}
+    return _webpubsub_url()
+
+
+def _webpubsub_url() -> dict:
     """One shared receive-only URL, re-minted 10 minutes before it expires."""
     with _lock:
         if _cache["body"] and time.time() < _cache["exp"] - 600:

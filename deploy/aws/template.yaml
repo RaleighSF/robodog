@@ -1,0 +1,233 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Watch Dog re:Invent stack (ADR 0011) - the AWS twin of deploy/azure: Kinesis ingest,
+  Lambda to DynamoDB live store, keyless read-only query API (Lambda function URL),
+  Bedrock overwatch agent, AppSync Events live twin, Amplify-hosted booth dashboard.
+
+Parameters:
+  Prefix:
+    Type: String
+    Default: watchdog-reinvent
+  StaffKey:
+    Type: String
+    NoEcho: true
+    MinLength: 16
+    Description: Staff passcode for agent/ask (kept in deploy/aws/secrets, never in git).
+  BedrockModelId:
+    Type: String
+    Default: global.anthropic.claude-haiku-5-5
+  BedrockBaseModel:
+    Type: String
+    Default: anthropic.claude-haiku-5-5
+  ApiKeyExpires:
+    Type: Number
+    Description: Epoch seconds when the subscribe-only AppSync API key expires (max 365 days out).
+
+Resources:
+  # -- Ingest: Thor -> Kinesis -> Lambda -> DynamoDB --------------------------
+  TelemetryStream:
+    Type: AWS::Kinesis::Stream
+    Properties:
+      Name: !Sub "${Prefix}-telemetry"
+      StreamModeDetails: { StreamMode: PROVISIONED }
+      ShardCount: 1
+      RetentionPeriodHours: 24
+
+  TelemetryTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${Prefix}-telemetry"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: pk, AttributeType: S }
+        - { AttributeName: sk, AttributeType: S }
+      KeySchema:
+        - { AttributeName: pk, KeyType: HASH }
+        - { AttributeName: sk, KeyType: RANGE }
+      TimeToLiveSpecification: { AttributeName: ttl, Enabled: true }
+
+  IngestRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement: [{ Effect: Allow, Principal: { Service: lambda.amazonaws.com }, Action: sts:AssumeRole }]
+      ManagedPolicyArns: [arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole]
+      Policies:
+        - PolicyName: ingest
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [kinesis:GetRecords, kinesis:GetShardIterator, kinesis:DescribeStream,
+                         kinesis:DescribeStreamSummary, kinesis:ListShards, kinesis:ListStreams]
+                Resource: !GetAtt TelemetryStream.Arn
+              - Effect: Allow
+                Action: [dynamodb:BatchWriteItem, dynamodb:PutItem, dynamodb:BatchGetItem, dynamodb:GetItem]
+                Resource: !GetAtt TelemetryTable.Arn
+
+  IngestFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${Prefix}-ingest"
+      Runtime: python3.12
+      Architectures: [arm64]
+      Handler: aws_ingest.handler
+      Code: ../../build/aws-lambda
+      Timeout: 60
+      MemorySize: 256
+      Role: !GetAtt IngestRole.Arn
+      Environment: { Variables: { TELEMETRY_TABLE: !Ref TelemetryTable } }
+
+  IngestMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt TelemetryStream.Arn
+      FunctionName: !Ref IngestFunction
+      StartingPosition: LATEST
+      BatchSize: 100
+      MaximumBatchingWindowInSeconds: 1
+      BisectBatchOnFunctionError: true
+      MaximumRetryAttempts: 3
+
+  # -- Live twin: AppSync Events (Thor publishes with IAM, browsers subscribe) --
+  EventApi:
+    Type: AWS::AppSync::Api
+    Properties:
+      Name: !Sub "${Prefix}-motion"
+      EventConfig:
+        AuthProviders: [{ AuthType: API_KEY }, { AuthType: AWS_IAM }]
+        ConnectionAuthModes: [{ AuthType: API_KEY }, { AuthType: AWS_IAM }]
+        DefaultPublishAuthModes: [{ AuthType: AWS_IAM }]
+        DefaultSubscribeAuthModes: [{ AuthType: API_KEY }]
+
+  MotionNamespace:
+    Type: AWS::AppSync::ChannelNamespace
+    Properties:
+      ApiId: !GetAtt EventApi.ApiId
+      Name: motion
+      PublishAuthModes: [{ AuthType: AWS_IAM }]
+      SubscribeAuthModes: [{ AuthType: API_KEY }]
+
+  EventApiKey:
+    Type: AWS::AppSync::ApiKey
+    Properties:
+      ApiId: !GetAtt EventApi.ApiId
+      Description: Subscribe-only key for booth dashboards (publishing requires IAM)
+      Expires: !Ref ApiKeyExpires
+
+  # -- Edge identity for the Thor: put telemetry, publish motion, nothing else --
+  EdgeUser:
+    Type: AWS::IAM::User
+    Properties:
+      UserName: !Sub "${Prefix}-thor-edge"
+      Policies:
+        - PolicyName: edge-send-only
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [kinesis:PutRecord, kinesis:PutRecords]
+                Resource: !GetAtt TelemetryStream.Arn
+              - Effect: Allow
+                Action: appsync:EventPublish
+                Resource: !Sub "${EventApi.ApiArn}/channelNamespace/motion"
+
+  # -- Query API + agent: Lambda function URL ---------------------------------
+  ApiRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement: [{ Effect: Allow, Principal: { Service: lambda.amazonaws.com }, Action: sts:AssumeRole }]
+      ManagedPolicyArns: [arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole]
+      Policies:
+        - PolicyName: read-store-and-model
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [dynamodb:Query, dynamodb:GetItem]
+                Resource: !GetAtt TelemetryTable.Arn
+              - Effect: Allow
+                Action: [bedrock:InvokeModel, bedrock:InvokeModelWithResponseStream]
+                Resource:
+                  - !Sub "arn:aws:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${BedrockModelId}"
+                  - !Sub "arn:aws:bedrock:*::foundation-model/${BedrockBaseModel}"
+                  - !Sub "arn:aws:bedrock:::foundation-model/${BedrockBaseModel}"
+
+  ApiFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${Prefix}-api"
+      Runtime: python3.12
+      Architectures: [arm64]
+      Handler: aws_handler.handler
+      Code: ../../build/aws-lambda
+      Timeout: 60
+      MemorySize: 512
+      Role: !GetAtt ApiRole.Arn
+      Environment:
+        Variables:
+          TELEMETRY_BACKEND: aws
+          TELEMETRY_TABLE: !Ref TelemetryTable
+          AGENT_PROVIDER: aws
+          BEDROCK_MODEL_ID: !Ref BedrockModelId
+          STAFF_KEY: !Ref StaffKey
+          MOTION_PROVIDER: aws
+          MOTION_HTTP_DOMAIN: !GetAtt EventApi.Dns.Http
+          MOTION_REALTIME_DOMAIN: !GetAtt EventApi.Dns.Realtime
+          MOTION_API_KEY: !GetAtt EventApiKey.ApiKey
+          MOTION_CHANNEL: /motion/booth
+
+  ApiUrl:
+    Type: AWS::Lambda::Url
+    Properties:
+      TargetFunctionArn: !GetAtt ApiFunction.Arn
+      AuthType: NONE
+      Cors:
+        AllowOrigins: [!Sub "https://main.${DashboardApp.DefaultDomain}"]
+        AllowMethods: [GET, POST]
+        AllowHeaders: [content-type, x-staff-key]
+        MaxAge: 300
+
+  ApiUrlPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ApiFunction
+      Action: lambda:InvokeFunctionUrl
+      Principal: "*"
+      FunctionUrlAuthType: NONE
+
+  ApiInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref ApiFunction
+      Action: lambda:InvokeFunction
+      Principal: "*"
+      InvokedViaFunctionUrl: true
+
+  # -- Dashboard hosting: Amplify (manual zip deploys from deploy.sh) ----------
+  DashboardApp:
+    Type: AWS::Amplify::App
+    Properties:
+      Name: !Sub "${Prefix}-booth"
+      Platform: WEB
+
+  DashboardBranch:
+    Type: AWS::Amplify::Branch
+    Properties:
+      AppId: !GetAtt DashboardApp.AppId
+      BranchName: main
+      Stage: PRODUCTION
+      EnableAutoBuild: false
+
+Outputs:
+  ApiUrl: { Value: !GetAtt ApiUrl.FunctionUrl }
+  DashboardUrl: { Value: !Sub "https://main.${DashboardApp.DefaultDomain}" }
+  DashboardAppId: { Value: !GetAtt DashboardApp.AppId }
+  StreamName: { Value: !Ref TelemetryStream }
+  TableName: { Value: !Ref TelemetryTable }
+  EventApiHttp: { Value: !GetAtt EventApi.Dns.Http }
+  EventApiRealtime: { Value: !GetAtt EventApi.Dns.Realtime }
+  EdgeUserName: { Value: !Ref EdgeUser }

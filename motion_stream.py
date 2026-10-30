@@ -7,16 +7,17 @@ sit, stand up, lie down) from the motion itself: the dog does not report which
 remote/app trick is running. Recognized maneuvers also go out as telemetry
 `maneuver` events, so the agent and history see them.
 
-Cloud channel today: Azure Web PubSub, hub `motion`, group `motion`. The Thor
-holds only a send-to-group token (no access key); a dropped channel just drops
-frames, since a live mirror has no use for old ones."""
+Cloud channels (one per show cloud, chosen live by the conference demo profile):
+Azure Web PubSub (hub/group `motion`, send-to-group-only token) and AWS AppSync
+Events (namespace `motion`, publish-only IAM key). A dropped channel just drops
+frames, since a live twin has no use for old ones."""
 import json
 import logging
 import os
 import threading
 import time
 from collections import deque
-from typing import Callable, Optional
+from typing import Callable, List, Optional
 
 logger = logging.getLogger("motion_stream")
 
@@ -99,25 +100,142 @@ class ManeuverRecognizer:
         return out
 
 
-class MotionStream:
-    def __init__(self, url_fn: Callable[[], str], session_fn: Callable, token_file: str,
-                 pubsub_host: str, hub: str = "motion", group: str = "motion",
-                 device_id: str = "", on_maneuver: Optional[Callable[[dict], None]] = None):
-        self.url_fn, self.session_fn = url_fn, session_fn
-        self.token_file, self.host, self.hub, self.group = token_file, pubsub_host, hub, group
+class _Channel:
+    """One cloud's live-twin publisher with its own queue, so a slow or absent
+    cloud never delays another. Subclasses implement connect() and send()."""
+    cloud = ""
+
+    def __init__(self, device_id: str):
         self.device_id = device_id
+        self.frames: deque = deque(maxlen=200)
+        self.maneuvers: deque = deque(maxlen=20)
+        self.lock = threading.Lock()
+        self.stats = {"batches_out": 0, "publisher": "down"}
+
+    def offer(self, frame: dict, maneuver: Optional[dict]):
+        with self.lock:
+            self.frames.append(frame)
+            if maneuver:
+                self.maneuvers.append(dict(maneuver, _rx=time.monotonic()))
+
+    def _take(self):
+        with self.lock:
+            frames, self.frames = list(self.frames), deque(maxlen=200)
+            now = time.monotonic()
+            mans = [{k: v for k, v in m.items() if k != "_rx"} for m in self.maneuvers
+                    if now - m["_rx"] <= MANEUVER_MAX_AGE_S]
+            self.maneuvers.clear()
+        return frames, mans
+
+    def _drop_backlog(self):
+        with self.lock:                              # never replay a backlog into a live twin
+            self.frames.clear()
+            self.maneuvers.clear()
+
+    def run(self):
+        backoff = 2.0
+        while True:
+            try:
+                with self.connect() as conn:
+                    self.stats["publisher"] = "up"
+                    backoff = 2.0
+                    self._drop_backlog()
+                    while True:
+                        time.sleep(BATCH_S)
+                        frames, mans = self._take()
+                        if frames or mans:
+                            self.send(conn, {"v": 1, "device": self.device_id, "frames": frames, "maneuvers": mans})
+                            self.stats["batches_out"] += 1
+            except FileNotFoundError as e:
+                self.stats["publisher"] = "no credentials"
+                logger.warning("[Motion] %s: no credentials (%s) - live twin off", self.cloud, e)
+                time.sleep(60)
+            except Exception as e:                   # noqa: BLE001
+                self.stats["publisher"] = "down"
+                logger.info("[Motion] %s publisher down: %s - retrying in %.0fs", self.cloud, e, backoff)
+                time.sleep(backoff)
+                backoff = min(backoff * 2, 60.0)
+
+
+class WebPubSubChannel(_Channel):
+    """Azure Web PubSub: WebSocket client holding a send-to-group-only token."""
+    cloud = "azure"
+
+    def __init__(self, device_id, token_file, host, hub="motion", group="motion"):
+        super().__init__(device_id)
+        self.token_file, self.host, self.hub, self.group = token_file, host, hub, group
+
+    def connect(self):
+        from websockets.sync.client import connect
+        with open(self.token_file) as fh:
+            token = fh.read().strip()
+        return connect("wss://%s/client/hubs/%s?access_token=%s" % (self.host, self.hub, token),
+                       subprotocols=["json.webpubsub.azure.v1"], open_timeout=10, max_size=2**20)
+
+    def send(self, ws, data):
+        ws.send(json.dumps({"type": "sendToGroup", "group": self.group, "noEcho": True, "dataType": "json",
+                            "data": data}, separators=(",", ":")))
+
+
+class AppSyncChannel(_Channel):
+    """AWS AppSync Events: HTTP publish signed with the Thor's send-only IAM key
+    (appsync:EventPublish on namespace `motion` only)."""
+    cloud = "aws"
+
+    def __init__(self, device_id, credentials_file):
+        super().__init__(device_id)
+        self.credentials_file = credentials_file
+
+    def connect(self):
+        import contextlib
+        import requests
+        from botocore.credentials import Credentials
+        with open(self.credentials_file) as f:
+            c = json.load(f)
+        self._creds = Credentials(c["access_key_id"], c["secret_access_key"])
+        self._region, self._host, self._channel = c["region"], c["appsync_http"], c.get("channel", "/motion/booth")
+        session = requests.Session()
+        return contextlib.closing(session)
+
+    def send(self, session, data):
+        from botocore.auth import SigV4Auth
+        from botocore.awsrequest import AWSRequest
+        url = "https://%s/event" % self._host
+        body = json.dumps({"channel": self._channel, "events": [json.dumps(data, separators=(",", ":"))]},
+                          separators=(",", ":"))
+        req = AWSRequest(method="POST", url=url, data=body, headers={"content-type": "application/json"})
+        SigV4Auth(self._creds, "appsync", self._region).add_auth(req)
+        r = session.post(url, data=body, headers=dict(req.headers), timeout=5)
+        if r.status_code >= 300:
+            raise RuntimeError("AppSync publish HTTP %s: %s" % (r.status_code, r.text[:200]))
+
+
+class MotionStream:
+    def __init__(self, url_fn: Callable[[], str], session_fn: Callable, channels: List[_Channel],
+                 on_maneuver: Optional[Callable[[dict], None]] = None,
+                 cloud_selector: Optional[Callable[[], set]] = None):
+        self.url_fn, self.session_fn = url_fn, session_fn
+        self.channels = channels
         self.on_maneuver = on_maneuver
+        self.cloud_selector = cloud_selector       # the conference demo profile picks the cloud path
         self.recognizer = ManeuverRecognizer()
-        self._frames: deque = deque(maxlen=200)
-        self._maneuvers: deque = deque(maxlen=20)
-        self._lock = threading.Lock()
-        self.stats = {"frames_in": 0, "batches_out": 0, "publisher": "down", "maneuvers": 0}
+        self.stats = {"frames_in": 0, "maneuvers": 0}
 
     def start(self):
         threading.Thread(target=self._read_loop, name="MotionRead", daemon=True).start()
-        threading.Thread(target=self._publish_loop, name="MotionPublish", daemon=True).start()
-        logger.info("[Motion] started (hub %s on %s)", self.hub, self.host)
+        for ch in self.channels:
+            threading.Thread(target=ch.run, name="MotionPublish-" + ch.cloud, daemon=True).start()
+        logger.info("[Motion] started (channels: %s)", ", ".join(ch.cloud for ch in self.channels))
         return self
+
+    def _active(self) -> List[_Channel]:
+        if self.cloud_selector is None:
+            return self.channels
+        try:
+            clouds = set(self.cloud_selector())
+        except Exception:                            # noqa: BLE001
+            return self.channels
+        return [ch for ch in self.channels if ch.cloud in clouds]
 
     # -- robot link /joints (server-sent events) -------------------------------
     def _read_loop(self):
@@ -132,13 +250,11 @@ class MotionStream:
                         if not isinstance(f.get("q"), list) or len(f["q"]) != 12:
                             continue
                         m = self.recognizer.feed(f)
-                        with self._lock:
-                            self._frames.append(f)
-                            self.stats["frames_in"] += 1
-                            if m:
-                                self._maneuvers.append(dict(m, _rx=time.monotonic()))
-                                self.stats["maneuvers"] += 1
+                        self.stats["frames_in"] += 1
+                        for ch in self._active():
+                            ch.offer(f, m)
                         if m:
+                            self.stats["maneuvers"] += 1
                             logger.info("[Motion] maneuver %s", m)
                             if self.on_maneuver:
                                 try:
@@ -149,55 +265,21 @@ class MotionStream:
                 logger.info("[Motion] robot stream unavailable: %s - retrying in 3s", e)
             time.sleep(3)
 
-    # -- cloud channel ------------------------------------------------------------
-    def _token(self) -> str:
-        with open(self.token_file) as fh:
-            return fh.read().strip()
 
-    def _publish_loop(self):
-        from websockets.sync.client import connect
-        backoff = 2.0
-        while True:
-            try:
-                url = "wss://%s/client/hubs/%s?access_token=%s" % (self.host, self.hub, self._token())
-                with connect(url, subprotocols=["json.webpubsub.azure.v1"], open_timeout=10, max_size=2**20) as ws:
-                    self.stats["publisher"] = "up"
-                    backoff = 2.0
-                    with self._lock:
-                        self._frames.clear()                # never replay a backlog into a live twin
-                        self._maneuvers.clear()
-                    while True:
-                        time.sleep(BATCH_S)
-                        with self._lock:
-                            frames, self._frames = list(self._frames), deque(maxlen=200)
-                            now = time.monotonic()
-                            mans = [{k: v for k, v in m.items() if k != "_rx"} for m in self._maneuvers
-                                    if now - m["_rx"] <= MANEUVER_MAX_AGE_S]
-                            self._maneuvers.clear()
-                        if not frames and not mans:
-                            continue
-                        msg = {"type": "sendToGroup", "group": self.group, "noEcho": True, "dataType": "json",
-                               "data": {"v": 1, "device": self.device_id, "frames": frames, "maneuvers": mans}}
-                        ws.send(json.dumps(msg, separators=(",", ":")))
-                        self.stats["batches_out"] += 1
-            except FileNotFoundError:
-                self.stats["publisher"] = "no token"
-                logger.warning("[Motion] no publisher token at %s - live mirror off", self.token_file)
-                time.sleep(60)
-            except Exception as e:                          # noqa: BLE001
-                self.stats["publisher"] = "down"
-                logger.info("[Motion] publisher down: %s - retrying in %.0fs", e, backoff)
-                time.sleep(backoff)
-                backoff = min(backoff * 2, 60.0)
-
-
-def start_from_config(cfg: dict, device_id: str, on_maneuver=None) -> Optional[MotionStream]:
-    """cfg = config['motion_stream']; disabled unless `enabled: true` and a host is set."""
-    if not cfg or not cfg.get("enabled") or not cfg.get("pubsub_host"):
+def start_from_config(cfg: dict, device_id: str, on_maneuver=None, cloud_selector=None) -> Optional[MotionStream]:
+    """cfg = config['motion_stream']: `enabled`, plus an `azure` and/or `aws` channel block."""
+    if not cfg or not cfg.get("enabled"):
+        return None
+    channels: List[_Channel] = []
+    az = cfg.get("azure") or ({"pubsub_host": cfg["pubsub_host"]} if cfg.get("pubsub_host") else None)
+    if az and az.get("pubsub_host"):
+        channels.append(WebPubSubChannel(device_id, az.get("token_file", cfg.get("token_file", "/state/motion.token")),
+                                         az["pubsub_host"], az.get("hub", "motion"), az.get("group", "motion")))
+    aws = cfg.get("aws")
+    if aws:
+        channels.append(AppSyncChannel(device_id, aws.get("credentials_file", "/state/aws-edge.json")))
+    if not channels:
         return None
     from robot_host import robot_host
-    return MotionStream(url_fn=robot_host.service_url, session_fn=robot_host.public,
-                        token_file=cfg.get("token_file", "/state/motion.token"),
-                        pubsub_host=cfg["pubsub_host"], hub=cfg.get("hub", "motion"),
-                        group=cfg.get("group", "motion"), device_id=device_id,
-                        on_maneuver=on_maneuver).start()
+    return MotionStream(url_fn=robot_host.service_url, session_fn=robot_host.public, channels=channels,
+                        on_maneuver=on_maneuver, cloud_selector=cloud_selector).start()

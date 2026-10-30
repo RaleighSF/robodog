@@ -18,21 +18,24 @@ may be cloud-specific.
 | Sample data | `deploy/azure/tools/sample_events.py` (device `watchdog-sample`) |
 | Contract tests | `cloud/contract_tests/`: same sample in, same expected rows out, per cloud |
 
-## Component map
+## Component map (both built; see ADR 0011)
 
-| Role | Azure (Ignite), built | AWS (re:Invent), planned; verify availability at build time |
+| Role | Azure (Ignite) | AWS (re:Invent) |
 |---|---|---|
-| Edge sink | `azure_eventhub` (`EventHubExporter`) | `aws_kinesis` sink, same JSON |
-| Ingest | Event Hubs Basic `watchdog-ignite-28628191/watchdog-telemetry` → `telemetry_ingest` Function (ADR 0008) | Kinesis Data Streams (on-demand) |
-| Store and analytics | ADX free cluster, KQL update policies + functions | Firehose → S3 (Parquet) + Athena views mirroring the tables/functions |
-| Query API host | Azure Functions (Python), `cloud/query_api` | Lambda (Python) behind a function URL or API Gateway, same handler |
-| Agent | Azure AI Foundry agent + OpenAPI tool | Amazon Bedrock agent / AgentCore + the same OpenAPI tool |
-| Live motion channel | Web PubSub `wd-motion-28628191` (hub `motion`, keys off) + `motion/negotiate` | API Gateway WebSockets or IoT Core + same negotiate contract |
-| Agent knowledge | `cloud/agent/knowledge/go2_health.md` appended to instructions | Same file in the Bedrock agent instructions |
-| Dashboard hosting | Azure Static Web Apps | Amplify Hosting or S3 + CloudFront |
-| Infrastructure as code | `deploy/azure/main.bicep` + `deploy.sh` | `deploy/aws/` (CDK or CloudFormation), same parameters |
-| Secrets on the Thor | `/state/eventhub.conn` (send-only SAS) | `/state/aws-telemetry.env` (IAM user/role limited to `kinesis:PutRecord*`) |
-| Theme | `THEME=azure`: Azure-blue accent, "Built on Microsoft Azure" | `THEME=aws`: AWS orange accent, AWS marks per approval |
+| Edge sink | `azure_eventhub` (`EventHubExporter`) | `aws_kinesis` (`KinesisExporter`), same JSON |
+| Ingest | Event Hubs Basic `watchdog-ignite-28628191/watchdog-telemetry` → `telemetry_ingest` Function (ADR 0008) | Kinesis `watchdog-reinvent-telemetry` (1 shard) → `watchdog-reinvent-ingest` Lambda |
+| Store and analytics | ADX free cluster, KQL update policies + functions | DynamoDB `watchdog-reinvent-telemetry` (TTL 24 h) + `backends/aws.py` (same operations) |
+| Query API host | Azure Functions (Python), `cloud/query_api/function_app.py` | Lambda function URL, `cloud/query_api/aws_handler.py`, same routes |
+| Shared API core | `cloud/query_api/api_core.py` (brief cache, staff key, question limits) | same file |
+| Agent | Azure AI Foundry agent, GPT-4.1 mini, OpenAPI tool | Bedrock, Claude Haiku 5.5, in-process tool over the same operations |
+| Live motion channel | Web PubSub `wd-motion-28628191` (hub `motion`, keys off) + `motion/negotiate` | AppSync Events (namespace `motion`, IAM publish, API-key subscribe) + same route |
+| Agent knowledge | `cloud/agent/knowledge/go2_health.md` appended to instructions | same file, bundled into the Lambda |
+| Dashboard hosting | Azure Static Web Apps | Amplify Hosting (`THEME=aws` build) |
+| Infrastructure as code | `deploy/azure/main.bicep` + `deploy.sh` | `deploy/aws/template.yaml` + `deploy.sh` (CloudFormation) |
+| Secrets on the Thor | `/state/eventhub.conn`, `/state/motion.token` | `/state/aws-edge.json` (send-only IAM key) |
+| Path selection | Thor demo profile `azure` (or `default`) | Thor demo profile `aws` (or `default`) |
+| Theme | `THEME=azure` | `THEME=aws` |
+| Contract test | `cloud/contract_tests/compare_clouds.py <azure-api> <aws-api>` | |
 
 ## How the AWS build is produced
 
@@ -57,3 +60,5 @@ may be cloud-specific.
   agent grounded on a cited Go2 health knowledge base.
 - 2026-10-30: Astra review fixes. Schema 1.2 is documented; architecture labels are per provider
   (AWS: Kinesis → Data Firehose → S3/Athena); the staff passcode only goes to the build's API.
+- 2026-10-30: AWS stack built and live from the real dog alongside Azure (ADR 0011); demo profile picks
+  the path; compare_clouds.py passes.
