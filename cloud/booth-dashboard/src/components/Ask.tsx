@@ -2,7 +2,7 @@
 // Staff-only Ask Overwatch (ADR 0004). The passcode is entered once per browser;
 // a 401 forgets it. Answers come from the read-only agent and are never actions.
 import { FormEvent, useEffect, useState } from "react";
-import { askOverwatch, loadStaffKey, saveStaffKey } from "@/lib/agent";
+import { askOverwatch, isTrustedApi, loadStaffKey, saveStaffKey } from "@/lib/agent";
 import { theme } from "@/lib/theme";
 
 export function AskOverwatch({ api, live }: { api: string; live: boolean }) {
@@ -14,12 +14,12 @@ export function AskOverwatch({ api, live }: { api: string; live: boolean }) {
 
   useEffect(() => { setKey(loadStaffKey()); }, []);
 
-  if (!live || !api) {
+  if (!live || !api || !isTrustedApi(api)) {
     return (
       <form className="ask panel" onSubmit={(e) => e.preventDefault()}>
         <label htmlFor="ask" className="title">Ask overwatch</label>
         <input id="ask" placeholder="e.g. Which joint is running hottest, and why?" disabled aria-describedby="ask-note" />
-        <span id="ask-note" className="muted">Live data only. The agent runs on {theme.agentHost}.</span>
+        <span id="ask-note" className="muted">{api && !isTrustedApi(api) ? "Asking is off for a custom API." : `Live data only. The agent runs on ${theme.agentHost}.`}</span>
       </form>
     );
   }

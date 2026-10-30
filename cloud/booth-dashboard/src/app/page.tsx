@@ -9,7 +9,7 @@ import { ArchitectureButton } from "@/components/Architecture";
 import { Annunciator, CasStack, FreshnessLamp, JointDial } from "@/components/Instruments";
 import { PAGES, Page, SynopticPage } from "@/components/Pages";
 import { useBrief } from "@/lib/agent";
-import { MANEUVER_LABEL, useMotion } from "@/lib/motion";
+import { MANEUVER_LABEL, MANEUVER_SHOW_MS, useMotion } from "@/lib/motion";
 import { LEGS, LIMITS, Leg, Snapshot, jointState } from "@/lib/model";
 import { theme } from "@/lib/theme";
 import { useTelemetry } from "@/lib/useTelemetry";
@@ -59,7 +59,7 @@ export default function Home() {
   const motion = useMotion(api, source === "live");
   const [now, setNow] = useState(Date.now());
   useEffect(() => { const id = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(id); }, []);
-  const recent = motion.maneuver && now - motion.maneuver.t < 6000 ? motion.maneuver : null;
+  const recent = motion.maneuver && now - motion.maneuver.t < MANEUVER_SHOW_MS ? motion.maneuver : null;
   const [mode, setMode] = useState<"booth" | "staff">("booth");
   const [page, setPage] = useState<Page>("POWER");
   const [acked, setAcked] = useState<Set<string>>(new Set());

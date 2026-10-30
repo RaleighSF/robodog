@@ -157,6 +157,37 @@ It carries two extra objects:
 - `edge`: Thor health, with `cpu_percent`, `mem_used_gb`, `mem_available_gb`,
   `temp_max_c`, `detection_fps` and `video_frame_age_s`.
 
+### Schema 1.2 (additive): `maneuver` events
+
+The Thor's `motion_stream.py` recognizes maneuvers from the robot link's live
+`/joints` stream (20 Hz), because the dog does not report which remote or app
+trick is running. Each recognized maneuver is one event, with `event_type:
+"maneuver"` and a `maneuver` object:
+
+- `name` (string): `hello`, `sit`, `stand_up` or `lie_down`.
+- `t` (number): when the maneuver completed, in Unix seconds from the robot
+  link's clock (frame time, not send time).
+- `paw` (string, `hello` only): `front right` or `front left`.
+- `posture_from` / `posture_to` (strings, posture transitions only): `lying`,
+  `low` (sitting) or `standing`.
+
+**Firing rules:**
+- A `hello` fires once per paw raise and re-arms only after that paw comes down.
+- The same name is not repeated within 3 s.
+- Holds reset after a frame gap of more than 1 s, or when body height is unknown.
+
+**Delivery:**
+- **Telemetry:** maneuvers ride the normal pipeline, so they are at-least-once like
+  every event.
+- **Live channel:** the real-time channel never republishes a maneuver older than
+  10 s, and clears its queue on reconnect.
+- **Consumers** should treat `t` as the event time.
+
+Also new in the `vitals` snapshot:
+- **`lidar`**: see ADR 0009.
+- **Signed battery current:** `power.bms.current` is in mA, + charging and
+  − discharging.
+
 **Sinks** are chosen with `telemetry.sinks`, for example `[local, s3, azure_eventhub]`.
 Every sink receives the same JSON, so Azure (Ignite) and AWS (re:Invent) share one schema.
 

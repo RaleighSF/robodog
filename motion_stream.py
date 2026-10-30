@@ -16,7 +16,7 @@ import os
 import threading
 import time
 from collections import deque
-from typing import Callable, List, Optional
+from typing import Callable, Optional
 
 logger = logging.getLogger("motion_stream")
 
@@ -27,6 +27,8 @@ HELLO_THIGH_MAX = -0.30            # front thigh swung forward past this (rad) =
 HELLO_HOLD_S = 0.3
 POSTURE_HOLD_S = 1.0               # a posture must hold this long before a transition counts
 REPEAT_GAP_S = 3.0                 # the same maneuver is not reported again within this gap
+GAP_RESET_S = 1.0                  # a gap in frames longer than this resets pending holds
+MANEUVER_MAX_AGE_S = 10.0          # older maneuvers are dropped, never published as current
 FR_THIGH, FL_THIGH = 1, 4          # joint order FR, FL, RR, RL x hip/thigh/calf (confirmed 2026-10-30)
 
 
@@ -43,7 +45,9 @@ class ManeuverRecognizer:
         self.posture = "unknown"
         self._cand, self._cand_since = None, 0.0
         self._paw_since = {FR_THIGH: None, FL_THIGH: None}
+        self._paw_fired = {FR_THIGH: False, FL_THIGH: False}   # latched until that paw comes down
         self._last = {}
+        self._prev_t = None
 
     def _fire(self, name: str, t: float, **detail) -> Optional[dict]:
         if t - self._last.get(name, -1e9) < REPEAT_GAP_S:
@@ -54,15 +58,28 @@ class ManeuverRecognizer:
     def feed(self, f: dict) -> Optional[dict]:
         t, q, h = f["t"], f["q"], f.get("h")
         out = None
+        # A gap in the stream or missing body height (sport state stale): drop pending
+        # holds, so nothing fires from stitched-together or half-known frames.
+        gap = self._prev_t is not None and t - self._prev_t > GAP_RESET_S
+        self._prev_t = t
+        if gap or h is None:
+            self._paw_since = {k: None for k in self._paw_since}
+            self._cand = None
+            if h is None:
+                return None
         # Hello / shake: one front thigh swung well forward, held briefly, while upright.
-        if self.posture in ("standing", "low"):
-            for idx, side in ((FR_THIGH, "front right"), (FL_THIGH, "front left")):
-                if q[idx] < HELLO_THIGH_MAX:
-                    self._paw_since[idx] = self._paw_since[idx] or t
-                    if t - self._paw_since[idx] >= HELLO_HOLD_S:
-                        out = out or self._fire("hello", t, paw=side)
-                else:
-                    self._paw_since[idx] = None
+        # One event per raise: it re-arms only after that paw comes back down.
+        for idx, side in ((FR_THIGH, "front right"), (FL_THIGH, "front left")):
+            if q[idx] < HELLO_THIGH_MAX and self.posture in ("standing", "low"):
+                self._paw_since[idx] = self._paw_since[idx] or t
+                if not self._paw_fired[idx] and t - self._paw_since[idx] >= HELLO_HOLD_S:
+                    m = self._fire("hello", t, paw=side)
+                    if m:
+                        self._paw_fired[idx] = True
+                        out = out or m
+            elif q[idx] >= HELLO_THIGH_MAX:
+                self._paw_since[idx] = None
+                self._paw_fired[idx] = False
         # Posture transitions from body height, debounced.
         p = posture_of(h)
         if p != self._cand:
@@ -87,7 +104,7 @@ class MotionStream:
         self.on_maneuver = on_maneuver
         self.recognizer = ManeuverRecognizer()
         self._frames: deque = deque(maxlen=200)
-        self._maneuvers: List[dict] = []
+        self._maneuvers: deque = deque(maxlen=20)
         self._lock = threading.Lock()
         self.stats = {"frames_in": 0, "batches_out": 0, "publisher": "down", "maneuvers": 0}
 
@@ -142,12 +159,16 @@ class MotionStream:
                     self.stats["publisher"] = "up"
                     backoff = 2.0
                     with self._lock:
-                        self._frames.clear()                # never replay a backlog into a live mirror
+                        self._frames.clear()                # never replay a backlog into a live twin
+                        self._maneuvers.clear()
                     while True:
                         time.sleep(BATCH_S)
                         with self._lock:
                             frames, self._frames = list(self._frames), deque(maxlen=200)
-                            mans, self._maneuvers = self._maneuvers, []
+                            newest = frames[-1]["t"] if frames else None
+                            mans = [m for m in self._maneuvers
+                                    if newest is None or newest - m["t"] <= MANEUVER_MAX_AGE_S]
+                            self._maneuvers.clear()
                         if not frames and not mans:
                             continue
                         msg = {"type": "sendToGroup", "group": self.group, "noEcho": True, "dataType": "json",

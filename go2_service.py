@@ -276,6 +276,7 @@ RING_H = (0.06, 0.35)        # m above the floor (floor = -body_height in base_l
 RING_SECTOR_MIN = 20         # returns per 45-degree sector per second to count as occupied
 RING_SECTORS_MIN = 5         # of the 6 front/side sectors (the L1 barely sees behind)
 RING_HOLD_S = 10.0           # sustained this long before the window is "obstructed"
+LIDAR_FIELD_STALE_S = 5.0    # lidar_state / avoidance switch older than this are reported as null
 
 
 def ring_counts(xyz, body_height):
@@ -296,10 +297,18 @@ class SensorWindow:
         self._ring_since = None
 
     def snapshot(self):
+        """Each source ages on its own clock: a silent topic is reported as null,
+        never as its last value (the ring verdict already goes "unknown" when no
+        clouds arrive)."""
+        now = time.monotonic()
         with self.lock:
             s = dict(self.state)
-        if "t" in s:
-            s["age_s"] = round(time.monotonic() - s.pop("t"), 1)
+        t_state, t_avoid = s.pop("t", None), s.pop("t_avoid", None)
+        if t_state is None or now - t_state > LIDAR_FIELD_STALE_S:
+            s.update(error_state=None, cloud_hz=None, packet_loss=None)
+        if t_avoid is None or now - t_avoid > LIDAR_FIELD_STALE_S:
+            s["avoidance"] = None
+        s["age_s"] = None if t_state is None else round(now - t_state, 1)
         return s
 
     def _on_cloud(self, m):
@@ -355,6 +364,7 @@ class SensorWindow:
                         return
                     with self.lock:
                         self.state["avoidance"] = bool(sw) if sw is not None else None
+                        self.state["t_avoid"] = time.monotonic()
                 node.create_subscription(PointCloud2, "/utlidar/cloud_base", self._on_cloud, qos_profile_sensor_data)
                 node.create_subscription(LidarState, "/utlidar/lidar_state", on_state, qos_profile_sensor_data)
                 node.create_subscription(String, "/multiplestate", on_multi, 10)
@@ -860,6 +870,8 @@ def vitals():
 
 
 JOINTS_HZ = 20.0                  # /joints stream rate (LowState arrives at ~20 Hz on /lf)
+JOINTS_MAX_STREAMS = 2            # the Thor needs one; a cap keeps request threads for commands
+_joint_streams = threading.BoundedSemaphore(JOINTS_MAX_STREAMS)
 
 
 @app.route("/joints")
@@ -867,19 +879,40 @@ def joints():
     """Server-sent events: 12 joint angles + attitude + body height at JOINTS_HZ,
     for the dashboard's live 3D mirror. Read-only like /vitals; frames older than
     the telemetry stale limit are not sent."""
+    if not _joint_streams.acquire(blocking=False):
+        return jsonify({"error": "BUSY", "message": "joint stream limit reached"}), 503
+    state = {"held": True}
+    guard = threading.Lock()
+
+    def release():                                # exactly once, whichever path ends the stream
+        with guard:
+            if state["held"]:
+                state["held"] = False
+                _joint_streams.release()
+
     def generate():
-        last = 0.0
-        while True:
-            time.sleep(1.0 / JOINTS_HZ)
-            d = link()
-            if d is None or d.q is None or d.q_mono == last or time.monotonic() - d.q_mono > TELEMETRY_STALE_S:
-                yield ": idle\n\n"              # comment line keeps the stream open
-                continue
-            last = d.q_mono
-            imu = (d.sport or {}).get("imu_state") or {}
-            frame = {"t": round(time.time(), 3), "q": d.q, "rpy": imu.get("rpy"), "h": d.body_height}
-            yield "data: " + json.dumps(frame, separators=(",", ":")) + "\n\n"
-    return Response(generate(), mimetype="text/event-stream", headers={"Cache-Control": "no-store"})
+        try:
+            last = 0.0
+            while True:
+                time.sleep(1.0 / JOINTS_HZ)
+                d = link()
+                now = time.monotonic()
+                if d is None or d.q is None or d.q_mono == last or now - d.q_mono > TELEMETRY_STALE_S:
+                    yield ": idle\n\n"          # comment line keeps the stream open
+                    continue
+                last = d.q_mono
+                # Attitude and height come from sport state, which can stop on its own:
+                # send them only while fresh, never as stale values on a fresh frame.
+                sport_ok = bool(d.last_state) and now - d.last_state < TELEMETRY_STALE_S
+                imu = ((d.sport or {}).get("imu_state") or {}) if sport_ok else {}
+                frame = {"t": round(time.time(), 3), "q": d.q, "rpy": imu.get("rpy"),
+                         "h": d.body_height if sport_ok else None}
+                yield "data: " + json.dumps(frame, separators=(",", ":")) + "\n\n"
+        finally:
+            release()                             # client gone (GeneratorExit) or error
+    resp = Response(generate(), mimetype="text/event-stream", headers={"Cache-Control": "no-store"})
+    resp.call_on_close(release)                   # also covers a stream that never started
+    return resp
 
 
 @app.route("/battery")

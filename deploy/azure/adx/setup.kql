@@ -298,12 +298,17 @@
     let lastCool = hist | where Temperature < 55 | summarize LastCool = max(Timestamp) by DeviceId, Joint;
     let since = hist | where Temperature >= 55 | join kind=leftouter lastCool on DeviceId, Joint
         | where isnull(LastCool) or Timestamp > LastCool | summarize Since = min(Timestamp) by DeviceId, Joint;
+    // Over-limit time is measured on its own: only the current run at or above 70 C.
+    let lastUnder = hist | where Temperature < 70 | summarize LastUnder = max(Timestamp) by DeviceId, Joint;
+    let sinceOver = hist | where Temperature >= 70 | join kind=leftouter lastUnder on DeviceId, Joint
+        | where isnull(LastUnder) or Timestamp > LastUnder | summarize SinceOver = min(Timestamp) by DeviceId, Joint;
     let ref = hist | where Timestamp > ago(10m) | summarize arg_min(Timestamp, Temperature) by DeviceId, Joint
         | project DeviceId, Joint, RefT = Timestamp, T0 = Temperature;
     let hotJoints = Motors_Latest() | where Temperature >= 55
         | join kind=leftouter ref on DeviceId, Joint | join kind=leftouter since on DeviceId, Joint
+        | join kind=leftouter sinceOver on DeviceId, Joint
         | extend D = Temperature - T0, WinMin = toint(round(datetime_diff('second', Timestamp, RefT) / 60.0)),
-                 InBandMin = toint(datetime_diff('minute', now(), Since))
+                 InBandMin = toint(datetime_diff('minute', now(), iff(Temperature >= 70, SinceOver, Since)))
         | join kind=leftouter (v | project DeviceId, NowPosture = Posture, NowCharging = Charging) on DeviceId
         | extend Context = strcat(" · ", iff(NowPosture == "low", "sitting", NowPosture), iff(NowCharging == true, ", charging", ""))
         | extend Trend = iff(isnull(D) or WinMin < 1, "", iff(abs(D) < 1, " · steady",

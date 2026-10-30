@@ -9,9 +9,9 @@ may be cloud-specific.
 
 | Contract | Source of truth |
 |---|---|
-| Telemetry events (schema 1.1) | `TELEMETRY_SCHEMA.md`, `telemetry_exporter.py` |
+| Telemetry events (schema 1.2: vitals, lidar block, maneuver events) | `TELEMETRY_SCHEMA.md`, `telemetry_exporter.py` |
 | Query API operations, parameters and row shapes | `cloud/query_api/backends/__init__.py` (`OPERATIONS`) + `cloud/query_api/openapi.yaml` |
-| Derived-table semantics (Heartbeats, Vitals, Motors, Detections, Commands, Alerts) | `deploy/azure/adx/setup.kql`. The AWS views must produce the same columns. |
+| Derived-table semantics (Heartbeats, Vitals incl. lidar + BatteryCurrentA/Charging, Motors, Maneuvers, Detections, Commands, Alerts) | `deploy/azure/adx/setup.kql`. The AWS views must produce the same columns. |
 | Overwatch findings rules and thresholds | `Overwatch_Findings` in `setup.kql` (thresholds are placeholders, ADR 0004) |
 | Agent instructions + tool | `cloud/agent/` (instructions + OpenAPI tool; one copy for both clouds) |
 | Booth dashboard | `cloud/booth-dashboard/` (one app; `THEME` + `QUERY_API_URL` at build) |
@@ -55,3 +55,5 @@ may be cloud-specific.
   query API → dashboard and Foundry agent (ADR 0008).
 - 2026-10-30: Lidar window check (ADR 0009); live motion mirror + maneuvers (ADR 0010);
   agent grounded on a cited Go2 health knowledge base.
+- 2026-10-30: Astra review fixes. Schema 1.2 is documented; architecture labels are per provider
+  (AWS: Kinesis → Data Firehose → S3/Athena); the staff passcode only goes to the build's API.

@@ -10,12 +10,16 @@ export interface Maneuver { name: string; t: number; paw?: string; posture_from?
 const PLAYBACK_DELAY_S = 0.25;      // jitter buffer: render this far behind the newest frame
 const FRESH_S = 1.0;                // no frame for this long = mirror off (fall back to vitals)
 const RENEW_MS = 45 * 60_000;       // reconnect with a fresh token before the 60 min one lapses
+export const MANEUVER_SHOW_MS = 6000;  // a maneuver badge shows for this long after the event
 
 /** Mutable feed read by the 3D render loop (no React re-render per frame). */
 export class MotionFeed {
   private frames: MotionFrame[] = [];
   private offset: number | null = null;     // browser clock minus robot clock (min seen, s)
   lastRecv = 0;
+
+  /** Robot-clock time (s) as browser epoch ms, once the clock offset is known. */
+  toLocalMs(t: number): number | null { return this.offset == null ? null : (t + this.offset) * 1000; }
 
   push(frames: MotionFrame[]) {
     const now = Date.now() / 1000;
@@ -62,17 +66,21 @@ export function useMotion(api: string, enabled: boolean): { feed: MotionFeed; ma
         if (!r.ok) throw new Error(String(r.status));
         const { url, protocol } = (await r.json()) as { url: string; protocol: string };
         if (stop) return;
-        ws = new WebSocket(url, protocol);
-        ws.onmessage = (ev) => {
+        const sock = new WebSocket(url, protocol);
+        ws = sock;
+        sock.onmessage = (ev) => {
           let m: { type?: string; data?: { frames?: MotionFrame[]; maneuvers?: Maneuver[] } };
           try { m = JSON.parse(String(ev.data)); } catch { return; }
           if (m.type !== "message" || !m.data) return;
           feed.push(m.data.frames ?? []);
+          // Keep each maneuver's real time (robot clock); ignore any that are already old.
           const mans = m.data.maneuvers ?? [];
-          if (mans.length) setManeuver({ ...mans[mans.length - 1], t: Date.now() });
+          const last = mans[mans.length - 1];
+          const at = last ? feed.toLocalMs(last.t) : null;
+          if (last && at != null && Date.now() - at < MANEUVER_SHOW_MS) setManeuver({ ...last, t: at });
         };
-        ws.onclose = () => { if (!stop) retry = setTimeout(connect, 3000); };
-        renew = setTimeout(() => ws?.close(), RENEW_MS);
+        sock.onclose = () => { clearTimeout(renew); if (!stop) retry = setTimeout(connect, 3000); };
+        renew = setTimeout(() => sock.close(), RENEW_MS);   // renew this socket only
       } catch {
         if (!stop) retry = setTimeout(connect, 5000);
       }
