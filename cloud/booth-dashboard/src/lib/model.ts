@@ -26,7 +26,8 @@ export interface Snapshot {
   roll: number | null; pitch: number | null; yaw: number | null;          // rad
   velocity: [number, number] | null; yawSpeed: number | null;
   gaitType: number | null; sportMode: number | null; errorCode: number | null;
-  battery: { soc: number | null; packV: number | null; packA: number | null; cycles: number | null; cellV: number[]; bmsTemps: number[]; boardTemps: number[] };
+  // packA = robot load (power_a). batteryA = BMS current, signed: + charging, - discharging.
+  battery: { soc: number | null; packV: number | null; packA: number | null; batteryA: number | null; charging: boolean; cycles: number | null; cellV: number[]; bmsTemps: number[]; boardTemps: number[] };
   imuTemp: number | null;
   footForce: (number | null)[];  // FR FL RR RL as published; null = sensor reports nothing
   obstacles: number[];       // range_obstacle, metres
@@ -39,7 +40,7 @@ export interface Snapshot {
 
 export interface Finding { id: string; severity: Severity; t: number; metric: string; text: string; joint?: string }
 export interface SeriesPoint { t: number; v: number }
-export interface Series { soc: SeriesPoint[]; tempMax: SeriesPoint[]; tempAvg: SeriesPoint[]; fps: SeriesPoint[]; edgeTemp: SeriesPoint[]; pitch: SeriesPoint[]; roll: SeriesPoint[]; joint: Record<string, SeriesPoint[]> }
+export interface Series { soc: SeriesPoint[]; batteryA: SeriesPoint[]; tempMax: SeriesPoint[]; tempAvg: SeriesPoint[]; fps: SeriesPoint[]; edgeTemp: SeriesPoint[]; pitch: SeriesPoint[]; roll: SeriesPoint[]; joint: Record<string, SeriesPoint[]> }
 export interface PostureChange { t: number; posture: Posture }
 export interface DetectionClass { className: string; count: number; avgConfidence: number }
 export interface CommandRow { t: number; command: string; success: boolean }
@@ -63,6 +64,8 @@ export const LIMITS = {
   tiltWarning: 0.6,                            // rad (~34 deg)
   edgeCaution: 85,                             // degC
   cellImbalanceMv: 50,                         // mV spread before a cell is flagged (placeholder)
+  chargingA: 0.5,
+  packAh: 15,       // EDU long-endurance pack (Unitree spec); measured ~16 Ah on the booth dog 2026-10-30   // BMS current above this (A) = on the charger (observed +7.7 A docked, -2.7 A standing)
   staleS: 25,   // telemetry older than this is shown invalid (sample 5 s + flush 2 s + ingest p90 ~10 s + poll 2.5 s)
 };
 

@@ -5,6 +5,7 @@
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
 import { AskOverwatch } from "@/components/Ask";
+import { ArchitectureButton } from "@/components/Architecture";
 import { Annunciator, CasStack, FreshnessLamp, JointDial } from "@/components/Instruments";
 import { PAGES, Page, SynopticPage } from "@/components/Pages";
 import { useBrief } from "@/lib/agent";
@@ -91,6 +92,7 @@ export default function Home() {
           <Annunciator kind="caution" lit={cautionLit} onAck={mode === "staff" ? () => ack("caution") : undefined} />
         </div>
         <FreshnessLamp ageS={s?.ageS ?? null} source={source} error={data.error} />
+        <ArchitectureButton />
         <div className="marks"><span>{theme.builtOn}</span><span className="nv">Powered by <b>NVIDIA</b></span></div>
       </header>
 
@@ -115,7 +117,7 @@ export default function Home() {
         ))}
       </section>
 
-      <CasStack findings={data.findings} stale={stale} snapshot={s ?? null} socSeries={data.series.soc} brief={brief} detail={mode === "staff"} />
+      <CasStack findings={data.findings} stale={stale} snapshot={s ?? null} socSeries={data.series.soc} ampSeries={data.series.batteryA} brief={brief} detail={mode === "staff"} />
 
       <section className="synoptic panel" aria-label={`Synoptic page ${page}`}>
         <nav className="keys" aria-label="Synoptic pages">

@@ -395,3 +395,44 @@ body {
 @keyframes leg-in { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .leg { animation: none; } }
 
+/* On the charger: the budget strip shows charge level in the accent, filling. */
+.budget.charging .budget-tape i.on { background: var(--accent); }
+.budget.charging .budget-tape i.edge { animation: charge-pulse 1.6s var(--ease-out) infinite alternate; }
+@keyframes charge-pulse { from { opacity: 1; } to { opacity: 0.45; } }
+@media (prefers-reduced-motion: reduce) { .budget.charging .budget-tape i.edge { animation: none; } }
+
+/* ---------- "How it works" architecture dialog ---------- */
+.arch-btn { font: inherit; font-family: var(--font-chakra); font-weight: 600; letter-spacing: 0.06em; font-size: calc(var(--u) * 1.05); text-transform: uppercase;
+  color: var(--text-secondary); background: none; border: 1px solid var(--border); border-radius: var(--r-chip); padding: calc(var(--u) * 0.3) calc(var(--u) * 0.8); cursor: pointer; }
+.arch-btn:hover { color: var(--text-primary); border-color: var(--border-strong); }
+.arch-btn:focus-visible, .arch-close:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.arch-dlg { margin: auto; width: min(1180px, 94vw); max-height: 92vh; overflow: auto; padding: calc(var(--u) * 1.6) calc(var(--u) * 2); color: var(--text-primary);
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: var(--r-panel); box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55); }
+.arch-dlg::backdrop { background: rgba(4, 6, 8, 0.72); }
+.arch-dlg[open] { animation: arch-in 260ms var(--ease-out); }
+@keyframes arch-in { from { opacity: 0; transform: translateY(8px) scale(0.99); } to { opacity: 1; transform: none; } }
+.arch-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: calc(var(--u) * 0.8); }
+.arch-head h2 { font-family: var(--font-chakra); font-weight: 700; letter-spacing: 0.04em; font-size: calc(var(--u) * 2); }
+.arch-close { display: grid; place-items: center; width: calc(var(--u) * 3); height: calc(var(--u) * 3); color: var(--text-secondary); background: none; border: 1px solid var(--border); border-radius: var(--r-ctl); cursor: pointer; }
+.arch-close:hover { color: var(--text-primary); }
+.arch-svg { width: 100%; height: auto; display: block; }
+.arch-zone { fill: var(--surface-inset); stroke: var(--border-subtle); }
+.arch-zone.cloud { fill: color-mix(in srgb, var(--accent) 5%, var(--surface-inset)); stroke: color-mix(in srgb, var(--accent) 35%, var(--border)); }
+.arch-zone-label { font-family: var(--font-chakra); font-weight: 600; font-size: 13px; letter-spacing: 0.1em; text-transform: uppercase; fill: var(--text-tertiary); }
+.arch-zone-label.cloud { fill: var(--accent); }
+.arch-node rect { fill: var(--surface-2); stroke: var(--border); }
+.arch-node.cloud rect { stroke: color-mix(in srgb, var(--accent) 55%, var(--border)); }
+.arch-node-title { font-family: var(--font-plex); font-weight: 600; font-size: 16px; fill: var(--text-primary); }
+.arch-node-note { font-family: var(--font-plex); font-size: 12.5px; fill: var(--text-secondary); }
+.arch-flow path { fill: none; stroke: var(--border-strong); stroke-width: 1.6; stroke-dasharray: 6 5; animation: arch-flow 1.4s linear infinite; }
+.arch-flow.twin path { stroke: var(--accent); }
+.arch-arrowhead { fill: var(--border-strong); }
+.arch-flow-label { font-family: var(--font-mono); font-size: 11.5px; fill: var(--text-tertiary); paint-order: stroke; stroke: var(--surface-inset); stroke-width: 4px; }
+.arch-flow.twin .arch-flow-label { fill: var(--accent); }
+@keyframes arch-flow { to { stroke-dashoffset: -22; } }
+.arch-notes { list-style: none; display: grid; grid-template-columns: repeat(3, 1fr); gap: calc(var(--u) * 1.4); margin-top: calc(var(--u) * 1.2);
+  font-size: calc(var(--u) * 1.2); line-height: 1.4; color: var(--text-secondary); }
+.arch-notes b { color: var(--text-primary); font-weight: 600; }
+@media (max-width: 900px) { .arch-notes { grid-template-columns: 1fr; } .arch-btn { order: 9; } }
+@media (prefers-reduced-motion: reduce) { .arch-flow path, .arch-dlg[open] { animation: none; } }
+

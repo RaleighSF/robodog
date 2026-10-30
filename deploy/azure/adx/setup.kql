@@ -100,13 +100,6 @@
               DetectionFps, StreamActive, DetectionWorkerAlive, RobotLinkReachable
 }
 
-.create-or-alter function with (folder="api", docstring="Vitals time series") Vitals_Series(window: timespan = 1h, bin_size: timespan = 1m) {
-    Heartbeats | where Timestamp > ago(window)
-    | summarize BatterySoc = avg(BatterySoc), DetectionFps = avg(DetectionFps),
-                MotorTempMax = max(MotorTempMax), Connected = max(toint(RobotConnected))
-            by bin(Timestamp, bin_size), DeviceId
-}
-
 .create-or-alter function with (folder="api", docstring="Detections by class") Detections_Summary(window: timespan = 1h) {
     Detections | where Timestamp > ago(window)
     | summarize Count = count(), AvgConfidence = round(avg(Confidence), 3), LastSeen = max(Timestamp) by ClassName
@@ -145,7 +138,8 @@
     BoardTempMax: real, ImuTemp: real, MotorTempMax: real, MotorTempAvg: real, HottestJoint: string,
     LostFrames: long, FootForce: dynamic, RangeObstacle: dynamic,
     EdgeCpuPercent: real, EdgeMemAvailableGb: real, EdgeTempMax: real, EdgeDetectionFps: real, Raw: dynamic,
-    LidarWindow: string, LidarRingSectors: dynamic, LidarHz: real, LidarErrorState: int, ObstacleAvoidance: bool)
+    LidarWindow: string, LidarRingSectors: dynamic, LidarHz: real, LidarErrorState: int, ObstacleAvoidance: bool,
+    BatteryCurrentA: real, Charging: bool)
 
 .create-merge table Motors (
     Timestamp: datetime, DeviceId: string, Joint: string, Leg: string, Segment: string,
@@ -173,7 +167,9 @@
               EdgeTempMax = toreal(e.temp_max_c), EdgeDetectionFps = toreal(e.detection_fps), Raw,
               LidarWindow = tostring(v.lidar.window), LidarRingSectors = v.lidar.ring_sectors,
               LidarHz = toreal(v.lidar.cloud_hz), LidarErrorState = toint(v.lidar.error_state),
-              ObstacleAvoidance = tobool(v.lidar.avoidance)
+              ObstacleAvoidance = tobool(v.lidar.avoidance),
+              // BMS current is signed mA: + charging (observed +7.7 A docked), - discharging (-2.7 A standing).
+              BatteryCurrentA = toreal(v.power.bms.current) / 1000.0, Charging = toreal(v.power.bms.current) > 500
 }
 
 .create-or-alter function with (folder="ingest") ExpandMotors() {
@@ -191,20 +187,30 @@
 .alter table Vitals policy update @'[{"IsEnabled":true,"Source":"RawEvents","Query":"ExpandVitals()","IsTransactional":false}]'
 .alter table Motors policy update @'[{"IsEnabled":true,"Source":"RawEvents","Query":"ExpandMotors()","IsTransactional":false}]'
 
+.create-or-alter function with (folder="api", docstring="Vitals time series") Vitals_Series(window: timespan = 1h, bin_size: timespan = 1m) {
+    // From the 5 s vitals stream (schema 1.1+); BatteryCurrentA added for runtime estimates.
+    Vitals | where Timestamp > ago(window)
+    | summarize BatterySoc = avg(BatterySoc), DetectionFps = avg(EdgeDetectionFps),
+                MotorTempMax = max(MotorTempMax), Connected = max(toint(Connected)),
+                BatteryCurrentA = avg(BatteryCurrentA)
+            by bin(Timestamp, bin_size), DeviceId
+}
+
 // Vitals_Latest prefers the 5-second vitals stream; falls back to heartbeats.
 .create-or-alter function with (folder="api", docstring="Latest vitals per device") Vitals_Latest() {
     let fromVitals = Vitals | summarize arg_max(Timestamp, *) by DeviceId
         | project DeviceId, Timestamp, BatterySoc, PackVoltage, Connected, HasVideo, Posture, BodyHeight,
                   MotorTempMax, MotorTempAvg, HottestJoint, Roll, Pitch, ErrorCode,
                   DetectionFps = EdgeDetectionFps, EdgeTempMax, EdgeMemAvailableGb,
-                  LidarWindow, LidarHz, LidarErrorState, ObstacleAvoidance;
+                  LidarWindow, LidarHz, LidarErrorState, ObstacleAvoidance, BatteryCurrentA, Charging;
     let fromHeartbeats = Heartbeats | summarize arg_max(Timestamp, *) by DeviceId
         | where DeviceId !in ((fromVitals | project DeviceId))
         | project DeviceId, Timestamp, BatterySoc, PackVoltage = BatteryVoltage, Connected = RobotConnected,
                   HasVideo = bool(null), Posture, BodyHeight, MotorTempMax, MotorTempAvg = real(null),
                   HottestJoint = "", Roll = real(null), Pitch = real(null), ErrorCode = int(null),
                   DetectionFps, EdgeTempMax = real(null), EdgeMemAvailableGb = real(null),
-                  LidarWindow = "", LidarHz = real(null), LidarErrorState = int(null), ObstacleAvoidance = bool(null);
+                  LidarWindow = "", LidarHz = real(null), LidarErrorState = int(null), ObstacleAvoidance = bool(null),
+                  BatteryCurrentA = real(null), Charging = bool(null);
     union fromVitals, fromHeartbeats
     | extend AgeSeconds = datetime_diff('second', now(), Timestamp)
 }
@@ -298,6 +304,8 @@
         | join kind=leftouter ref on DeviceId, Joint | join kind=leftouter since on DeviceId, Joint
         | extend D = Temperature - T0, WinMin = toint(round(datetime_diff('second', Timestamp, RefT) / 60.0)),
                  InBandMin = toint(datetime_diff('minute', now(), Since))
+        | join kind=leftouter (v | project DeviceId, NowPosture = Posture, NowCharging = Charging) on DeviceId
+        | extend Context = strcat(" · ", iff(NowPosture == "low", "sitting", NowPosture), iff(NowCharging == true, ", charging", ""))
         | extend Trend = iff(isnull(D) or WinMin < 1, "", iff(abs(D) < 1, " · steady",
                              strcat(" · ", iff(D > 0, "+", "−"), toint(round(abs(D))), "° in ", WinMin, " min"))),
                  Held = iff(isnull(InBandMin), "", strcat(" · ", InBandMin, " min ", iff(Temperature >= 70, "over limit", "in caution")));
@@ -305,7 +313,7 @@
       (v | where AgeSeconds > 120 | project DeviceId, Severity = "high", Finding = strcat("No telemetry for ", AgeSeconds, " s")),
       (v | where BatterySoc < 20 | project DeviceId, Severity = iff(BatterySoc < 10, "high", "medium"), Finding = strcat("Battery ", toint(BatterySoc), " %")),
       (hotJoints | project DeviceId, Severity = iff(Temperature >= 70, "high", "medium"),
-                   Finding = strcat(replace_string(Joint, "_", " "), " ", toint(Temperature), " °C", Trend, Held)),
+                   Finding = strcat(replace_string(Joint, "_", " "), " ", toint(Temperature), " °C", Trend, Held, Context)),
       (v | where Connected == false | project DeviceId, Severity = "high", Finding = "Robot link down"),
       (v | where isnotnull(ErrorCode) and ErrorCode != 0 and ErrorCode !in (100, 1001, 1002)   // posture states, not faults (dashboard STATE_CODES)
          | project DeviceId, Severity = "medium", Finding = strcat("Error code ", ErrorCode)),

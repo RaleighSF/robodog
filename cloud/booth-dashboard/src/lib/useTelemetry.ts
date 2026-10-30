@@ -4,7 +4,7 @@ import { Telemetry } from "./model";
 import { SyntheticSource } from "./synthetic";
 import { readLive } from "./live";
 
-const EMPTY: Telemetry = { snapshot: null, series: { soc: [], tempMax: [], tempAvg: [], fps: [], edgeTemp: [], pitch: [], roll: [], joint: {} }, findings: [], postures: [], detections: [], ppeAlerts: 0, commands: [], error: null };
+const EMPTY: Telemetry = { snapshot: null, series: { soc: [], batteryA: [], tempMax: [], tempAvg: [], fps: [], edgeTemp: [], pitch: [], roll: [], joint: {} }, findings: [], postures: [], detections: [], ppeAlerts: 0, commands: [], error: null };
 
 // Source: ?source=synthetic|live. Live needs QUERY_API_URL (build) or ?api=.
 // Live never falls back to synthetic on its own: stale stays visibly stale.

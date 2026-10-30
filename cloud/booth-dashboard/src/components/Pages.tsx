@@ -38,7 +38,8 @@ function Power({ d, stale }: { d: Telemetry; stale: boolean }) {
       </div>
       <div className="ro-grid">
         <Readout label="Pack" value={stale ? "--" : f(b.packV, 1)} unit=" V" />
-        <Readout label="Current" value={stale ? "--" : f(b.packA, 1)} unit=" A" />
+        <Readout label={b.charging ? "Charging" : "Battery"} value={stale || b.batteryA == null ? "--" : `${b.batteryA > 0 ? "+" : ""}${b.batteryA.toFixed(1)}`} unit=" A" state={!stale && b.charging ? "ok" : undefined} />
+        <Readout label="Load" value={stale ? "--" : f(b.packA, 1)} unit=" A" />
         <Readout label="Cycles" value={stale ? "--" : f(b.cycles)} />
         <Readout label="BMS max" value={stale ? "--" : f(b.bmsTemps.length ? Math.max(...b.bmsTemps) : null, 0)} unit=" °C" />
         <Readout label="Board" value={stale ? "--" : f(b.boardTemps.length ? Math.max(...b.boardTemps) : null, 0)} unit=" °C" />

@@ -32,7 +32,7 @@ export class SyntheticSource {
   private temps: Record<string, number> = {};
   private soc = 81.4;
   private last = Date.now();
-  private series: Series = { soc: [], tempMax: [], tempAvg: [], fps: [], edgeTemp: [], pitch: [], roll: [], joint: {} };
+  private series: Series = { soc: [], batteryA: [], tempMax: [], tempAvg: [], fps: [], edgeTemp: [], pitch: [], roll: [], joint: {} };
   private postures: { t: number; posture: Posture }[] = [];
   private findings = new Map<string, Finding>();
   private detections = { person: 0, confSum: 0 };
@@ -155,7 +155,7 @@ export class SyntheticSource {
       roll: r, pitch: ph.posture === "low" ? p + 0.42 : p, yaw: 1.57,
       velocity: ph.walking ? [0.24 + Math.sin(now / 2000) * 0.03, 0] : [0, 0], yawSpeed: ph.walking ? Math.sin(now / 3000) * 0.2 : 0,
       gaitType: ph.walking ? 1 : 0, sportMode: standing ? 1 : 0, errorCode: 0,
-      battery: { soc: this.soc, packV: 25.2 + this.soc * 0.058, packA: standing ? -(4.8 + (ph.walking ? 3 : 0)) : -1.1, cycles: 42,
+      battery: { soc: this.soc, packV: 25.2 + this.soc * 0.058, packA: standing ? -(4.8 + (ph.walking ? 3 : 0)) : -1.1, batteryA: standing ? -(4.8 + (ph.walking ? 3 : 0)) : -1.1, charging: false, cycles: 42,
         cellV: Array.from({ length: 8 }, (_, i) => 3.62 + this.soc * 0.0072 + (i === 5 ? -0.012 : 0) + rnd(i) * 0.004), bmsTemps: [31 + this.soc * 0.02, 32.5, 34.1, 35.0], boardTemps: [38.2, 39.6] },
       imuTemp: 41,
       footForce: standing ? [64, 61, 72, 70].map((f, i) => f + Math.sin(now / 160 + i * 1.6) * (ph.walking ? 26 : 2)) : ph.posture === "low" ? [55, 53, 0, 0] : [0, 0, 0, 0],

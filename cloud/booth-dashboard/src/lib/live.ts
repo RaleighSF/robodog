@@ -1,6 +1,6 @@
 // LIVE data source: the provider-agnostic read-only query API (ADR 0002).
 // Same calls on Azure (Ignite) and AWS (re:Invent); only the base URL differs.
-import { Finding, Joint, LEGS, Posture, SEGS, Series, SeriesPoint, Snapshot, Telemetry } from "./model";
+import { Finding, Joint, LEGS, LIMITS, Posture, SEGS, Series, SeriesPoint, Snapshot, Telemetry } from "./model";
 
 type Row = Record<string, unknown>;
 const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : typeof v === "string" && v !== "" && Number.isFinite(+v) ? +v : null);
@@ -52,6 +52,7 @@ export async function readLive(base: string): Promise<Telemetry> {
       // Firmware 1.1.15 leaves sport mode, gait and range_obstacle at 0, so show them as unavailable.
       gaitType: null, sportMode: null, errorCode: num(s.ErrorCode),
       battery: { soc: num(s.BatterySoc), packV: num(s.PackVoltage), packA: num(s.PackCurrentA), cycles: num(s.BmsCycles),
+        batteryA: num(bms.current) == null ? null : num(bms.current)! / 1000, charging: (num(bms.current) ?? 0) / 1000 > LIMITS.chargingA,
         cellV: arr(bms.cell_vol).filter((mv) => mv > 0).map((mv) => (mv > 100 ? mv / 1000 : mv)),   // the BMS reports 15 slots; unused ones read 0
         bmsTemps: [...arr(bms.bq_ntc), ...arr(bms.mcu_ntc)],
         boardTemps: [num(s.BoardTempMax)].filter((x): x is number => x != null) },
@@ -64,10 +65,11 @@ export async function readLive(base: string): Promise<Telemetry> {
         hz: num(s.LidarHz), errorState: num(s.LidarErrorState), avoidance: typeof s.ObstacleAvoidance === "boolean" ? s.ObstacleAvoidance : null } : null,
     };
   }
-  const series: Series = { soc: [], tempMax: [], tempAvg: [], fps: [], edgeTemp: [], pitch: [], roll: [], joint: {} };
+  const series: Series = { soc: [], batteryA: [], tempMax: [], tempAvg: [], fps: [], edgeTemp: [], pitch: [], roll: [], joint: {} };
   const pt = (r: Row, k: string): SeriesPoint | null => { const v = num(r[k]); const t = ms(r.Timestamp); return v == null || !Number.isFinite(t) ? null : { t, v }; };
   for (const r of vseries.sort((a, b) => ms(a.Timestamp) - ms(b.Timestamp))) {
     const a = pt(r, "BatterySoc"); if (a) series.soc.push(a);
+    const ba = pt(r, "BatteryCurrentA"); if (ba) series.batteryA.push(ba);
     const b = pt(r, "MotorTempMax"); if (b) series.tempMax.push(b);
     const c = pt(r, "DetectionFps"); if (c) series.fps.push(c);
   }

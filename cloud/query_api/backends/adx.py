@@ -1,6 +1,7 @@
 """Azure Data Explorer backend: calls ONLY the named functions from
 deploy/azure/adx/setup.kql (no free-form KQL), so it is read-only by
 construction even if the agent is prompted to do otherwise."""
+import math
 import os
 import re
 
@@ -37,4 +38,7 @@ class ADXBackend:
 def _json_safe(v):
     if hasattr(v, "isoformat"):
         return v.isoformat()
+    # Empty aggregates arrive as NaN (a float, or the string "NaN"); NaN is not valid JSON.
+    if (isinstance(v, float) and not math.isfinite(v)) or v in ("NaN", "Infinity", "-Infinity"):
+        return None
     return v

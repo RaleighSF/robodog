@@ -70,7 +70,7 @@ export function Annunciator({ kind, lit, onAck }: { kind: "warning" | "caution";
 const SEV_LABEL = { warning: "WARNING", caution: "CAUTION", advisory: "ADVISORY" } as const;
 
 type St = "ok" | "caution" | "warning" | "unknown";
-function systems(s: Snapshot | null, stale: boolean): { name: string; state: St; text: string }[] {
+function systems(s: Snapshot | null, stale: boolean): { name: string; state: St; text: string; always?: boolean }[] {
   if (!s || stale) return ["Joint motors", "Battery", "Attitude", "Robot link", "Video", "Head lidar", "Edge compute"].map((name) => ({ name, state: "unknown" as St, text: "NO DATA" }));
   const temps = s.joints.map((j) => j.temp).filter((t): t is number => t != null);
   const tmax = temps.length ? Math.max(...temps) : null;
@@ -78,7 +78,8 @@ function systems(s: Snapshot | null, stale: boolean): { name: string; state: St;
   const tilt = Math.max(Math.abs(s.roll ?? 0), Math.abs(s.pitch ?? 0));
   return [
     { name: "Joint motors", state: jointState(tmax), text: tmax == null ? "NO DATA" : `12 · max ${tmax.toFixed(0)} °C` },
-    { name: "Battery", state: soc == null ? "unknown" : soc < LIMITS.batteryWarning ? "warning" : soc < LIMITS.batteryCaution ? "caution" : "ok", text: soc == null ? "NO DATA" : `${soc.toFixed(0)} %` },
+    { name: "Battery", state: soc == null ? "unknown" : soc < LIMITS.batteryWarning ? "warning" : soc < LIMITS.batteryCaution ? "caution" : "ok",
+      text: soc == null ? "NO DATA" : s.battery.charging ? `charging +${(s.battery.batteryA ?? 0).toFixed(1)} A` : `${soc.toFixed(0)} %`, always: s.battery.charging },
     { name: "Attitude", state: tilt > LIMITS.tiltWarning ? "warning" : "ok", text: `${s.posture === "low" ? "sitting" : s.posture} · tilt ${(tilt * 57.3).toFixed(0)}°` },
     { name: "Robot link", state: s.connected ? "ok" : "warning", text: s.connected ? "DDS up" : "down" },
     { name: "Video", state: s.hasVideo ? "ok" : "caution", text: s.hasVideo ? "streaming" : "no video" },
@@ -95,24 +96,38 @@ function lidarSystem(l: Snapshot["lidar"]): { name: string; state: St; text: str
 }
 const SHAPE: Record<St, string> = { ok: "M6 1 A5 5 0 1 1 5.99 1 Z", caution: "M6 1 L11 11 L1 11 Z", warning: "M2 2 L10 10 M10 2 L2 10", unknown: "M2 6 L10 6" };
 
-export function RuntimeBudget({ soc, series, posture, stale }: { soc: number | null; series: SeriesPoint[]; posture: string; stale: boolean }) {
+/** Mean battery current (A) over the last ~10 min of the trend, or null. */
+function meanAmps(amps: SeriesPoint[]): number | null {
+  const recent = amps.filter((p) => p.t > (amps[amps.length - 1]?.t ?? 0) - 10 * 60_000);
+  return recent.length >= 3 ? recent.reduce((a, p) => a + p.v, 0) / recent.length : null;
+}
+function hm(mins: number) { return mins >= 60 ? `${Math.floor(mins / 60)}\u00a0h ${String(Math.round(mins % 60)).padStart(2, "0")}\u00a0min` : `${Math.round(mins)}\u00a0min`; }
+
+/** Time left at the current draw: usable charge above the reserve (pack Ah) divided
+ *  by the measured 10 min mean battery current. Idle standing draws ~2.7 A; walking
+ *  draws more, so this drops as soon as the dog works. Falls back to the SoC slope. */
+export function RuntimeBudget({ soc, series, amps, posture, stale, charging = false }: { soc: number | null; series: SeriesPoint[]; amps: SeriesPoint[]; posture: string; stale: boolean; charging?: boolean }) {
+  if (charging && !stale) return <ChargeBudget soc={soc} series={series} amps={amps} posture={posture} />;
   let mins: number | null = null;
-  if (series.length > 8 && soc != null) {
+  const draw = meanAmps(amps);
+  if (soc != null && draw != null && draw < -0.3) {
+    mins = Math.max(0, ((soc - LIMITS.batteryWarning) / 100) * LIMITS.packAh / -draw * 60);
+  } else if (series.length > 8 && soc != null) {
     const a = series[Math.max(0, series.length - 60)], z = series[series.length - 1];
     const rate = (a.v - z.v) / Math.max((z.t - a.t) / 60000, 0.01);
     if (rate > 0.01) mins = Math.max(0, (soc - LIMITS.batteryWarning) / rate);
   }
-  const budget = stale || mins == null ? 0 : Math.min(mins / 90, 1);
+  const budget = stale || mins == null ? 0 : Math.min(mins / 240, 1);
   return (
     <div className="pinned">
       <div className="pin-posture"><span className="title">Posture</span><b className="num">{stale ? "--" : (posture === "low" ? "sitting" : posture).toUpperCase()}</b></div>
       <div className="budget">
-        <div className="budget-head"><span className="title">Battery · runtime budget</span>
-          <span className="num"><b>{stale || soc == null ? "--" : `${soc.toFixed(0)}\u00a0%`}</b> · {stale || mins == null ? "--" : `${Math.round(mins)}\u00a0min`}</span></div>
-        <div className="budget-tape" role="img" aria-label={`About ${mins == null ? "unknown" : Math.round(mins)} minutes of demo left`}>
-          {Array.from({ length: 18 }, (_, i) => <i key={i} className={i / 18 < budget ? (budget < 0.2 ? "warn" : "on") : ""} />)}
+        <div className="budget-head"><span className="title">Battery · at current draw{draw != null && draw < 0 ? ` ${(-draw).toFixed(1)}\u00a0A` : ""}</span>
+          <span className="num"><b>{stale || soc == null ? "--" : `${soc.toFixed(0)}\u00a0%`}</b> · {stale || mins == null ? "--" : `~${hm(mins)}`}</span></div>
+        <div className="budget-tape" role="img" aria-label={`About ${mins == null ? "unknown" : Math.round(mins)} minutes left at the current draw`}>
+          {Array.from({ length: 18 }, (_, i) => <i key={i} className={i / 18 < budget ? (mins != null && mins < 30 ? "warn" : "on") : ""} />)}
         </div>
-        <div className="budget-scale num"><span>0</span><span>30</span><span>60</span><span>90 min</span></div>
+        <div className="budget-scale num"><span>0</span><span>1 h</span><span>2 h</span><span>3 h</span><span>4 h</span></div>
       </div>
     </div>
   );
@@ -123,8 +138,36 @@ const SEV_ORDER = { warning: 0, caution: 1, advisory: 2 } as const;
 /** Right column, EICAS order: one agent line, terse messages by severity, then
  *  system lamps. Values show only when a system is off-nominal, or in the
  *  staff view (detail), so nothing on the booth screen repeats a dial. */
-export function CasStack({ findings, stale, snapshot, socSeries, brief, detail = false }: {
-  findings: Finding[]; stale: boolean; snapshot: Snapshot | null; socSeries: SeriesPoint[]; brief?: Brief | null; detail?: boolean;
+/** On the charger: the same strip shows charge level and an estimated time to full
+ *  from the observed SoC rise (shown only once the trend is measurable). */
+function ChargeBudget({ soc, series, amps, posture }: { soc: number | null; series: SeriesPoint[]; amps: SeriesPoint[]; posture: string }) {
+  let full: number | null = null;
+  const charge = meanAmps(amps);
+  if (soc != null && charge != null && charge > LIMITS.chargingA) {
+    full = Math.max(0, ((100 - soc) / 100) * LIMITS.packAh / charge * 60);   // constant-current estimate; the last few % taper
+  } else if (series.length > 8 && soc != null) {
+    const a = series[Math.max(0, series.length - 40)], z = series[series.length - 1];
+    const rate = (z.v - a.v) / Math.max((z.t - a.t) / 60000, 0.01);
+    if (rate > 0.05) full = Math.max(0, (100 - soc) / rate);
+  }
+  const level = soc == null ? 0 : soc / 100;
+  return (
+    <div className="pinned">
+      <div className="pin-posture"><span className="title">Posture</span><b className="num">{(posture === "low" ? "sitting" : posture).toUpperCase()}</b></div>
+      <div className="budget charging">
+        <div className="budget-head"><span className="title">Battery · charging{charge != null ? ` +${charge.toFixed(1)}\u00a0A` : ""}</span>
+          <span className="num"><b>{soc == null ? "--" : `${soc.toFixed(0)}\u00a0%`}</b> · {full == null ? "estimating" : `full in ~${hm(full)}`}</span></div>
+        <div className="budget-tape" role="img" aria-label={`Charging, ${soc == null ? "unknown" : soc.toFixed(0)} percent`}>
+          {Array.from({ length: 18 }, (_, i) => <i key={i} className={i / 18 < level ? (i === Math.ceil(level * 18) - 1 ? "on edge" : "on") : ""} />)}
+        </div>
+        <div className="budget-scale num"><span>0</span><span>50</span><span>100 %</span></div>
+      </div>
+    </div>
+  );
+}
+
+export function CasStack({ findings, stale, snapshot, socSeries, ampSeries = [], brief, detail = false }: {
+  findings: Finding[]; stale: boolean; snapshot: Snapshot | null; socSeries: SeriesPoint[]; ampSeries?: SeriesPoint[]; brief?: Brief | null; detail?: boolean;
 }) {
   // Level floor: the booth screen shows warnings and cautions only; staff also see advisories.
   const shown = detail ? findings : findings.filter((f) => f.severity !== "advisory");
@@ -159,12 +202,12 @@ export function CasStack({ findings, stale, snapshot, socSeries, brief, detail =
           {systems(snapshot, stale).map((x) => (
             <li key={x.name} className={x.state}>
               <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d={SHAPE[x.state]} fill={x.state === "warning" || x.state === "unknown" ? "none" : "currentColor"} stroke="currentColor" strokeWidth={2} /></svg>
-              <span>{x.name}</span>{(detail || x.state !== "ok") && <span className="num">{x.text}</span>}
+              <span>{x.name}</span>{(detail || x.always || x.state !== "ok") && <span className="num">{x.text}</span>}
             </li>
           ))}
         </ul>
       </div>
-      <RuntimeBudget soc={snapshot?.battery.soc ?? null} series={socSeries} posture={snapshot?.posture ?? "unknown"} stale={stale} />
+      <RuntimeBudget soc={snapshot?.battery.soc ?? null} series={socSeries} amps={ampSeries} posture={snapshot?.posture ?? "unknown"} stale={stale} charging={snapshot?.battery.charging ?? false} />
     </section>
   );
 }

@@ -12,3 +12,20 @@ export const THEMES: Record<CloudTheme, { accent: string; accentPress: string; a
 
 export const CLOUD: CloudTheme = (process.env.NEXT_PUBLIC_THEME === "aws" ? "aws" : "azure");
 export const theme = THEMES[CLOUD];
+
+// Architecture dialog labels: the same data flow, named in each cloud's services
+// (cloud/PARITY.md). Text only; no cloud logos until the artwork is approved.
+export interface ArchLabels { region: string; ingest: string; compute: string; store: string; agent: string; realtime: string; hosting: string;
+  storeNote: string; computeNote: string; identity: string }
+export const ARCH: Record<CloudTheme, ArchLabels> = {
+  azure: { region: "Microsoft Azure", ingest: "Azure Event Hubs", compute: "Azure Functions", store: "Azure Data Explorer",
+    agent: "Azure AI Foundry Agent", realtime: "Azure Web PubSub", hosting: "Azure Static Web Apps",
+    storeNote: "KQL tables · update policies · Overwatch rules", computeNote: "stream ingest · read-only query API",
+    identity: "Managed identities and Entra ID tokens: no keys in the browser, send-only token at the edge" },
+  aws: { region: "AWS", ingest: "Amazon Kinesis", compute: "AWS Lambda", store: "Amazon S3 + Athena",
+    agent: "Amazon Bedrock Agent", realtime: "API Gateway WebSockets", hosting: "AWS Amplify Hosting",
+    storeNote: "Parquet tables · views · Overwatch rules", computeNote: "read-only query API",
+    identity: "IAM roles and scoped tokens: no keys in the browser, publish-only credentials at the edge" },
+};
+export const arch = ARCH[CLOUD];
+

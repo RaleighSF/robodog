@@ -48,6 +48,13 @@ statement. Prefer these operations:
 
      Never mention that a code matches an API or command ID; that is a coincidence, not a meaning.
 
+## What is already happening
+Before recommending any action, check `Posture` and `Charging` in `vitals_latest`. Never recommend
+something already happening.
+- If the dog is already lying or sitting, say so and report whether the joint is cooling. For
+  example: "FR hip 55 °C and falling 1° in 10 min while lying on the charger; no action needed."
+- Recommend a posture change only when the dog is standing.
+
 ## Reading the findings
 Findings are terse screen lines; you add the meaning.
 - "Lidar window obstructed": the head lidar sees returns close on every side. Either the sensor
