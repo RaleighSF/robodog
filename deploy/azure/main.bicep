@@ -47,6 +47,26 @@ resource adxListen 'Microsoft.EventHub/namespaces/eventhubs/authorizationRules@2
   properties: { rights: ['Listen'] }
 }
 
+// Live motion mirror (ADR 0010). Keys are disabled: dashboards get receive-only
+// tokens minted by the query API's managed identity, and the Thor holds a
+// send-to-group token. Grant "Web PubSub Service Owner" to the Function MI
+// (and to the operator minting the Thor token) after deploy.
+@description('Web PubSub name for the live motion mirror (empty = skip)')
+param motionPubSubName string = ''
+
+resource motion 'Microsoft.SignalRService/webPubSub@2024-03-01' = if (!empty(motionPubSubName)) {
+  name: empty(motionPubSubName) ? 'unused' : motionPubSubName
+  location: location
+  sku: { name: 'Standard_S1', tier: 'Standard', capacity: 1 }
+  properties: { disableLocalAuth: true }
+}
+
+resource motionHub 'Microsoft.SignalRService/webPubSub/hubs@2024-03-01' = if (!empty(motionPubSubName)) {
+  parent: motion
+  name: 'motion'
+  properties: { anonymousConnectPolicy: 'deny' }
+}
+
 output namespace string = ns.name
 output eventHub string = hub.name
 output edgeSendRule string = edgeSend.name

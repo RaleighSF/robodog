@@ -26,11 +26,13 @@ for p in spec["paths"].values():
 spec.pop("components", None)
 body = {
     "name": NAME, "model": MODEL,
-    "instructions": open(os.path.join(HERE, "instructions.md")).read(),
+    # Instructions + researched Go2 knowledge base (cited, confidence-tagged; ADR 0004 amendment).
+    "instructions": open(os.path.join(HERE, "instructions.md")).read() + "\n\n---\n\n# Go2 knowledge base (background, not live data)\n\n"
+                    + open(os.path.join(HERE, "knowledge", "go2_health.md")).read(),
     "temperature": 0.2,
     "tools": [{"type": "openapi", "openapi": {
         "name": "watchdog_telemetry",
-        "description": "Read-only telemetry for the Go2 robot dog (vitals, 12 joints, posture, findings, detections). Cannot command the robot.",
+        "description": "Read-only telemetry for the Go2 robot dog (vitals, 12 joints, posture, findings, maneuvers, detections). Cannot command the robot.",
         "spec": spec, "auth": {"type": "anonymous"}}}],
     "metadata": {"source": "watch_dog/cloud/agent", "contract": "ADR 0004"},
 }

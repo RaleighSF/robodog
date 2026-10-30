@@ -27,6 +27,8 @@ may be cloud-specific.
 | Store and analytics | ADX free cluster, KQL update policies + functions | Firehose → S3 (Parquet) + Athena views mirroring the tables/functions |
 | Query API host | Azure Functions (Python), `cloud/query_api` | Lambda (Python) behind a function URL or API Gateway, same handler |
 | Agent | Azure AI Foundry agent + OpenAPI tool | Amazon Bedrock agent / AgentCore + the same OpenAPI tool |
+| Live motion channel | Web PubSub `wd-motion-28628191` (hub `motion`, keys off) + `motion/negotiate` | API Gateway WebSockets or IoT Core + same negotiate contract |
+| Agent knowledge | `cloud/agent/knowledge/go2_health.md` appended to instructions | Same file in the Bedrock agent instructions |
 | Dashboard hosting | Azure Static Web Apps | Amplify Hosting or S3 + CloudFront |
 | Infrastructure as code | `deploy/azure/main.bicep` + `deploy.sh` | `deploy/aws/` (CDK or CloudFormation), same parameters |
 | Secrets on the Thor | `/state/eventhub.conn` (send-only SAS) | `/state/aws-telemetry.env` (IAM user/role limited to `kinesis:PutRecord*`) |
@@ -51,3 +53,5 @@ may be cloud-specific.
   southcentralus); EICAS dashboard direction chosen.
 - 2026-10-30: Live path working end to end: Thor → Event Hubs → Function ingest → ADX →
   query API → dashboard and Foundry agent (ADR 0008).
+- 2026-10-30: Lidar window check (ADR 0009); live motion mirror + maneuvers (ADR 0010);
+  agent grounded on a cited Go2 health knowledge base.
