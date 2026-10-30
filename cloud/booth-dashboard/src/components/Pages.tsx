@@ -51,7 +51,8 @@ function Power({ d, stale }: { d: Telemetry; stale: boolean }) {
 function Gait({ d, stale }: { d: Telemetry; stale: boolean }) {
   const s = d.snapshot!;
   // Go2 publishes foot_force in FR, FL, RR, RL order.
-  const feet: Record<string, number> = { FR: s.footForce[0] ?? 0, FL: s.footForce[1] ?? 0, RR: s.footForce[2] ?? 0, RL: s.footForce[3] ?? 0 };
+  const feet: Record<string, number | null> = { FR: s.footForce[0] ?? null, FL: s.footForce[1] ?? null, RR: s.footForce[2] ?? null, RL: s.footForce[3] ?? null };
+  const reporting = Object.values(feet).filter((x): x is number => x != null);
   const pos: Record<string, [number, number]> = { FL: [62, 42], FR: [138, 42], RL: [62, 158], RR: [138, 158] };
   const obs = s.obstacles;
   const sector = (i: number, r: number) => {
@@ -67,13 +68,14 @@ function Gait({ d, stale }: { d: Telemetry; stale: boolean }) {
         <rect x={72} y={46} width={56} height={108} rx={6} fill="var(--surface-2)" stroke="var(--border-strong)" />
         <path d="M100 52 L94 62 L106 62 Z" fill="var(--text-secondary)" />
         {Object.entries(pos).map(([leg, [x, y]]) => {
-          const fN = stale ? 0 : feet[leg];
+          const raw = feet[leg];
+          const fN = stale || raw == null ? 0 : raw;
           const h = Math.min(fN / 120, 1) * 30;
           return (
             <g key={leg}>
-              <rect x={x - 9} y={y - 15} width={18} height={30} fill="var(--surface-inset)" stroke="var(--border)" />
+              <rect x={x - 9} y={y - 15} width={18} height={30} fill="var(--surface-inset)" stroke="var(--border)" strokeDasharray={raw == null ? "3 3" : undefined} />
               <rect x={x - 9} y={y + 15 - h} width={18} height={h} fill={fN > 4 ? "var(--status-ok)" : "transparent"} opacity={0.8} />
-              <text x={x} y={y + 28} textAnchor="middle" className="svg-label">{leg}</text>
+              <text x={x} y={y + 28} textAnchor="middle" className="svg-label">{raw == null ? `${leg} n/a` : leg}</text>
             </g>
           );
         })}
@@ -84,7 +86,7 @@ function Gait({ d, stale }: { d: Telemetry; stale: boolean }) {
         <Readout label="Gait" value={s.gaitType == null ? "N/A" : s.gaitType === 0 ? "IDLE" : `TROT ${s.gaitType}`} />
         <Readout label="Body" value={stale ? "--" : f(s.bodyHeight, 2)} unit=" m" />
         <Readout label="Nearest" value={stale ? "--" : obs.length ? f(Math.min(...obs), 2) : "N/A"} unit={obs.length ? " m" : ""} state={obs.length && Math.min(...obs) < 0.6 ? "caution" : undefined} />
-        <Readout label="Feet down" value={stale ? "--" : String(Object.values(feet).filter((x) => x > 4).length)} unit="/4" />
+        <Readout label="Feet down" value={stale ? "--" : reporting.length ? String(reporting.filter((x) => x > 4).length) : "N/A"} unit={reporting.length ? `/${reporting.length} sensing` : ""} />
       </div>
     </div>
   );
@@ -192,7 +194,7 @@ function Link({ d, stale, source }: { d: Telemetry; stale: boolean; source: stri
         <Readout label="Error code" value={stale ? "--" : s.errorCode != null && STATE_CODES[s.errorCode] ? `${s.errorCode} ${STATE_CODES[s.errorCode]}` : f(s.errorCode)}
           state={s.errorCode && !STATE_CODES[s.errorCode] ? "caution" : undefined} />
       </div>
-      <p className="note">Joint map: <strong>unconfirmed</strong>. Joint order follows the Unitree convention (FR, FL, RR, RL) until it is verified on the robot; the 3D legs follow posture, not raw angles.</p>
+      <p className="note">Joint map: <strong>confirmed</strong> on the robot (a front-right paw shake moved FR_thigh). The 3D legs follow the live joint angles, sampled every 5 s.</p>
       {d.error && <p className="note warning">Query API: {d.error}</p>}
     </div>
   );

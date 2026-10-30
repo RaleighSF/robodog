@@ -55,7 +55,9 @@ export async function readLive(base: string): Promise<Telemetry> {
         cellV: arr(bms.cell_vol).filter((mv) => mv > 0).map((mv) => (mv > 100 ? mv / 1000 : mv)),   // the BMS reports 15 slots; unused ones read 0
         bmsTemps: [...arr(bms.bq_ntc), ...arr(bms.mcu_ntc)],
         boardTemps: [num(s.BoardTempMax)].filter((x): x is number => x != null) },
-      imuTemp: num(s.ImuTemp), footForce: arr(s.FootForce), obstacles: arr(s.RangeObstacle).some((r) => r > 0) ? arr(s.RangeObstacle) : [], joints,
+      imuTemp: num(s.ImuTemp), // A raised paw still reads ~10; an exact 0 on every sample is a sensor that
+      // reports nothing (FL and RR on the booth dog, 2026-10-30), so show it as n/a.
+      footForce: arr(s.FootForce).map((f) => (f === 0 ? null : f)), obstacles: arr(s.RangeObstacle).some((r) => r > 0) ? arr(s.RangeObstacle) : [], joints,
       edge: { cpu: num(s.EdgeCpuPercent), memAvailGb: num(s.EdgeMemAvailableGb), temp: num(s.EdgeTempMax), fps: num(s.EdgeDetectionFps), videoAgeS: null },
       actuator: { moving: false, stopConfirmed: true },
     };

@@ -28,7 +28,7 @@ export interface Snapshot {
   gaitType: number | null; sportMode: number | null; errorCode: number | null;
   battery: { soc: number | null; packV: number | null; packA: number | null; cycles: number | null; cellV: number[]; bmsTemps: number[]; boardTemps: number[] };
   imuTemp: number | null;
-  footForce: number[];       // FR FL RR RL as published
+  footForce: (number | null)[];  // FR FL RR RL as published; null = sensor reports nothing
   obstacles: number[];       // range_obstacle, metres
   joints: Joint[];           // 12
   edge: { cpu: number | null; memAvailGb: number | null; temp: number | null; fps: number | null; videoAgeS: number | null };

@@ -138,9 +138,13 @@ export default function Go2View(props: Go2Props) {
         const p = live.current;
         const t = (performance.now() - start) / 1000;
         const pose = POSES[p.posture];
+        // Live joint angles when every joint reports (order confirmed on the robot
+        // 2026-10-30); otherwise the posture pose. Same sign convention as go2.xml.
+        const q = (name: string) => p.joints.find((x) => x.name === name)?.q ?? null;
+        const liveQ = !p.stale && p.joints.length === 12 && p.joints.every((j) => j.q != null);
         let hF = 0, hR = 0;
         for (const leg of Object.keys(LEG_DEF) as Leg[]) {
-          const target = pose[leg.startsWith("F") ? "front" : "rear"];
+          const target: [number, number, number] = liveQ ? [q(`${leg}_hip`)!, q(`${leg}_thigh`)!, q(`${leg}_calf`)!] : pose[leg.startsWith("F") ? "front" : "rear"];
           const cur = (angles[leg] ??= [...target] as [number, number, number]);
           const phase = leg === "FL" || leg === "RR" ? 0 : Math.PI;
           const gait = p.walking && !reduced ? [0, 0.22 * Math.sin(t * 9 + phase), -0.32 * Math.max(0, Math.sin(t * 9 + phase))] : [0, 0, 0];
