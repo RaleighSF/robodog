@@ -2,6 +2,23 @@
 telemetry:
   device_type: nvidia_agx_thor          # "Powered by NVIDIA · Jetson AGX Thor"
   device_id: watchdog-thor-01
+  # Ignite: telemetry -> Azure Event Hubs -> ADX (ADR 0001/0003). The send-only
+  # connection string lives in the state volume, never in git.
+  sinks: [azure_eventhub]
+  azure_eventhub:
+    eventhub_name: watchdog-telemetry
+    connection_file: /state/eventhub.conn
+  vitals_interval_seconds: 5
+  flush_interval_seconds: 2             # live dashboards: the 10 s default was most of the lag
+
+# Live 3D mirror + maneuver recognition (ADR 0010). The Thor holds only a
+# send-to-group token for hub `motion`, in the state volume, never in git.
+motion_stream:
+  enabled: true
+  pubsub_host: wd-motion-28628191.webpubsub.azure.com
+  hub: motion
+  group: motion
+  token_file: /state/motion.token
 
 scene_narrator:
   # Elastic-Vision's vLLM serves Cosmos Reason 2 8B on its compose network.

@@ -120,6 +120,77 @@ Every event shares this top-level envelope:
 | `go2_service_reachable` | bool | `true` | Orin backpack HTTP accessible |
 | `rtsp_server_running` | bool\|null | `true` | RTSP camera service on Orin |
 
+## Schema 1.1 additions (additive; 1.0 readers keep working)
+
+**New fields on every event's `robot`:** `posture` (`lying | low | standing | unknown`),
+`body_height` (m), `motor_temp_max` (°C, hottest joint). They are null when unknown.
+
+**New event type `vitals`**, sent every `telemetry.vitals_interval_seconds` (default 5 s).
+It carries two extra objects:
+
+- `robot_vitals`: the robot link's `/vitals` snapshot. It is everything the
+  Go2 publishes over DDS:
+  - `connected`, `posture`, `has_video`;
+  - `actuator`: `moving`, `stop_confirmed`, `transition_busy`;
+  - `sport`: `mode`, `gait_type`, `progress`, `error_code`, `body_height`,
+    `foot_raise_height`, `position[3]`, `velocity[3]`, `yaw_speed`,
+    `range_obstacle[4]`, `foot_force[4]`, `foot_position_body[12]`,
+    `foot_speed_body[12]`;
+  - `imu`: `rpy[3]`, `quaternion[4]`, `gyroscope[3]`, `accelerometer[3]`,
+    `temperature`;
+  - `power`: `power_v`, `power_a`, and `bms` with `soc`, `current`, `cycle`,
+    `status`, `bq_ntc[]`, `mcu_ntc[]`, `cell_vol[]`, `version_*`;
+  - `board_temps`: `ntc1`, `ntc2`;
+  - `feet`: `force[4]`, `force_est[4]`;
+  - `motors[12]`, one per joint: `joint`, `mode`, `q`, `dq`, `ddq`, `tau_est`,
+    `temperature`, `lost`. Joints are ordered FR, FL, RR, RL legs, each
+    hip / thigh / calf (Unitree order, confirmed on the dog 2026-10-30);
+  - `motor_summary`: `temp_max`, `temp_avg`, `hottest_joint`, `lost_total`;
+  - `lidar` (additive, ADR 0009): `window` (`clear | obstructed | unknown`;
+    unknown when not standing), `ring_sectors[6]` (near-field returns per
+    second in 45° sectors from -135° to +135°), `ring_hold_s`, `error_state`,
+    `cloud_hz`, `packet_loss`, `avoidance` (the robot's obstacle-avoidance
+    switch), `age_s`.
+
+  On firmware 1.1.15, `sport.mode`, `gait_type` and `range_obstacle` always read
+  0. On the booth dog, foot-force sensors 1 and 2 (FL, RR) always read 0.
+- `edge`: Thor health, with `cpu_percent`, `mem_used_gb`, `mem_available_gb`,
+  `temp_max_c`, `detection_fps` and `video_frame_age_s`.
+
+### Schema 1.2 (additive): `maneuver` events
+
+The Thor's `motion_stream.py` recognizes maneuvers from the robot link's live
+`/joints` stream (20 Hz), because the dog does not report which remote or app
+trick is running. Each recognized maneuver is one event, with `event_type:
+"maneuver"` and a `maneuver` object:
+
+- `name` (string): `hello`, `sit`, `stand_up` or `lie_down`.
+- `t` (number): when the maneuver completed, in Unix seconds from the robot
+  link's clock (frame time, not send time).
+- `paw` (string, `hello` only): `front right` or `front left`.
+- `posture_from` / `posture_to` (strings, posture transitions only): `lying`,
+  `low` (sitting) or `standing`.
+
+**Firing rules:**
+- A `hello` fires once per paw raise and re-arms only after that paw comes down.
+- The same name is not repeated within 3 s.
+- Holds reset after a frame gap of more than 1 s, or when body height is unknown.
+
+**Delivery:**
+- **Telemetry:** maneuvers ride the normal pipeline, so they are at-least-once like
+  every event.
+- **Live channel:** the real-time channel never republishes a maneuver older than
+  10 s, and clears its queue on reconnect.
+- **Consumers** should treat `t` as the event time.
+
+Also new in the `vitals` snapshot:
+- **`lidar`**: see ADR 0009.
+- **Signed battery current:** `power.bms.current` is in mA, + charging and
+  − discharging.
+
+**Sinks** are chosen with `telemetry.sinks`, for example `[local, s3, azure_eventhub]`.
+Every sink receives the same JSON, so Azure (Ignite) and AWS (re:Invent) share one schema.
+
 ## Snowflake Integration
 
 ### External Stage

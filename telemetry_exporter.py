@@ -28,7 +28,7 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = "1.0.0"
+SCHEMA_VERSION = "1.2.0"   # 1.1: vitals, posture/joints, edge health; 1.2: maneuver events (additive)
 
 
 # ---------------------------------------------------------------------------
@@ -57,6 +57,9 @@ class RobotState:
     battery: BatteryState = field(default_factory=BatteryState)
     motion_mode: str = "normal"
     last_command: Optional[RobotCommand] = None
+    posture: Optional[str] = None            # 1.1: lying | low | standing | unknown
+    body_height: Optional[float] = None      # 1.1: metres
+    motor_temp_max: Optional[float] = None   # 1.1: hottest joint, deg C
 
 
 @dataclass
@@ -128,11 +131,17 @@ class TelemetryEvent:
     robot: RobotState = field(default_factory=RobotState)
     vision: Optional[VisionState] = None
     system_health: SystemHealth = field(default_factory=SystemHealth)
+    robot_vitals: Optional[Dict[str, Any]] = None   # 1.1: full /vitals superset (joints, IMU, BMS, feet...)
+    edge: Optional[Dict[str, Any]] = None           # 1.1: edge compute health (CPU, memory, temperatures)
+    maneuver: Optional[Dict[str, Any]] = None       # 1.2: recognized maneuver (name, t, detail)
 
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
         if d.get("vision") is None:
             del d["vision"]
+        for k in ("robot_vitals", "edge", "maneuver"):
+            if d.get(k) is None:
+                del d[k]
         if d.get("robot", {}).get("last_command") is None:
             d["robot"]["last_command"] = None
         return d
@@ -278,6 +287,101 @@ class LocalFileExporter:
 
 
 # ---------------------------------------------------------------------------
+# Azure Event Hubs exporter (Ignite: Event Hubs -> Azure Data Explorer)
+# ---------------------------------------------------------------------------
+
+class EventHubExporter:
+    """Sends each telemetry event as one Event Hubs message (same JSON as the
+    S3 objects, so every cloud receives one schema). The connection string is
+    a secret: env WATCHDOG_EVENTHUB_CONNECTION, else the file named by
+    `connection_file` (Thor: /state/eventhub.conn). Never in config or git.
+
+    Images are not sent: Event Hubs caps message size and the ADX dashboard
+    does not render them. Snapshots stay on the S3/local sinks."""
+
+    def __init__(self, eventhub_name: str, connection_file: Optional[str] = None,
+                 send_timeout_s: float = 10.0, partition_key: str = "watchdog"):
+        self.eventhub_name = eventhub_name
+        self._connection_file = connection_file
+        self._timeout = send_timeout_s
+        self._partition_key = partition_key
+        self._producer = None
+        self._lock = threading.Lock()
+
+    def _conn_str(self) -> Optional[str]:
+        conn = os.environ.get("WATCHDOG_EVENTHUB_CONNECTION")
+        if not conn and self._connection_file and os.path.exists(self._connection_file):
+            with open(self._connection_file) as f:
+                conn = f.read().strip()
+        return conn or None
+
+    def _get_producer(self):
+        if self._producer is None:
+            conn = self._conn_str()
+            if not conn:
+                raise RuntimeError("no Event Hubs connection string configured")
+            from azure.eventhub import EventHubProducerClient
+            # The SDK logs every AMQP state change at INFO; keep the Thor's log readable.
+            logging.getLogger("azure").setLevel(logging.WARNING)
+            self._producer = EventHubProducerClient.from_connection_string(
+                conn, eventhub_name=self.eventhub_name)
+        return self._producer
+
+    def put_json(self, key: str, data: Dict) -> bool:
+        try:
+            from azure.eventhub import EventData
+            with self._lock:
+                producer = self._get_producer()
+                batch = producer.create_batch(partition_key=self._partition_key)
+                ev = EventData(json.dumps(data, default=str, separators=(",", ":")))
+                ev.content_type = "application/json"
+                ev.properties = {"event_type": str(data.get("event_type", "")), "schema": "v1"}
+                batch.add(ev)
+                producer.send_batch(batch, timeout=self._timeout)
+            return True
+        except Exception as e:
+            logger.error(f"[Telemetry] Event Hubs send failed ({key}): {e}")
+            with self._lock:                       # rebuild the client next time
+                try:
+                    if self._producer is not None:
+                        self._producer.close()
+                except Exception:
+                    pass
+                self._producer = None
+            return False
+
+    def put_image(self, key: str, image_bytes: bytes) -> bool:
+        return True                                # deliberately not sent (see class doc)
+
+
+# ---------------------------------------------------------------------------
+# Fan-out: several sinks at once (e.g. local + azure_eventhub)
+# ---------------------------------------------------------------------------
+
+class MultiExporter:
+    """Sends to every sink; an event counts as delivered if at least one sink
+    took it (each sink logs its own failures)."""
+
+    def __init__(self, sinks: List[tuple]):
+        self.sinks = sinks                         # [(name, exporter), ...]
+        self.stats = {name: {"ok": 0, "failed": 0} for name, _ in sinks}
+
+    def _fan(self, method: str, key: str, payload) -> bool:
+        any_ok = False
+        for name, ex in self.sinks:
+            ok = getattr(ex, method)(key, payload)
+            self.stats[name]["ok" if ok else "failed"] += 1
+            any_ok = any_ok or ok
+        return any_ok
+
+    def put_json(self, key: str, data: Dict) -> bool:
+        return self._fan("put_json", key, data)
+
+    def put_image(self, key: str, image_bytes: bytes) -> bool:
+        return self._fan("put_image", key, image_bytes)
+
+
+# ---------------------------------------------------------------------------
 # TelemetryManager — the main orchestrator
 # ---------------------------------------------------------------------------
 
@@ -340,7 +444,33 @@ class TelemetryManager:
             logger.info("[Telemetry] Disabled by configuration")
 
     def _build_exporter(self, telem_cfg: Dict):
-        backend = telem_cfg.get("backend", "local")
+        """`telemetry.sinks: [local, s3, azure_eventhub]` (any combination).
+        Legacy `telemetry.backend: s3|local` still works when `sinks` is unset.
+        Swapping clouds (Ignite -> re:Invent) is a config change, not code."""
+        sinks = telem_cfg.get("sinks")
+        if not sinks:
+            return self._build_sink(telem_cfg.get("backend", "local"), telem_cfg)
+        built = []
+        for name in sinks:
+            try:
+                built.append((name, self._build_sink(name, telem_cfg)))
+            except Exception as e:
+                logger.error(f"[Telemetry] sink '{name}' not available: {e}")
+        if not built:
+            logger.warning("[Telemetry] no usable sinks - writing locally")
+            built = [("local", self._build_sink("local", telem_cfg))]
+        logger.info("[Telemetry] sinks: " + ", ".join(n for n, _ in built))
+        return MultiExporter(built)
+
+    def _build_sink(self, backend: str, telem_cfg: Dict):
+        if backend == "azure_eventhub":
+            az = telem_cfg.get("azure_eventhub") or {}
+            return EventHubExporter(
+                eventhub_name=az.get("eventhub_name", "watchdog-telemetry"),
+                connection_file=az.get("connection_file", "/state/eventhub.conn"),
+                send_timeout_s=float(az.get("send_timeout_s", 10)),
+                partition_key=telem_cfg.get("device_id", "watchdog"),
+            )
         if backend == "s3":
             return S3Exporter(
                 bucket=telem_cfg.get("s3_bucket", "watchdog-telemetry"),
@@ -492,6 +622,48 @@ class TelemetryManager:
             )
         self._enqueue(event)
 
+    def emit_vitals(self, vitals: Dict, edge: Optional[Dict] = None):
+        """Emit a 1.1 `vitals` event: the robot link's full /vitals snapshot
+        plus edge health. Sent every vitals_interval_seconds for live dashboards."""
+        if not self.enabled:
+            return
+        event = self._base_event("vitals")
+        power = vitals.get("power") or {}
+        bms = power.get("bms") or {}
+        summary = vitals.get("motor_summary") or {}
+        event.robot = self._build_robot_state({
+            "battery": {"soc": bms.get("soc"), "voltage": power.get("power_v"),
+                        "current": bms.get("current"), "connected": vitals.get("connected", False)},
+            "posture": vitals.get("posture"),
+            "body_height": (vitals.get("sport") or {}).get("body_height"),
+            "motor_temp_max": summary.get("temp_max"),
+        })
+        event.robot_vitals = vitals
+        event.edge = edge
+        self._enqueue(event)
+
+    def emit_maneuver(self, maneuver: Dict):
+        """Emit a 1.2 `maneuver` event (hello, sit, stand_up, lie_down) recognized
+        from the live joint stream (motion_stream.py)."""
+        if not self.enabled:
+            return
+        event = self._base_event("maneuver")
+        event.maneuver = maneuver
+        self._enqueue(event)
+
+    def start_vitals(self, collector_fn, interval_s: float):
+        """Periodic vitals collection (0 disables)."""
+        if not self.enabled or not interval_s or interval_s <= 0:
+            return
+        def loop():
+            while not self._stop_event.wait(timeout=interval_s):
+                try:
+                    collector_fn()
+                except Exception as e:
+                    logger.warning(f"[Telemetry] vitals collection failed: {e}")
+        threading.Thread(target=loop, name="TelemetryVitals", daemon=True).start()
+        logger.info(f"[Telemetry] Vitals started — interval={interval_s}s")
+
     # -- Internal helpers ----------------------------------------------------
 
     def _base_event(self, event_type: str) -> TelemetryEvent:
@@ -507,6 +679,9 @@ class TelemetryManager:
     def _build_robot_state(self, raw: Dict) -> RobotState:
         battery = raw.get("battery", raw)
         return RobotState(
+            posture=raw.get("posture"),
+            body_height=raw.get("body_height"),
+            motor_temp_max=raw.get("motor_temp_max"),
             battery=BatteryState(
                 soc=battery.get("soc"),
                 voltage=battery.get("voltage"),
@@ -583,6 +758,7 @@ class TelemetryManager:
             "session_id": self._session_id,
             "events_emitted": self._events_emitted,
             "events_uploaded": self._events_uploaded,
+            "sinks": getattr(self._exporter, "stats", None),
             "events_failed": self._events_failed,
             "buffer_size": len(self._buffer),
             "image_queue_size": self._image_queue.qsize(),

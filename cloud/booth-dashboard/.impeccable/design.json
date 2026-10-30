@@ -1,0 +1,854 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-30T21:14:01+00:00",
+  "title": "Design System: Watch Dog Overwatch (booth dashboard)",
+  "extensions": {
+    "colorMeta": {
+      "bg-void": {
+        "role": "neutral",
+        "displayName": "Void",
+        "canonical": "#08090B",
+        "tonalRamp": [
+          "oklch(15% 0.005 262.8)",
+          "oklch(25% 0.005 262.8)",
+          "oklch(35% 0.005 262.8)",
+          "oklch(45% 0.005 262.8)",
+          "oklch(55% 0.005 262.8)",
+          "oklch(68% 0.005 262.8)",
+          "oklch(82% 0.005 262.8)",
+          "oklch(95% 0.005 262.8)"
+        ]
+      },
+      "bg-base": {
+        "role": "neutral",
+        "displayName": "Base",
+        "canonical": "#0B0E12",
+        "tonalRamp": [
+          "oklch(15% 0.010 255.7)",
+          "oklch(25% 0.010 255.7)",
+          "oklch(35% 0.010 255.7)",
+          "oklch(45% 0.010 255.7)",
+          "oklch(55% 0.010 255.7)",
+          "oklch(68% 0.010 255.7)",
+          "oklch(82% 0.010 255.7)",
+          "oklch(95% 0.010 255.7)"
+        ]
+      },
+      "surface-1": {
+        "role": "neutral",
+        "displayName": "Panel",
+        "canonical": "#111519",
+        "tonalRamp": [
+          "oklch(15% 0.010 248.4)",
+          "oklch(25% 0.010 248.4)",
+          "oklch(35% 0.010 248.4)",
+          "oklch(45% 0.010 248.4)",
+          "oklch(55% 0.010 248.4)",
+          "oklch(68% 0.010 248.4)",
+          "oklch(82% 0.010 248.4)",
+          "oklch(95% 0.010 248.4)"
+        ]
+      },
+      "surface-2": {
+        "role": "neutral",
+        "displayName": "Raised",
+        "canonical": "#161B21",
+        "tonalRamp": [
+          "oklch(15% 0.014 253.1)",
+          "oklch(25% 0.014 253.1)",
+          "oklch(35% 0.014 253.1)",
+          "oklch(45% 0.014 253.1)",
+          "oklch(55% 0.014 253.1)",
+          "oklch(68% 0.014 253.1)",
+          "oklch(82% 0.014 253.1)",
+          "oklch(95% 0.014 253.1)"
+        ]
+      },
+      "surface-3": {
+        "role": "neutral",
+        "displayName": "Hub",
+        "canonical": "#1D242B",
+        "tonalRamp": [
+          "oklch(15% 0.017 248.5)",
+          "oklch(25% 0.017 248.5)",
+          "oklch(35% 0.017 248.5)",
+          "oklch(45% 0.017 248.5)",
+          "oklch(55% 0.017 248.5)",
+          "oklch(68% 0.017 248.5)",
+          "oklch(82% 0.017 248.5)",
+          "oklch(95% 0.017 248.5)"
+        ]
+      },
+      "surface-inset": {
+        "role": "neutral",
+        "displayName": "Well",
+        "canonical": "#0A0D10",
+        "tonalRamp": [
+          "oklch(15% 0.008 248.4)",
+          "oklch(25% 0.008 248.4)",
+          "oklch(35% 0.008 248.4)",
+          "oklch(45% 0.008 248.4)",
+          "oklch(55% 0.008 248.4)",
+          "oklch(68% 0.008 248.4)",
+          "oklch(82% 0.008 248.4)",
+          "oklch(95% 0.008 248.4)"
+        ]
+      },
+      "border-subtle": {
+        "role": "neutral",
+        "displayName": "Hairline",
+        "canonical": "#1E262E",
+        "tonalRamp": [
+          "oklch(15% 0.019 248.5)",
+          "oklch(25% 0.019 248.5)",
+          "oklch(35% 0.019 248.5)",
+          "oklch(45% 0.019 248.5)",
+          "oklch(55% 0.019 248.5)",
+          "oklch(68% 0.019 248.5)",
+          "oklch(82% 0.019 248.5)",
+          "oklch(95% 0.019 248.5)"
+        ]
+      },
+      "border": {
+        "role": "neutral",
+        "displayName": "Border",
+        "canonical": "#2C363F",
+        "tonalRamp": [
+          "oklch(15% 0.021 245.7)",
+          "oklch(25% 0.021 245.7)",
+          "oklch(35% 0.021 245.7)",
+          "oklch(45% 0.021 245.7)",
+          "oklch(55% 0.021 245.7)",
+          "oklch(68% 0.021 245.7)",
+          "oklch(82% 0.021 245.7)",
+          "oklch(95% 0.021 245.7)"
+        ]
+      },
+      "border-strong": {
+        "role": "neutral",
+        "displayName": "Strong Border",
+        "canonical": "#4A5A68",
+        "tonalRamp": [
+          "oklch(15% 0.030 244.9)",
+          "oklch(25% 0.030 244.9)",
+          "oklch(35% 0.030 244.9)",
+          "oklch(45% 0.030 244.9)",
+          "oklch(55% 0.030 244.9)",
+          "oklch(68% 0.030 244.9)",
+          "oklch(82% 0.030 244.9)",
+          "oklch(95% 0.030 244.9)"
+        ]
+      },
+      "text-primary": {
+        "role": "neutral",
+        "displayName": "Text Primary",
+        "canonical": "#E6EDF3",
+        "tonalRamp": [
+          "oklch(15% 0.011 243.7)",
+          "oklch(25% 0.011 243.7)",
+          "oklch(35% 0.011 243.7)",
+          "oklch(45% 0.011 243.7)",
+          "oklch(55% 0.011 243.7)",
+          "oklch(68% 0.011 243.7)",
+          "oklch(82% 0.011 243.7)",
+          "oklch(95% 0.011 243.7)"
+        ]
+      },
+      "text-secondary": {
+        "role": "neutral",
+        "displayName": "Text Secondary",
+        "canonical": "#9FB0C0",
+        "tonalRamp": [
+          "oklch(15% 0.030 246.6)",
+          "oklch(25% 0.030 246.6)",
+          "oklch(35% 0.030 246.6)",
+          "oklch(45% 0.030 246.6)",
+          "oklch(55% 0.030 246.6)",
+          "oklch(68% 0.030 246.6)",
+          "oklch(82% 0.030 246.6)",
+          "oklch(95% 0.030 246.6)"
+        ]
+      },
+      "text-tertiary": {
+        "role": "neutral",
+        "displayName": "Text Tertiary",
+        "canonical": "#8494A3",
+        "tonalRamp": [
+          "oklch(15% 0.029 246.5)",
+          "oklch(25% 0.029 246.5)",
+          "oklch(35% 0.029 246.5)",
+          "oklch(45% 0.029 246.5)",
+          "oklch(55% 0.029 246.5)",
+          "oklch(68% 0.029 246.5)",
+          "oklch(82% 0.029 246.5)",
+          "oklch(95% 0.029 246.5)"
+        ]
+      },
+      "status-ok": {
+        "role": "tertiary",
+        "displayName": "Nominal Green",
+        "canonical": "#3FD68C",
+        "tonalRamp": [
+          "oklch(15% 0.165 157.1)",
+          "oklch(25% 0.165 157.1)",
+          "oklch(35% 0.165 157.1)",
+          "oklch(45% 0.165 157.1)",
+          "oklch(55% 0.165 157.1)",
+          "oklch(68% 0.165 157.1)",
+          "oklch(82% 0.165 157.1)",
+          "oklch(95% 0.165 157.1)"
+        ]
+      },
+      "status-warn": {
+        "role": "tertiary",
+        "displayName": "Caution Amber",
+        "canonical": "#FFB224",
+        "tonalRamp": [
+          "oklch(15% 0.164 75.8)",
+          "oklch(25% 0.164 75.8)",
+          "oklch(35% 0.164 75.8)",
+          "oklch(45% 0.164 75.8)",
+          "oklch(55% 0.164 75.8)",
+          "oklch(68% 0.164 75.8)",
+          "oklch(82% 0.164 75.8)",
+          "oklch(95% 0.164 75.8)"
+        ]
+      },
+      "status-danger": {
+        "role": "tertiary",
+        "displayName": "Warning Red",
+        "canonical": "#FF5C5C",
+        "tonalRamp": [
+          "oklch(15% 0.199 23.9)",
+          "oklch(25% 0.199 23.9)",
+          "oklch(35% 0.199 23.9)",
+          "oklch(45% 0.199 23.9)",
+          "oklch(55% 0.199 23.9)",
+          "oklch(68% 0.199 23.9)",
+          "oklch(82% 0.199 23.9)",
+          "oklch(95% 0.199 23.9)"
+        ]
+      },
+      "status-offline": {
+        "role": "tertiary",
+        "displayName": "Unknown Grey",
+        "canonical": "#8494A3",
+        "tonalRamp": [
+          "oklch(15% 0.029 246.5)",
+          "oklch(25% 0.029 246.5)",
+          "oklch(35% 0.029 246.5)",
+          "oklch(45% 0.029 246.5)",
+          "oklch(55% 0.029 246.5)",
+          "oklch(68% 0.029 246.5)",
+          "oklch(82% 0.029 246.5)",
+          "oklch(95% 0.029 246.5)"
+        ]
+      },
+      "warning-text": {
+        "role": "tertiary",
+        "displayName": "Warning Message Red",
+        "canonical": "#FF8A8A",
+        "tonalRamp": [
+          "oklch(15% 0.142 20.9)",
+          "oklch(25% 0.142 20.9)",
+          "oklch(35% 0.142 20.9)",
+          "oklch(45% 0.142 20.9)",
+          "oklch(55% 0.142 20.9)",
+          "oklch(68% 0.142 20.9)",
+          "oklch(82% 0.142 20.9)",
+          "oklch(95% 0.142 20.9)"
+        ]
+      },
+      "danger-ink": {
+        "role": "tertiary",
+        "displayName": "Danger Ink",
+        "canonical": "#1A0505",
+        "tonalRamp": [
+          "oklch(15% 0.039 22.8)",
+          "oklch(25% 0.039 22.8)",
+          "oklch(35% 0.039 22.8)",
+          "oklch(45% 0.039 22.8)",
+          "oklch(55% 0.039 22.8)",
+          "oklch(68% 0.039 22.8)",
+          "oklch(82% 0.039 22.8)",
+          "oklch(95% 0.039 22.8)"
+        ]
+      },
+      "focus": {
+        "role": "neutral",
+        "displayName": "Ice Focus Ring",
+        "canonical": "#7DF0FF",
+        "tonalRamp": [
+          "oklch(15% 0.107 206.6)",
+          "oklch(25% 0.107 206.6)",
+          "oklch(35% 0.107 206.6)",
+          "oklch(45% 0.107 206.6)",
+          "oklch(55% 0.107 206.6)",
+          "oklch(68% 0.107 206.6)",
+          "oklch(82% 0.107 206.6)",
+          "oklch(95% 0.107 206.6)"
+        ]
+      },
+      "accent-azure": {
+        "role": "primary",
+        "displayName": "Azure Signal Blue",
+        "canonical": "#3A9BF0",
+        "tonalRamp": [
+          "oklch(15% 0.154 248.9)",
+          "oklch(25% 0.154 248.9)",
+          "oklch(35% 0.154 248.9)",
+          "oklch(45% 0.154 248.9)",
+          "oklch(55% 0.154 248.9)",
+          "oklch(68% 0.154 248.9)",
+          "oklch(82% 0.154 248.9)",
+          "oklch(95% 0.154 248.9)"
+        ],
+        "cssVar": "--accent (theme=azure)"
+      },
+      "accent-azure-press": {
+        "role": "primary",
+        "displayName": "Azure Press",
+        "canonical": "#1F86E0",
+        "tonalRamp": [
+          "oklch(15% 0.163 250.6)",
+          "oklch(25% 0.163 250.6)",
+          "oklch(35% 0.163 250.6)",
+          "oklch(45% 0.163 250.6)",
+          "oklch(55% 0.163 250.6)",
+          "oklch(68% 0.163 250.6)",
+          "oklch(82% 0.163 250.6)",
+          "oklch(95% 0.163 250.6)"
+        ]
+      },
+      "accent-azure-ink": {
+        "role": "primary",
+        "displayName": "Azure Ink",
+        "canonical": "#06121F",
+        "tonalRamp": [
+          "oklch(15% 0.032 250.8)",
+          "oklch(25% 0.032 250.8)",
+          "oklch(35% 0.032 250.8)",
+          "oklch(45% 0.032 250.8)",
+          "oklch(55% 0.032 250.8)",
+          "oklch(68% 0.032 250.8)",
+          "oklch(82% 0.032 250.8)",
+          "oklch(95% 0.032 250.8)"
+        ]
+      },
+      "accent-aws": {
+        "role": "primary",
+        "displayName": "AWS Smile Orange",
+        "canonical": "#FF9F1C",
+        "tonalRamp": [
+          "oklch(15% 0.168 66.2)",
+          "oklch(25% 0.168 66.2)",
+          "oklch(35% 0.168 66.2)",
+          "oklch(45% 0.168 66.2)",
+          "oklch(55% 0.168 66.2)",
+          "oklch(68% 0.168 66.2)",
+          "oklch(82% 0.168 66.2)",
+          "oklch(95% 0.168 66.2)"
+        ],
+        "cssVar": "--accent (theme=aws)"
+      },
+      "accent-aws-press": {
+        "role": "primary",
+        "displayName": "AWS Press",
+        "canonical": "#E8890A",
+        "tonalRamp": [
+          "oklch(15% 0.161 63.1)",
+          "oklch(25% 0.161 63.1)",
+          "oklch(35% 0.161 63.1)",
+          "oklch(45% 0.161 63.1)",
+          "oklch(55% 0.161 63.1)",
+          "oklch(68% 0.161 63.1)",
+          "oklch(82% 0.161 63.1)",
+          "oklch(95% 0.161 63.1)"
+        ]
+      },
+      "accent-aws-ink": {
+        "role": "primary",
+        "displayName": "AWS Ink",
+        "canonical": "#1A0F00",
+        "tonalRamp": [
+          "oklch(15% 0.037 79.0)",
+          "oklch(25% 0.037 79.0)",
+          "oklch(35% 0.037 79.0)",
+          "oklch(45% 0.037 79.0)",
+          "oklch(55% 0.037 79.0)",
+          "oklch(68% 0.037 79.0)",
+          "oklch(82% 0.037 79.0)",
+          "oklch(95% 0.037 79.0)"
+        ]
+      },
+      "adi-sky": {
+        "role": "neutral",
+        "displayName": "ADI Sky",
+        "canonical": "#13283F",
+        "tonalRamp": [
+          "oklch(15% 0.051 252.1)",
+          "oklch(25% 0.051 252.1)",
+          "oklch(35% 0.051 252.1)",
+          "oklch(45% 0.051 252.1)",
+          "oklch(55% 0.051 252.1)",
+          "oklch(68% 0.051 252.1)",
+          "oklch(82% 0.051 252.1)",
+          "oklch(95% 0.051 252.1)"
+        ]
+      },
+      "adi-ground": {
+        "role": "neutral",
+        "displayName": "ADI Ground",
+        "canonical": "#2A2118",
+        "tonalRamp": [
+          "oklch(15% 0.021 66.6)",
+          "oklch(25% 0.021 66.6)",
+          "oklch(35% 0.021 66.6)",
+          "oklch(45% 0.021 66.6)",
+          "oklch(55% 0.021 66.6)",
+          "oklch(68% 0.021 66.6)",
+          "oklch(82% 0.021 66.6)",
+          "oklch(95% 0.021 66.6)"
+        ]
+      },
+      "nvidia-green": {
+        "role": "neutral",
+        "displayName": "NVIDIA Wordmark Green",
+        "canonical": "#76B900",
+        "tonalRamp": [
+          "oklch(15% 0.194 130.8)",
+          "oklch(25% 0.194 130.8)",
+          "oklch(35% 0.194 130.8)",
+          "oklch(45% 0.194 130.8)",
+          "oklch(55% 0.194 130.8)",
+          "oklch(68% 0.194 130.8)",
+          "oklch(82% 0.194 130.8)",
+          "oklch(95% 0.194 130.8)"
+        ]
+      },
+      "go2-black": {
+        "role": "neutral",
+        "displayName": "Go2 Black",
+        "canonical": "#1B2128",
+        "tonalRamp": [
+          "oklch(15% 0.016 252.4)",
+          "oklch(25% 0.016 252.4)",
+          "oklch(35% 0.016 252.4)",
+          "oklch(45% 0.016 252.4)",
+          "oklch(55% 0.016 252.4)",
+          "oklch(68% 0.016 252.4)",
+          "oklch(82% 0.016 252.4)",
+          "oklch(95% 0.016 252.4)"
+        ]
+      },
+      "go2-white": {
+        "role": "neutral",
+        "displayName": "Go2 White",
+        "canonical": "#C9D3DD",
+        "tonalRamp": [
+          "oklch(15% 0.018 248.0)",
+          "oklch(25% 0.018 248.0)",
+          "oklch(35% 0.018 248.0)",
+          "oklch(45% 0.018 248.0)",
+          "oklch(55% 0.018 248.0)",
+          "oklch(68% 0.018 248.0)",
+          "oklch(82% 0.018 248.0)",
+          "oklch(95% 0.018 248.0)"
+        ]
+      },
+      "go2-gray": {
+        "role": "neutral",
+        "displayName": "Go2 Gray",
+        "canonical": "#5F6D7B",
+        "tonalRamp": [
+          "oklch(15% 0.028 248.4)",
+          "oklch(25% 0.028 248.4)",
+          "oklch(35% 0.028 248.4)",
+          "oklch(45% 0.028 248.4)",
+          "oklch(55% 0.028 248.4)",
+          "oklch(68% 0.028 248.4)",
+          "oklch(82% 0.028 248.4)",
+          "oklch(95% 0.028 248.4)"
+        ]
+      },
+      "go2-metal": {
+        "role": "neutral",
+        "displayName": "Go2 Metal",
+        "canonical": "#9AA7B4",
+        "tonalRamp": [
+          "oklch(15% 0.024 248.2)",
+          "oklch(25% 0.024 248.2)",
+          "oklch(35% 0.024 248.2)",
+          "oklch(45% 0.024 248.2)",
+          "oklch(55% 0.024 248.2)",
+          "oklch(68% 0.024 248.2)",
+          "oklch(82% 0.024 248.2)",
+          "oklch(95% 0.024 248.2)"
+        ]
+      },
+      "bevel-top": {
+        "role": "neutral",
+        "displayName": "Bevel",
+        "canonical": "rgba(255, 255, 255, 0.06)"
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "Product title only."
+      },
+      "annunciator": {
+        "displayName": "Annunciator",
+        "purpose": "MASTER WARNING / CAUTION words."
+      },
+      "readout-dial": {
+        "displayName": "Dial readout",
+        "purpose": "Joint temperature under each needle."
+      },
+      "readout": {
+        "displayName": "Readout",
+        "purpose": "Synoptic readout cell values."
+      },
+      "headline": {
+        "displayName": "Agent sentence",
+        "purpose": "Crew-alerting message text, max 60ch."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Default UI text."
+      },
+      "data": {
+        "displayName": "Data",
+        "purpose": "Mono metadata: metrics, times, status values."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Uppercase panel/instrument labels."
+      },
+      "severity-tag": {
+        "displayName": "Severity tag",
+        "purpose": "WARNING / CAUTION / ADVISORY chips."
+      },
+      "fine": {
+        "displayName": "Fine",
+        "purpose": "Legal footer, scales."
+      }
+    },
+    "themes": {
+      "rule": "Cloud accent is chosen at build via NEXT_PUBLIC_THEME (azure default | aws) in src/lib/theme.ts and written to --accent/--accent-press/--accent-ink on <html>. Nothing else changes between shows.",
+      "azure": {
+        "accent": "#3A9BF0",
+        "accentPress": "#1F86E0",
+        "accentInk": "#06121F",
+        "builtOn": "Built on Microsoft Azure"
+      },
+      "aws": {
+        "accent": "#FF9F1C",
+        "accentPress": "#E8890A",
+        "accentInk": "#1A0F00",
+        "builtOn": "Built on AWS"
+      }
+    },
+    "statusSemantics": {
+      "ok": {
+        "color": "#3FD68C",
+        "glyph": "filled circle"
+      },
+      "caution": {
+        "color": "#FFB224",
+        "glyph": "filled triangle",
+        "inkOnFill": "#0B0E12"
+      },
+      "warning": {
+        "color": "#FF5C5C",
+        "glyph": "hollow X",
+        "inkOnFill": "#1A0505",
+        "messageText": "#FF8A8A"
+      },
+      "unknown": {
+        "color": "#8494A3",
+        "glyph": "dash"
+      },
+      "invalid": {
+        "render": "amber '--' in place of value; graphics amber + dashed; ATT FAIL"
+      },
+      "staleAfterSeconds": 15
+    },
+    "instruments": {
+      "jointDial": {
+        "sweepDeg": 210,
+        "spanC": [
+          20,
+          90
+        ],
+        "cautionC": 55,
+        "warningC": 70,
+        "greenArc": "3px @0.55",
+        "amberBand": "5px @0.75",
+        "redline": "3px radial at warning",
+        "ticksC": [
+          30,
+          40,
+          50,
+          60,
+          70,
+          80
+        ],
+        "torqueFullScaleNm": 20,
+        "note": "Limits are placeholders, not Unitree specs."
+      },
+      "runtimeBudget": {
+        "segments": 18,
+        "spanMin": 90,
+        "amberBelowFraction": 0.2
+      },
+      "pageCycleMs": 12000,
+      "go2": {
+        "housingLerp": {
+          "caution": 0.55,
+          "warning": 0.75
+        },
+        "markerScale": {
+          "caution": 1.5,
+          "warning": 2.2
+        }
+      }
+    },
+    "shadows": [
+      {
+        "name": "panel-bevel",
+        "value": "inset 0 1px 0 rgba(255,255,255,0.06)",
+        "purpose": "Every panel and the top strip; the only chrome."
+      },
+      {
+        "name": "key-cap",
+        "value": "inset 0 1px 0 rgba(255,255,255,0.06), inset 0 -2px 0 rgba(0,0,0,0.35)",
+        "purpose": "Synoptic page keys."
+      },
+      {
+        "name": "key-cap-on",
+        "value": "inset 0 -2px 0 rgba(0,0,0,0.25)",
+        "purpose": "Selected page key."
+      },
+      {
+        "name": "focus-ring",
+        "value": "outline: 2px solid #7DF0FF; outline-offset: 2px",
+        "purpose": "All :focus-visible."
+      }
+    ],
+    "motion": [
+      {
+        "name": "ease-out",
+        "value": "cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "Needles, torque arc, attitude ring, ADI."
+      },
+      {
+        "name": "needle",
+        "value": "600ms ease-out",
+        "purpose": "Dial needle, attitude ring rotation."
+      },
+      {
+        "name": "torque-arc",
+        "value": "400ms ease-out",
+        "purpose": "Dial torque arc."
+      },
+      {
+        "name": "adi",
+        "value": "500ms ease-out",
+        "purpose": "ATTITUDE page ADI."
+      },
+      {
+        "name": "warning-flash",
+        "value": "1s steps(2, jump-none) infinite",
+        "purpose": "Lit MASTER WARNING only."
+      },
+      {
+        "name": "page-cycle",
+        "value": "12s linear",
+        "purpose": "Booth auto-cycle progress bar."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "all transitions/animations 0ms; 3D gait, sway and marker pulse stop",
+        "purpose": "prefers-reduced-motion."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "phone-stack",
+        "value": "max-width: 900px",
+        "purpose": "Single-column scroll, --u fixed at 9px, dials 72px."
+      },
+      {
+        "name": "booth-unit",
+        "value": "--u: clamp(9px, 0.62vw, 24px)",
+        "purpose": "All cockpit sizes scale with viewport width."
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Synoptic Page Keys",
+      "kind": "nav",
+      "refersTo": "page-key",
+      "description": "Vertical EICAS page keys; selected key filled with the cloud accent.",
+      "html": "<nav class=\"ds-keys\"><button class=\"ds-key ds-on\" aria-pressed=\"true\">POWER</button><button class=\"ds-key\">GAIT</button><button class=\"ds-key\">ATTITUDE</button></nav>",
+      "css": ":host{--u:12px;--bg-base:#0B0E12;--surface-1:#111519;--surface-2:#161B21;--surface-inset:#0A0D10;--border-subtle:#1E262E;--border:#2C363F;--border-strong:#4A5A68;--bevel-top:rgba(255,255,255,.06);--text-primary:#E6EDF3;--text-secondary:#9FB0C0;--text-tertiary:#8494A3;--status-ok:#3FD68C;--status-warn:#FFB224;--status-danger:#FF5C5C;--accent:#3A9BF0;--accent-ink:#06121F;--focus:#7DF0FF;}.ds-keys{display:flex;flex-direction:column;gap:calc(var(--u)*.25);background:var(--surface-1);padding:12px}.ds-key{font-family:'Chakra Petch',sans-serif;font-weight:600;letter-spacing:.08em;font-size:calc(var(--u)*1.05);color:var(--text-secondary);background:var(--surface-2);border:1px solid var(--border);border-radius:2px;text-align:left;padding:calc(var(--u)*.32) calc(var(--u)*.9);min-width:calc(var(--u)*9);cursor:pointer;box-shadow:inset 0 1px 0 var(--bevel-top),inset 0 -2px 0 rgba(0,0,0,.35)}.ds-key:not(.ds-on):hover{border-color:var(--border-strong);color:var(--text-primary)}.ds-key:focus-visible{outline:2px solid var(--focus);outline-offset:2px}.ds-key.ds-on{color:var(--accent-ink);background:var(--accent);border-color:var(--accent);box-shadow:inset 0 -2px 0 rgba(0,0,0,.25)}"
+    },
+    {
+      "name": "Master Annunciators",
+      "kind": "button",
+      "refersTo": "annunciator-caution-lit",
+      "description": "MASTER WARNING / CAUTION; latch on unacknowledged findings, WARNING flashes 1 Hz.",
+      "html": "<div class=\"ds-annuns\"><button class=\"ds-annun ds-warning ds-lit\"><span class=\"ds-t\">MASTER</span><span class=\"ds-big\">WARNING</span></button><button class=\"ds-annun ds-caution ds-lit\"><span class=\"ds-t\">MASTER</span><span class=\"ds-big\">CAUTION</span></button><button class=\"ds-annun\"><span class=\"ds-t\">MASTER</span><span class=\"ds-big\">CAUTION</span></button></div>",
+      "css": ":host{--u:12px;--bg-base:#0B0E12;--surface-1:#111519;--surface-2:#161B21;--surface-inset:#0A0D10;--border-subtle:#1E262E;--border:#2C363F;--border-strong:#4A5A68;--bevel-top:rgba(255,255,255,.06);--text-primary:#E6EDF3;--text-secondary:#9FB0C0;--text-tertiary:#8494A3;--status-ok:#3FD68C;--status-warn:#FFB224;--status-danger:#FF5C5C;--accent:#3A9BF0;--accent-ink:#06121F;--focus:#7DF0FF;}.ds-annuns{display:flex;gap:calc(var(--u)*.8);background:var(--surface-1);padding:12px}.ds-annun{display:grid;place-items:center;min-width:calc(var(--u)*10);padding:calc(var(--u)*.45) calc(var(--u)*1);border:1px solid var(--border);border-radius:4px;background:var(--surface-inset);color:var(--text-tertiary);font:inherit}.ds-t{font-family:'Chakra Petch',sans-serif;text-transform:uppercase;letter-spacing:.08em;font-weight:600;font-size:calc(var(--u)*.9)}.ds-big{font-family:'Chakra Petch',sans-serif;font-weight:700;letter-spacing:.08em;font-size:calc(var(--u)*1.6);line-height:1.05}.ds-lit.ds-warning{background:var(--status-danger);color:#1A0505;border-color:var(--status-danger);cursor:pointer;animation:ds-flash 1s steps(2,jump-none) infinite}.ds-lit.ds-caution{background:var(--status-warn);color:#0B0E12;border-color:var(--status-warn);cursor:pointer}.ds-annun:focus-visible{outline:2px solid var(--focus);outline-offset:2px}@keyframes ds-flash{50%{background:var(--surface-inset);color:var(--status-danger)}}@media (prefers-reduced-motion:reduce){.ds-lit.ds-warning{animation:none}}"
+    },
+    {
+      "name": "Freshness Lamp",
+      "kind": "chip",
+      "refersTo": "freshness-lamp",
+      "description": "LIVE/STALE age lamp with shape glyph and SYNTHETIC DATA tag.",
+      "html": "<div class=\"ds-row\"><div class=\"ds-fresh ds-ok\"><svg width=\"12\" height=\"12\" viewBox=\"0 0 12 12\"><circle cx=\"6\" cy=\"6\" r=\"5\" fill=\"currentColor\"/></svg><span class=\"ds-num\">LIVE 0.9 s</span><span class=\"ds-syn\">SYNTHETIC DATA</span></div><div class=\"ds-fresh ds-stale\"><svg width=\"12\" height=\"12\" viewBox=\"0 0 12 12\"><path d=\"M6 1 L11 11 L1 11 Z\" fill=\"currentColor\"/></svg><span class=\"ds-num\">STALE 45 s</span></div></div>",
+      "css": ":host{--u:12px;--bg-base:#0B0E12;--surface-1:#111519;--surface-2:#161B21;--surface-inset:#0A0D10;--border-subtle:#1E262E;--border:#2C363F;--border-strong:#4A5A68;--bevel-top:rgba(255,255,255,.06);--text-primary:#E6EDF3;--text-secondary:#9FB0C0;--text-tertiary:#8494A3;--status-ok:#3FD68C;--status-warn:#FFB224;--status-danger:#FF5C5C;--accent:#3A9BF0;--accent-ink:#06121F;--focus:#7DF0FF;}.ds-num{font-family:'JetBrains Mono',monospace;font-variant-numeric:tabular-nums;}.ds-row{display:flex;gap:12px;background:var(--surface-1);padding:12px}.ds-fresh{display:flex;align-items:center;gap:calc(var(--u)*.6);font-size:calc(var(--u)*1.5);padding:calc(var(--u)*.5) calc(var(--u)*.9);border:1px solid var(--border);border-radius:4px;background:var(--surface-inset)}.ds-ok{color:var(--status-ok)}.ds-stale{color:var(--status-warn);border-color:var(--status-warn)}.ds-syn{font-family:'Chakra Petch',sans-serif;letter-spacing:.08em;font-size:calc(var(--u)*.95);color:var(--status-warn);border:1px solid var(--status-warn);padding:0 calc(var(--u)*.4);border-radius:2px}"
+    },
+    {
+      "name": "Joint Dial",
+      "kind": "custom",
+      "refersTo": "readout-dial",
+      "description": "EICAS engine dial: 210° sweep 20-90 °C, green arc, amber band, red line, status needle, torque arc, mono readout.",
+      "html": "<figure class=\"ds-dial\"><svg viewBox=\"0 0 100 92\" width=\"120\" height=\"110\"><path d=\"M 15.56 65.11 A 38 38 0 0 1 68.4 16.75\" stroke=\"#3FD68C\" stroke-opacity=\".55\" stroke-width=\"3\" fill=\"none\"/><path d=\"M 68.4 16.75 A 38 38 0 0 1 82.03 29.6\" stroke=\"#FFB224\" stroke-opacity=\".75\" stroke-width=\"5\" fill=\"none\"/><path d=\"M 82.03 29.6 A 38 38 0 0 1 84.44 66.06\" stroke=\"#2C363F\" stroke-width=\"3\" fill=\"none\"/><line x1=\"76.1\" y1=\"33.4\" x2=\"86.3\" y2=\"27.0\" stroke=\"#FF5C5C\" stroke-width=\"3\"/><path d=\"M 23.9 62.1 A 29 29 0 0 1 78.4 62.1\" stroke=\"#1E262E\" stroke-width=\"3\" fill=\"none\"/><path d=\"M 23.9 62.1 A 29 29 0 0 1 40 22.8\" stroke=\"#9FB0C0\" stroke-width=\"3\" fill=\"none\"/><line x1=\"50\" y1=\"50\" x2=\"74.5\" y2=\"27.2\" stroke=\"#FFB224\" stroke-width=\"3.5\" stroke-linecap=\"round\"/><circle cx=\"50\" cy=\"50\" r=\"3.2\" fill=\"#1D242B\" stroke=\"#4A5A68\"/></svg><div class=\"ds-readout ds-num ds-caution\">59<span>°C</span></div><figcaption class=\"ds-title\">CALF</figcaption></figure>",
+      "css": ":host{--u:12px;--bg-base:#0B0E12;--surface-1:#111519;--surface-2:#161B21;--surface-inset:#0A0D10;--border-subtle:#1E262E;--border:#2C363F;--border-strong:#4A5A68;--bevel-top:rgba(255,255,255,.06);--text-primary:#E6EDF3;--text-secondary:#9FB0C0;--text-tertiary:#8494A3;--status-ok:#3FD68C;--status-warn:#FFB224;--status-danger:#FF5C5C;--accent:#3A9BF0;--accent-ink:#06121F;--focus:#7DF0FF;}.ds-title{font-family:'Chakra Petch',sans-serif;text-transform:uppercase;letter-spacing:.08em;font-weight:600;color:var(--text-secondary);font-size:calc(var(--u)*1.2);}.ds-num{font-family:'JetBrains Mono',monospace;font-variant-numeric:tabular-nums;}.ds-dial{position:relative;display:grid;justify-items:center;width:120px;margin:0;padding:12px;background:var(--surface-inset)}.ds-readout{position:absolute;top:76px;font-size:calc(var(--u)*2.25);font-weight:700;line-height:1;padding:1px calc(var(--u)*.35);border:1px solid var(--border);border-radius:2px;background:var(--surface-inset);color:var(--text-primary)}.ds-readout span{font-size:.55em;color:var(--text-tertiary);margin-left:1px}.ds-readout.ds-caution{color:var(--status-warn);border-color:var(--status-warn)}.ds-dial figcaption{font-size:calc(var(--u)*1.15);margin-top:calc(var(--u)*1.6)}"
+    },
+    {
+      "name": "Readout Cells",
+      "kind": "card",
+      "refersTo": "readout-cell",
+      "description": "Synoptic readout wells: title over mono value; caution/warning recolour the value; missing shows --.",
+      "html": "<div class=\"ds-grid\"><div class=\"ds-ro\"><span class=\"ds-title\">Pack</span><span class=\"ds-num ds-v\">29.4<small>V</small></span></div><div class=\"ds-ro\"><span class=\"ds-title\">Thor temp</span><span class=\"ds-num ds-v ds-caution\">87<small>°C</small></span></div><div class=\"ds-ro\"><span class=\"ds-title\">Roll</span><span class=\"ds-num ds-v ds-warning\">38.2<small>°</small></span></div><div class=\"ds-ro\"><span class=\"ds-title\">Current</span><span class=\"ds-num ds-v\">--</span></div></div>",
+      "css": ":host{--u:12px;--bg-base:#0B0E12;--surface-1:#111519;--surface-2:#161B21;--surface-inset:#0A0D10;--border-subtle:#1E262E;--border:#2C363F;--border-strong:#4A5A68;--bevel-top:rgba(255,255,255,.06);--text-primary:#E6EDF3;--text-secondary:#9FB0C0;--text-tertiary:#8494A3;--status-ok:#3FD68C;--status-warn:#FFB224;--status-danger:#FF5C5C;--accent:#3A9BF0;--accent-ink:#06121F;--focus:#7DF0FF;}.ds-title{font-family:'Chakra Petch',sans-serif;text-transform:uppercase;letter-spacing:.08em;font-weight:600;color:var(--text-secondary);font-size:calc(var(--u)*1.2);}.ds-num{font-family:'JetBrains Mono',monospace;font-variant-numeric:tabular-nums;}.ds-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:calc(var(--u)*.6);background:var(--surface-1);padding:12px}.ds-ro{display:grid;gap:2px;padding:calc(var(--u)*.5) calc(var(--u)*.7);border:1px solid var(--border-subtle);border-radius:4px;background:var(--surface-inset)}.ds-ro .ds-title{font-size:calc(var(--u)*.95)}.ds-v{font-size:calc(var(--u)*2.05);font-weight:700;line-height:1.05;white-space:nowrap;color:var(--text-primary)}.ds-v small{font-size:.5em;color:var(--text-tertiary);font-weight:500;margin-left:2px}.ds-v.ds-caution{color:var(--status-warn)}.ds-v.ds-warning{color:var(--status-danger)}"
+    },
+    {
+      "name": "Panel",
+      "kind": "card",
+      "refersTo": "panel",
+      "description": "Azimuth panel: surface-1, 1px border, 6px radius, one inset top bevel.",
+      "html": "<section class=\"ds-panel\"><h2 class=\"ds-title\">Status · monitored systems</h2><p>Joint motors <span class=\"ds-num\">12 · max 59 °C</span></p></section>",
+      "css": ":host{--u:12px;--bg-base:#0B0E12;--surface-1:#111519;--surface-2:#161B21;--surface-inset:#0A0D10;--border-subtle:#1E262E;--border:#2C363F;--border-strong:#4A5A68;--bevel-top:rgba(255,255,255,.06);--text-primary:#E6EDF3;--text-secondary:#9FB0C0;--text-tertiary:#8494A3;--status-ok:#3FD68C;--status-warn:#FFB224;--status-danger:#FF5C5C;--accent:#3A9BF0;--accent-ink:#06121F;--focus:#7DF0FF;}.ds-title{font-family:'Chakra Petch',sans-serif;text-transform:uppercase;letter-spacing:.08em;font-weight:600;color:var(--text-secondary);font-size:calc(var(--u)*1.2);}.ds-num{font-family:'JetBrains Mono',monospace;font-variant-numeric:tabular-nums;}.ds-panel{background:var(--surface-1);border:1px solid var(--border);border-radius:6px;box-shadow:inset 0 1px 0 var(--bevel-top);padding:calc(var(--u)*1);color:var(--text-primary);font-family:'IBM Plex Sans',sans-serif;font-size:calc(var(--u)*1.45)}.ds-panel h2{margin:0 0 calc(var(--u)*.6);padding-bottom:calc(var(--u)*.6);border-bottom:1px solid var(--border-subtle)}.ds-panel p{margin:0;color:var(--text-secondary)}"
+    },
+    {
+      "name": "Ask Overwatch Input",
+      "kind": "input",
+      "refersTo": "ask-input",
+      "description": "Staff-only question field (currently disabled).",
+      "html": "<form class=\"ds-ask\"><label class=\"ds-title\" for=\"ds-q\">Ask overwatch</label><input id=\"ds-q\" class=\"ds-input\" placeholder=\"e.g. Which joint is running hottest, and why?\"></form>",
+      "css": ":host{--u:12px;--bg-base:#0B0E12;--surface-1:#111519;--surface-2:#161B21;--surface-inset:#0A0D10;--border-subtle:#1E262E;--border:#2C363F;--border-strong:#4A5A68;--bevel-top:rgba(255,255,255,.06);--text-primary:#E6EDF3;--text-secondary:#9FB0C0;--text-tertiary:#8494A3;--status-ok:#3FD68C;--status-warn:#FFB224;--status-danger:#FF5C5C;--accent:#3A9BF0;--accent-ink:#06121F;--focus:#7DF0FF;}.ds-title{font-family:'Chakra Petch',sans-serif;text-transform:uppercase;letter-spacing:.08em;font-weight:600;color:var(--text-secondary);font-size:calc(var(--u)*1.2);}.ds-ask{display:grid;grid-template-columns:auto 1fr;align-items:center;gap:calc(var(--u)*1);background:var(--surface-1);padding:12px}.ds-input{font-family:'IBM Plex Sans',sans-serif;font-size:calc(var(--u)*1.45);color:var(--text-primary);background:var(--surface-2);border:1px solid var(--border);border-radius:4px;padding:calc(var(--u)*.5) calc(var(--u)*.8)}.ds-input::placeholder{color:var(--text-tertiary)}.ds-input:hover{border-color:var(--border-strong)}.ds-input:focus-visible{outline:2px solid var(--focus);outline-offset:2px}.ds-input:disabled{opacity:.7}"
+    },
+    {
+      "name": "Crew-Alerting Line",
+      "kind": "custom",
+      "refersTo": "cas-message",
+      "description": "One terse, severity-tagged line with its own history; advisories are a quieter unboxed line.",
+      "html": "<ol class=\"ds-cas\"><li class=\"ds-cas-msg caution\"><span class=\"ds-sev caution\">CAUTION</span><p>FR hip 56 °C · +1° in 10 min · 14 min in caution · standing</p></li><li class=\"ds-cas-msg advisory\"><span class=\"ds-sev advisory\">ADVISORY</span><p>Now sitting</p></li></ol>",
+      "css": ".ds-cas{list-style:none;display:grid;gap:8px;padding:0;margin:0} .ds-cas-msg{display:grid;grid-template-columns:108px 1fr;align-items:baseline;gap:11px;padding:6px 10px;border:1px solid var(--border-subtle,#1E262E);border-radius:4px;background:var(--surface-2,#161B21)} .ds-cas-msg.caution{border-color:color-mix(in srgb,#FFB224 70%,#2C363F)} .ds-cas-msg p{margin:0;font:400 24px/1.2 'IBM Plex Sans',system-ui,sans-serif} .ds-cas-msg.caution p{color:#FFB224} .ds-cas-msg.advisory{background:none;border-color:transparent;padding-block:2px} .ds-cas-msg.advisory p{font-size:17px;color:#9FB0C0} .ds-sev{justify-self:start;font:700 15px 'Chakra Petch',sans-serif;letter-spacing:.08em;padding:0 5px;border-radius:2px} .ds-sev.caution{background:#FFB224;color:#0B0E12} .ds-sev.advisory{color:var(--accent,#3A9BF0);border:1px solid var(--accent,#3A9BF0)}"
+    },
+    {
+      "name": "Agent Line",
+      "kind": "custom",
+      "refersTo": "agent-line",
+      "description": "The agent's brief, quoted once at the top of the Overwatch column, with host and age.",
+      "html": "<figure class=\"ds-agent\"><blockquote>The front-right hip is at 56 °C and rising slowly while standing. Lie the dog down between demos to cool the hips.</blockquote><figcaption>Agent · Azure AI Foundry · 12 s ago</figcaption></figure>",
+      "css": ".ds-agent{margin:0} .ds-agent blockquote{margin:0;font:400 21px/1.3 'IBM Plex Sans',system-ui,sans-serif;color:#E6EDF3;max-width:46ch;text-wrap:pretty} .ds-agent figcaption{margin-top:5px;font:400 12.5px 'IBM Plex Sans',sans-serif;color:#8494A3}"
+    },
+    {
+      "name": "Joint Tag",
+      "kind": "chip",
+      "refersTo": "joint-tag-caution",
+      "description": "Name chip that follows a flagged joint on the 3D twin.",
+      "html": "<span class=\"ds-jtag\">FR HIP 56°</span> <span class=\"ds-jtag warning\">RL CALF 72°</span>",
+      "css": ".ds-jtag{font:700 14px 'JetBrains Mono',monospace;letter-spacing:.04em;text-transform:uppercase;padding:0 5px;border-radius:2px;background:#FFB224;color:#0B0E12;font-variant-numeric:tabular-nums} .ds-jtag.warning{background:#FF5C5C;color:#1A0505}"
+    },
+    {
+      "name": "How It Works Button",
+      "kind": "button",
+      "refersTo": "arch-button",
+      "description": "Quiet outlined placard button in the top strip that opens the architecture dialog.",
+      "html": "<button class=\"ds-arch-btn\" type=\"button\">How it works</button>",
+      "css": ".ds-arch-btn{font:600 12.5px 'Chakra Petch',sans-serif;letter-spacing:.06em;text-transform:uppercase;color:#9FB0C0;background:none;border:1px solid #2C363F;border-radius:2px;padding:4px 10px;cursor:pointer} .ds-arch-btn:hover{color:#E6EDF3;border-color:#4A5A68} .ds-arch-btn:focus-visible{outline:2px solid #7DF0FF;outline-offset:2px}"
+    },
+    {
+      "name": "Live Twin Badge",
+      "kind": "custom",
+      "refersTo": "agent-line",
+      "description": "Stream state lamp under the 3D twin, with a recognized maneuver for 6 s.",
+      "html": "<div class=\"ds-twin\"><i></i><span>LIVE TWIN</span><b>HELLO <small>· front right paw</small></b></div>",
+      "css": ".ds-twin{display:inline-flex;align-items:center;gap:10px;padding:5px 12px;border:1px solid #1E262E;border-radius:4px;background:color-mix(in srgb,#111519 80%,transparent)} .ds-twin i{width:8px;height:8px;border-radius:50%;background:var(--accent,#3A9BF0)} .ds-twin span{font:600 14px 'Chakra Petch',sans-serif;letter-spacing:.08em;color:#9FB0C0} .ds-twin b{font:700 21px 'Chakra Petch',sans-serif;letter-spacing:.06em;color:var(--accent,#3A9BF0)} .ds-twin small{font-size:13px;color:#9FB0C0;letter-spacing:0}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Flown Dog",
+    "overview": "The robot is flown, not charted. The screen is an EICAS glass cockpit (engine-indicating and crew-alerting system) rather than a KPI-tile dashboard: each of the Go2's twelve joint motors reads like an engine dial, the agent overwatch speaks through a crew-alerting stack, and every other system lives on a synoptic page that staff page through or that cycles by itself in booth mode. It is built to be read from about 3 m in a few seconds, and to reward a closer look at arm's length.\n\nThe chassis comes from Azimuth (`/Users/Raleigh/Development/azimuth/DESIGN.md`): near-black, cool-blue panels lifted by 1px borders and one inset top bevel, with no glow, gradient or glass. On top of it the booth adds two things. The first is EICAS cockpit grammar: master annunciators, severity-ranked messages, invalid-data dashes and green/amber/red dial arcs. The second is a **cloud accent** that is swapped at build time: Azure blue for Microsoft Ignite, AWS orange for re:Invent. Everything except the accent is shared between the two shows.\n\nThe whole cockpit is sized from one viewport unit, `--u` (`spacing.u`, about 11.9px on a 1920 screen), so a 1080p booth screen and a 4K one look the same from the aisle.",
+    "keyCharacteristics": [
+      "Near-black tonal panels; depth comes from 1px borders and a single 6% white top bevel.",
+      "Status colours have fixed EICAS meanings: green nominal, amber caution, red warning, grey unknown.",
+      "One cloud accent (Azure or AWS), used only for advisories, the selected page key, the attitude pointer and the brand word.",
+      "Three typefaces with strict jobs: Chakra Petch uppercase for titles and alerts, IBM Plex Sans for sentences, JetBrains Mono tabular figures for every number.",
+      "Instruments are drawn as inline SVG from data. There is no chart library and there are no pictorial icons.",
+      "A live 3D twin of the Go2 is the hero. It follows the real joint angles at about 15 frames/s, its joint housings take on the status colour, and the view turns so a flagged joint is never hidden.",
+      "The Overwatch column says each thing once: one agent line, terse severity-sorted messages, and lamps that only show values when something is off."
+    ],
+    "rules": [
+      {
+        "name": "The Cloud Swap Rule",
+        "body": "The cloud brand lives only in `src/lib/theme.ts` and is chosen at build time with `NEXT_PUBLIC_THEME=aws|azure` (Azure is the default). `layout.tsx` writes `--accent`, `--accent-press` and `--accent-ink` onto `<html>`, and the \"Built on …\" text comes from the same theme. Components may only reference `var(--accent*)`. They never use an accent hex and never name a cloud in their copy.",
+        "section": "colors"
+      },
+      {
+        "name": "The Fixed Semantics Rule",
+        "body": "Green, amber, red and grey mean nominal, caution, warning and unknown on every surface, including the 3D dog. The accent is never a status. Red appears only for a real warning.",
+        "section": "colors"
+      },
+      {
+        "name": "The One Accent Rule",
+        "body": "At any moment only one cloud accent is on screen, and it marks advisory, selection and pointer roles only. Do not use it for decoration.",
+        "section": "colors"
+      },
+      {
+        "name": "The Mono Number Rule",
+        "body": "Every number that changes, every ID, every timestamp and every unit-bearing value is set in JetBrains Mono with tabular figures. Any text with digits in it gets the `.num` class.",
+        "section": "typography"
+      },
+      {
+        "name": "The Placard Rule",
+        "body": "Chakra Petch is always uppercase, always tracked (0.06–0.08em), and never used for sentences.",
+        "section": "typography"
+      },
+      {
+        "name": "The No-Glow Rule",
+        "body": "There is no outer shadow, glow, gradient, blur or glass anywhere, including lamps and the architecture dialog. The dialog separates from the page with its dimmed backdrop (`rgba(4,6,8,0.72)`) and the panel bevel, not a drop shadow. Translucency is used for the leg quadrants (`surface-1` at 45% over the 3D stage, with a 70% border) and the live-twin badge (`surface-1` at 80%).",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "**Do** take every accent from `var(--accent)`, `--accent-press` and `--accent-ink`, and add any new cloud only as a new entry in `THEMES` in `src/lib/theme.ts`.",
+      "**Do** replace any stale or missing value with amber `--` (the EICAS invalid-data convention), and turn graphic instruments amber and dashed (`ATT FAIL`, a dashed horizon).",
+      "**Do** pair every status colour with a shape or a label: lamp glyphs, status-list glyphs, severity words, annunciator words.",
+      "**Do** put text on an amber fill in `bg-base` (#0B0E12) and text on a red fill in `danger-ink` (#1A0505).",
+      "**Do** size new cockpit elements in `--u` multiples so they scale with the booth screen.",
+      "**Do** set every changing number in JetBrains Mono with `tabular-nums`.",
+      "**Do** label synthetic data on screen, using the amber SYNTHETIC DATA tag.",
+      "**Do** keep a flagged joint in view: turn the camera to its side and re-map the quadrants, ghost any marker the body hides, and name the joint with a tag.",
+      "**Do** write crew-alerting lines as terse labels with their own history (\"+1° in 10 min · 14 min in caution\"). The agent line carries the explanation and the action.",
+      "**Do** keep the booth list to warnings and cautions. Advisories and full system values belong to the staff view."
+    ],
+    "donts": [
+      "**Don't** use a glow, gradient, blur or glass, or any outer drop shadow. Depth is borders plus the 1px top bevel.",
+      "**Don't** use the cloud accent for a status, or a status colour for selection or branding.",
+      "**Don't** use a radius above 6px on any structural surface.",
+      "**Don't** add entrance animations, count-ups or bouncy easing to telemetry.",
+      "**Don't** set sentences in Chakra Petch, or numbers in Plex.",
+      "**Don't** hard-code a cloud name or a cloud hex in component code or copy. Service names come from `ARCH` in `theme.ts`.",
+      "**Don't** repeat in the Overwatch column a value already on a dial or readout, or show per-row device IDs and render timestamps.",
+      "**Don't** let a 3D marker draw through the body at full strength, or alert on undocumented counters (such as motor lost frames)."
+    ]
+  }
+}

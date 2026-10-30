@@ -1,0 +1,24 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "theme-preview",
+      "runtimeExecutable": "/Users/Raleigh/Development/watch_dog/venv/bin/python",
+      "runtimeArgs": [
+        "/private/tmp/claude-501/-Users-Raleigh-Development-watch-dog/6cc0be05-26b0-4659-bcb6-006cb4009224/scratchpad/preview_app.py"
+      ],
+      "port": 5077
+    },
+    {
+      "name": "booth-dashboard",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "--prefix",
+        "cloud/booth-dashboard",
+        "run",
+        "dev"
+      ],
+      "port": 3100
+    }
+  ]
+}

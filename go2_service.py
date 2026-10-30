@@ -48,6 +48,7 @@ from flask import Flask, Response, jsonify, request
 from go2dds.core import DDSCore
 from go2dds.motion import (MIN_VX_FWD, MIN_VYAW, RestVerifier, SETTLE_V, SETTLE_W,
                            TELEOP_LIMITS, planar_motion, snap)
+from go2dds.normalize import low_state_dict, motor_states
 from go2dds.topics import MOTION_SWITCHER, SPORT, TOPICS
 
 ROBOT_IP = os.environ.get("GO2_ROBOT_IP", "192.168.123.161")
@@ -61,7 +62,7 @@ if CONTROL_TOKEN and (not CONTROL_TOKEN.isascii() or any(c.isspace() for c in CO
     _TOKEN_REJECTED = True
 else:
     _TOKEN_REJECTED = False
-OPEN_ENDPOINTS = {"status", "battery", "video_feed"}   # read-only
+OPEN_ENDPOINTS = {"status", "battery", "video_feed", "vitals", "joints"}   # read-only
 AES_KEY = (os.environ.get("GO2_AES_KEY") or "").strip() or None
 JPEG_QUALITY = int(os.environ.get("GO2_JPEG_QUALITY", "80"))
 JPEG_PARAMS = [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY]
@@ -70,6 +71,7 @@ API = SPORT                                   # shared go2dds table (Azimuth-val
 
 LENIENT_CODES = {"sit": {-1}, "shake": {-1}}      # vendor -1 observed as benign for these
 CMD_MIN_GAP_S = 2.0
+VITALS_DECODE_HZ = 5.0            # full LowState + joint decode rate for /vitals
 REQUEST_TIMEOUT_S = 5.0
 MOVE_REPLY_TIMEOUT_S = 1.0
 STOP_REPLY_TIMEOUT_S = 1.0
@@ -153,9 +155,18 @@ class RobotLink:
         self.body_height = None
         self.motion = None                    # (planar speed, |yaw rate|) or None if not finite
         self.last_state = 0.0
+        # Full snapshots for /vitals (rebound atomically; readers never see a
+        # half-built dict). Joints are decoded at most VITALS_DECODE_HZ.
+        self.low = None
+        self.sport = None
+        self.motors = None
+        self.low_mono = 0.0
+        self._next_decode = 0.0
+        self.q = None                         # 12 joint angles from every LowState (for /joints)
+        self.q_mono = 0.0
         self.core = DDSCore("watchdog_go2_service").start()
         try:
-            self.core.subscribe(TOPICS["LOW_STATE"], self._on_low)
+            self.core.subscribe(TOPICS["LOW_STATE"], self._on_low, raw=True)
             self.core.subscribe(TOPICS["LF_SPORT_MOD_STATE"], self._on_sport)
         except Exception:
             self.core.close()
@@ -169,11 +180,21 @@ class RobotLink:
         self.core.close()
 
     def _on_low(self, payload):
-        d = payload["data"]; b = d["bms_state"]
-        self.battery = {"soc": b["soc"], "voltage": d["power_v"], "current": b["current"]}
+        m = payload["data"]                   # raw rclpy LowState (raw=True)
+        b = m.bms_state
+        self.battery = {"soc": int(b.soc), "voltage": float(m.power_v), "current": int(b.current)}
+        now = payload["_recvMono"]
+        self.q = [round(float(m.motor_state[i].q), 4) for i in range(12)]
+        self.q_mono = now
+        if now >= self._next_decode:          # full decode is throttled
+            self._next_decode = now + 1.0 / VITALS_DECODE_HZ
+            self.low = low_state_dict(m)
+            self.motors = motor_states(m)
+            self.low_mono = now
 
     def _on_sport(self, payload):
         d = payload["data"]
+        self.sport = d
         self.body_height = d.get("body_height")
         self.motion = planar_motion(d)
         self.last_state = payload["_recvMono"]
@@ -242,6 +263,134 @@ def telemetry_posture():
     if h < STANDING_MIN_M:
         return "low"
     return "standing"
+
+
+# ── Head lidar sensor window ─────────────────────────────────────────────────
+# A smudged lidar window returns a halo of points close to the sensor in every
+# direction; obstacle avoidance then sees walls all round and will not walk
+# (field case 2026-10-30, cleared by wiping the dome). Read-only, in its own
+# DDS context and thread, so point clouds never share the executor that carries
+# sport state for the deadman, and a failure here only blanks the lidar block.
+RING_R = (0.30, 0.60)        # m from the body centre, horizontal
+RING_H = (0.06, 0.35)        # m above the floor (floor = -body_height in base_link)
+RING_SECTOR_MIN = 20         # returns per 45-degree sector per second to count as occupied
+RING_SECTORS_MIN = 5         # of the 6 front/side sectors (the L1 barely sees behind)
+RING_HOLD_S = 10.0           # sustained this long before the window is "obstructed"
+LIDAR_FIELD_STALE_S = 5.0    # lidar_state / avoidance switch older than this are reported as null
+
+
+def ring_counts(xyz, body_height):
+    """Near-field returns per 45-degree sector, -135..+135 deg (0 = ahead, + = left)."""
+    import numpy as np
+    d = np.hypot(xyz[:, 0], xyz[:, 1])
+    h = xyz[:, 2] + body_height
+    a = np.degrees(np.arctan2(xyz[:, 1], xyz[:, 0]))
+    m = (d >= RING_R[0]) & (d < RING_R[1]) & (h >= RING_H[0]) & (h < RING_H[1]) & (np.abs(a) < 135)
+    return np.bincount(np.clip(((a[m] + 135) // 45).astype(int), 0, 5), minlength=6)
+
+
+class SensorWindow:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.state = {"window": "unknown"}
+        self._acc = None
+        self._ring_since = None
+
+    def snapshot(self):
+        """Each source ages on its own clock: a silent topic is reported as null,
+        never as its last value (the ring verdict already goes "unknown" when no
+        clouds arrive)."""
+        now = time.monotonic()
+        with self.lock:
+            s = dict(self.state)
+        t_state, t_avoid = s.pop("t", None), s.pop("t_avoid", None)
+        if t_state is None or now - t_state > LIDAR_FIELD_STALE_S:
+            s.update(error_state=None, cloud_hz=None, packet_loss=None)
+        if t_avoid is None or now - t_avoid > LIDAR_FIELD_STALE_S:
+            s["avoidance"] = None
+        s["age_s"] = None if t_state is None else round(now - t_state, 1)
+        return s
+
+    def _on_cloud(self, m):
+        import numpy as np
+        d = link()
+        if telemetry_posture() != "standing" or d is None or not d.body_height:
+            self._acc = None
+            return
+        off = {f.name: f.offset for f in m.fields}
+        buf = np.frombuffer(bytes(m.data), dtype=np.uint8).reshape(-1, m.point_step)
+        xyz = np.stack([buf[:, off[k]:off[k] + 4].copy().view(np.float32).ravel() for k in "xyz"], 1)
+        c = ring_counts(xyz[np.isfinite(xyz).all(1)], float(d.body_height))
+        self._acc = c if self._acc is None else self._acc + c
+
+    def _evaluate(self, now, t0):
+        counts, self._acc = self._acc, None
+        if counts is None:                       # not standing (or no clouds): no verdict
+            self._ring_since = None
+            with self.lock:
+                self.state.update(window="unknown", ring_sectors=None, ring_hold_s=0.0)
+            return
+        per_s = [int(round(c / max(now - t0, 0.5))) for c in counts]
+        ring = sum(c >= RING_SECTOR_MIN for c in per_s) >= RING_SECTORS_MIN
+        self._ring_since = (self._ring_since or now) if ring else None
+        held = now - self._ring_since if ring else 0.0
+        with self.lock:
+            self.state.update(window="obstructed" if held >= RING_HOLD_S else "clear",
+                              ring_sectors=per_s, ring_hold_s=round(held, 1))
+
+    def run(self):
+        while True:
+            ctx = None
+            try:
+                import rclpy
+                from rclpy.executors import SingleThreadedExecutor
+                from rclpy.qos import qos_profile_sensor_data
+                from sensor_msgs.msg import PointCloud2
+                from std_msgs.msg import String
+                from unitree_go.msg import LidarState
+                ctx = rclpy.Context()
+                rclpy.init(args=None, context=ctx)
+                node = rclpy.create_node("watchdog_sensor_window", context=ctx)
+
+                def on_state(m):
+                    with self.lock:
+                        self.state.update(error_state=int(m.error_state), cloud_hz=round(float(m.cloud_frequency), 1),
+                                          packet_loss=round(float(m.cloud_packet_loss_rate), 3), t=time.monotonic())
+
+                def on_multi(m):
+                    try:
+                        sw = json.loads(m.data).get("obstaclesAvoidSwitch")
+                    except ValueError:
+                        return
+                    with self.lock:
+                        self.state["avoidance"] = bool(sw) if sw is not None else None
+                        self.state["t_avoid"] = time.monotonic()
+                node.create_subscription(PointCloud2, "/utlidar/cloud_base", self._on_cloud, qos_profile_sensor_data)
+                node.create_subscription(LidarState, "/utlidar/lidar_state", on_state, qos_profile_sensor_data)
+                node.create_subscription(String, "/multiplestate", on_multi, 10)
+                t0 = time.monotonic()
+                ex = SingleThreadedExecutor(context=ctx)
+                ex.add_node(node)
+                while rclpy.ok(context=ctx):
+                    ex.spin_once(timeout_sec=0.1)
+                    now = time.monotonic()
+                    if now - t0 >= 1.0:
+                        self._evaluate(now, t0)
+                        t0 = now
+            except Exception as e:                   # noqa: BLE001
+                log("[Lidar] sensor-window monitor stopped: %s - retrying in 10s" % e)
+                with self.lock:
+                    self.state = {"window": "unknown"}
+            finally:
+                try:
+                    if ctx is not None and ctx.ok():
+                        rclpy.shutdown(context=ctx)
+                except Exception:                    # noqa: BLE001
+                    pass
+            time.sleep(10)
+
+
+sensor_window = SensorWindow()
 
 
 # ── Actuation (Azimuth's teleop model) ───────────────────────────────────────
@@ -684,6 +833,88 @@ def status():
     })
 
 
+@app.route("/vitals")
+def vitals():
+    """Everything the dog publishes, for telemetry (schema 1.1 robot section).
+    Public read like /status: no control surface."""
+    d = link()
+    now = time.monotonic()
+    out = {"connected": link_ok(), "posture": telemetry_posture(),
+           "has_video": video_connected and video_fresh(), "transport": "dds"}
+    with act.lock:
+        out["actuator"] = {"moving": act.moving, "stop_confirmed": not act.stop_pending(),
+                           "transition_busy": act.transition_busy}
+    if d is None:
+        return jsonify(out)
+    sport, low, motors = d.sport, d.low, d.motors
+    if sport:
+        imu = sport.get("imu_state") or {}
+        out["sport"] = {k: sport.get(k) for k in ("mode", "gait_type", "progress", "error_code", "body_height",
+                        "foot_raise_height", "position", "velocity", "yaw_speed", "range_obstacle",
+                        "foot_force", "foot_position_body", "foot_speed_body")}
+        out["imu"] = {k: imu.get(k) for k in ("rpy", "quaternion", "gyroscope", "accelerometer", "temperature")}
+        out["sport_age_s"] = round(now - d.last_state, 3) if d.last_state else None
+    if low:
+        out["power"] = {"power_v": low.get("power_v"), "power_a": low.get("power_a"), "bms": low.get("bms_state")}
+        out["board_temps"] = {"ntc1": low.get("temperature_ntc1"), "ntc2": low.get("temperature_ntc2")}
+        out["feet"] = {"force": low.get("foot_force"), "force_est": low.get("foot_force_est")}
+        out["low_age_s"] = round(now - d.low_mono, 3)
+    if motors:
+        temps = [mm["temperature"] for mm in motors]
+        hot = max(motors, key=lambda mm: mm["temperature"])
+        out["motors"] = motors
+        out["motor_summary"] = {"temp_max": max(temps), "temp_avg": round(sum(temps) / len(temps), 1),
+                                "hottest_joint": hot["joint"], "lost_total": sum(mm["lost"] for mm in motors)}
+    out["lidar"] = sensor_window.snapshot()
+    return jsonify(out)
+
+
+JOINTS_HZ = 20.0                  # /joints stream rate (LowState arrives at ~20 Hz on /lf)
+JOINTS_MAX_STREAMS = 2            # the Thor needs one; a cap keeps request threads for commands
+_joint_streams = threading.BoundedSemaphore(JOINTS_MAX_STREAMS)
+
+
+@app.route("/joints")
+def joints():
+    """Server-sent events: 12 joint angles + attitude + body height at JOINTS_HZ,
+    for the dashboard's live 3D mirror. Read-only like /vitals; frames older than
+    the telemetry stale limit are not sent."""
+    if not _joint_streams.acquire(blocking=False):
+        return jsonify({"error": "BUSY", "message": "joint stream limit reached"}), 503
+    state = {"held": True}
+    guard = threading.Lock()
+
+    def release():                                # exactly once, whichever path ends the stream
+        with guard:
+            if state["held"]:
+                state["held"] = False
+                _joint_streams.release()
+
+    def generate():
+        try:
+            last = 0.0
+            while True:
+                time.sleep(1.0 / JOINTS_HZ)
+                d = link()
+                now = time.monotonic()
+                if d is None or d.q is None or d.q_mono == last or now - d.q_mono > TELEMETRY_STALE_S:
+                    yield ": idle\n\n"          # comment line keeps the stream open
+                    continue
+                last = d.q_mono
+                # Attitude and height come from sport state, which can stop on its own:
+                # send them only while fresh, never as stale values on a fresh frame.
+                sport_ok = bool(d.last_state) and now - d.last_state < TELEMETRY_STALE_S
+                imu = ((d.sport or {}).get("imu_state") or {}) if sport_ok else {}
+                frame = {"t": round(time.time(), 3), "q": d.q, "rpy": imu.get("rpy"),
+                         "h": d.body_height if sport_ok else None}
+                yield "data: " + json.dumps(frame, separators=(",", ":")) + "\n\n"
+        finally:
+            release()                             # client gone (GeneratorExit) or error
+    resp = Response(generate(), mimetype="text/event-stream", headers={"Cache-Control": "no-store"})
+    resp.call_on_close(release)                   # also covers a stream that never started
+    return resp
+
+
 @app.route("/battery")
 def battery():
     d = link()
@@ -852,4 +1083,5 @@ if __name__ == "__main__":
     threading.Thread(target=act.supervise, name="deadman", daemon=True).start()
     threading.Thread(target=encoder, name="jpeg-encoder", daemon=True).start()
     threading.Thread(target=start_video, name="video", daemon=True).start()
+    threading.Thread(target=sensor_window.run, name="sensor-window", daemon=True).start()
     app.run(host="0.0.0.0", port=5001, threaded=True, ssl_context=tls)

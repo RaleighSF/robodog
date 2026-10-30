@@ -53,3 +53,10 @@ tls/
 scout-aes.key
 *.aes.key
 azimuth-orin-lockdown/
+
+# Azure secrets (Event Hubs connection strings)
+deploy/azure/secrets/
+*.conn
+
+# dev virtualenvs
+cloud/query_api/.venv/
