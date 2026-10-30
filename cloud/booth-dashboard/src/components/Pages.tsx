@@ -107,7 +107,8 @@ function Silhouette({ posture }: { posture: Posture }) {
 
 function Attitude({ d, stale }: { d: Telemetry; stale: boolean }) {
   const s = d.snapshot!;
-  const roll = stale ? 0 : s.roll ?? 0, pitch = stale ? 0 : s.pitch ?? 0;
+  const attFail = stale || s.roll == null || s.pitch == null;   // unknown attitude is a failure, never 0°
+  const roll = attFail ? 0 : s.roll!, pitch = attFail ? 0 : s.pitch!;
   const deg = (r: number) => (r * 180) / Math.PI;
   const recent = d.postures.slice(-8);
   return (
@@ -125,12 +126,12 @@ function Attitude({ d, stale }: { d: Telemetry; stale: boolean }) {
         <circle cx="80" cy="80" r="70" fill="none" stroke="var(--border-strong)" />
         <path d="M50 80 L70 80 L74 86 M110 80 L90 80 L86 86" stroke="var(--status-warn)" strokeWidth={3} fill="none" />
         <circle cx="80" cy="80" r="2.5" fill="var(--status-warn)" />
-        {stale && <text x="80" y="84" textAnchor="middle" className="svg-invalid">ATT FAIL</text>}
+        {attFail && <text x="80" y="84" textAnchor="middle" className="svg-invalid">ATT FAIL</text>}
       </svg>
       <div className="att-side">
         <div className="ro-grid two">
-          <Readout label="Roll" value={stale ? "--" : f(deg(roll), 1)} unit="°" state={Math.abs(roll) > LIMITS.tiltWarning ? "warning" : undefined} />
-          <Readout label="Pitch" value={stale ? "--" : f(deg(pitch), 1)} unit="°" state={Math.abs(pitch) > LIMITS.tiltWarning ? "warning" : undefined} />
+          <Readout label="Roll" value={attFail ? "--" : f(deg(roll), 1)} unit="°" state={!attFail && Math.abs(roll) > LIMITS.tiltWarning ? "warning" : undefined} />
+          <Readout label="Pitch" value={attFail ? "--" : f(deg(pitch), 1)} unit="°" state={!attFail && Math.abs(pitch) > LIMITS.tiltWarning ? "warning" : undefined} />
           <Readout label="IMU temp" value={stale ? "--" : f(s.imuTemp, 0)} unit=" °C" />
           <Readout label="Posture" value={stale ? "--" : s.posture.toUpperCase()} />
         </div>

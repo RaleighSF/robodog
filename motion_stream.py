@@ -72,7 +72,8 @@ class ManeuverRecognizer:
         # Hello / shake: one front thigh swung well forward, held briefly, while upright.
         # One event per raise: it re-arms only after that paw comes back down.
         for idx, side in ((FR_THIGH, "front right"), (FL_THIGH, "front left")):
-            if q[idx] < HELLO_THIGH_MAX and self.posture in ("standing", "low") and posture_of(h) in ("standing", "low"):
+            upright = self.posture in ("standing", "low") and posture_of(h) in ("standing", "low")
+            if q[idx] < HELLO_THIGH_MAX and upright:
                 self._paw_since[idx] = self._paw_since[idx] or t
                 if not self._paw_fired[idx] and t - self._paw_since[idx] >= HELLO_HOLD_S:
                     m = self._fire("hello", t, paw=side)
@@ -81,7 +82,9 @@ class ManeuverRecognizer:
                         out = out or m
             elif q[idx] >= HELLO_THIGH_MAX:
                 self._paw_since[idx] = None
-                self._paw_fired[idx] = False
+                self._paw_fired[idx] = False         # paw down: re-arm
+            else:
+                self._paw_since[idx] = None          # raised but not upright: the hold restarts; a fired latch stays
         # Posture transitions from body height, debounced.
         p = posture_of(h)
         if p != self._cand:

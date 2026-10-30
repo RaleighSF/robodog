@@ -75,12 +75,14 @@ function systems(s: Snapshot | null, stale: boolean): { name: string; state: St;
   const temps = s.joints.map((j) => j.temp).filter((t): t is number => t != null);
   const tmax = temps.length ? Math.max(...temps) : null;
   const soc = s.battery.soc;
-  const tilt = Math.max(Math.abs(s.roll ?? 0), Math.abs(s.pitch ?? 0));
+  const attKnown = s.roll != null && s.pitch != null;
+  const tilt = attKnown ? Math.max(Math.abs(s.roll!), Math.abs(s.pitch!)) : 0;
   return [
     { name: "Joint motors", state: jointState(tmax), text: tmax == null ? "NO DATA" : `12 · max ${tmax.toFixed(0)} °C` },
     { name: "Battery", state: soc == null ? "unknown" : soc < LIMITS.batteryWarning ? "warning" : soc < LIMITS.batteryCaution ? "caution" : "ok",
       text: soc == null ? "NO DATA" : s.battery.charging ? `charging +${(s.battery.batteryA ?? 0).toFixed(1)} A` : `${soc.toFixed(0)} %`, always: s.battery.charging },
-    { name: "Attitude", state: tilt > LIMITS.tiltWarning ? "warning" : "ok", text: `${s.posture === "low" ? "sitting" : s.posture} · tilt ${(tilt * 57.3).toFixed(0)}°` },
+    { name: "Attitude", state: !attKnown ? "unknown" : tilt > LIMITS.tiltWarning ? "warning" : "ok",
+      text: !attKnown ? "no attitude data" : `${s.posture === "low" ? "sitting" : s.posture} · tilt ${(tilt * 57.3).toFixed(0)}°` },
     { name: "Robot link", state: s.connected ? "ok" : "warning", text: s.connected ? "DDS up" : "down" },
     { name: "Video", state: s.hasVideo ? "ok" : "caution", text: s.hasVideo ? "streaming" : "no video" },
     lidarSystem(s.lidar),
