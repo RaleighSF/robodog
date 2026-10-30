@@ -2,6 +2,13 @@
 telemetry:
   device_type: nvidia_agx_thor          # "Powered by NVIDIA · Jetson AGX Thor"
   device_id: watchdog-thor-01
+  # Ignite: telemetry -> Azure Event Hubs -> ADX (ADR 0001/0003). The send-only
+  # connection string lives in the state volume, never in git.
+  sinks: [azure_eventhub]
+  azure_eventhub:
+    eventhub_name: watchdog-telemetry
+    connection_file: /state/eventhub.conn
+  vitals_interval_seconds: 5
 
 scene_narrator:
   # Elastic-Vision's vLLM serves Cosmos Reason 2 8B on its compose network.

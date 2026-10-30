@@ -50,7 +50,7 @@ export async function readLive(base: string): Promise<Telemetry> {
       velocity: [num(s.VelocityX) ?? 0, num(s.VelocityY) ?? 0], yawSpeed: num(s.YawSpeed),
       gaitType: num(s.GaitType), sportMode: num(s.SportMode), errorCode: num(s.ErrorCode),
       battery: { soc: num(s.BatterySoc), packV: num(s.PackVoltage), packA: num(s.PackCurrentA), cycles: num(s.BmsCycles),
-        cellV: arr(bms.cell_vol).map((mv) => (mv > 100 ? mv / 1000 : mv)), bmsTemps: [...arr(bms.bq_ntc), ...arr(bms.mcu_ntc)],
+        cellV: arr(bms.cell_vol).filter((mv) => mv > 0).map((mv) => (mv > 100 ? mv / 1000 : mv)),   // the BMS reports 15 slots; unused ones read 0 bmsTemps: [...arr(bms.bq_ntc), ...arr(bms.mcu_ntc)],
         boardTemps: [num(s.BoardTempMax)].filter((x): x is number => x != null) },
       imuTemp: num(s.ImuTemp), footForce: arr(s.FootForce), obstacles: arr(s.RangeObstacle), joints,
       edge: { cpu: num(s.EdgeCpuPercent), memAvailGb: num(s.EdgeMemAvailableGb), temp: num(s.EdgeTempMax), fps: num(s.EdgeDetectionFps), videoAgeS: null },

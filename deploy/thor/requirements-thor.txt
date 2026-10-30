@@ -6,6 +6,7 @@ janus==2.0.0
 paramiko==5.0.0
 psutil==7.2.1
 boto3==1.43.100
+azure-eventhub==5.15.1           # Ignite telemetry sink (ADR 0001)
 matplotlib==3.11.2
 pandas==3.0.6
 py-cpuinfo==9.0.0

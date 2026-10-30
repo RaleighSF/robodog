@@ -320,6 +320,8 @@ class EventHubExporter:
             if not conn:
                 raise RuntimeError("no Event Hubs connection string configured")
             from azure.eventhub import EventHubProducerClient
+            # The SDK logs every AMQP state change at INFO; keep the Thor's log readable.
+            logging.getLogger("azure").setLevel(logging.WARNING)
             self._producer = EventHubProducerClient.from_connection_string(
                 conn, eventhub_name=self.eventhub_name)
         return self._producer
