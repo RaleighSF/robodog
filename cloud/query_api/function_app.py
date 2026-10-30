@@ -61,6 +61,24 @@ from ingest_adx import bp as ingest_bp  # noqa: E402
 
 app.register_functions(ingest_bp)       # Event Hubs -> ADX (ADR 0008)
 
+
+# ---------------------------------------------------------------------------
+# Live motion mirror (ADR 0010): hand dashboards a short-lived, receive-only
+# client URL for the real-time channel. No access key exists (local auth is
+# off); the token is minted with this app's managed identity.
+# ---------------------------------------------------------------------------
+from realtime import motion_client_url  # noqa: E402
+
+
+@app.route(route="motion/negotiate", methods=["GET"])
+def motion_negotiate(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        return func.HttpResponse(json.dumps(motion_client_url()), mimetype="application/json",
+                                 headers={"Cache-Control": "no-store"})
+    except Exception:
+        logging.exception("motion negotiate failed")
+        return func.HttpResponse(json.dumps({"error": "live motion unavailable"}), status_code=502, mimetype="application/json")
+
 BRIEF_PROMPT = ("Give the booth's current crew-alerting brief: check overwatch_findings and the latest "
                 "vitals, then state the single most important thing in 1-2 sentences, ending with the "
                 "recommended action if any.")

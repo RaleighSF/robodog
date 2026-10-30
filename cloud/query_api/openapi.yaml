@@ -520,6 +520,59 @@
           }
         ]
       }
+    },
+    "/maneuvers/recent": {
+      "get": {
+        "operationId": "maneuvers_recent",
+        "summary": "Maneuvers_Recent",
+        "parameters": [
+          {
+            "name": "window",
+            "in": "query",
+            "required": false,
+            "description": "Timespan like 15m, 1h, 7d",
+            "schema": {
+              "type": "string",
+              "default": "1h",
+              "pattern": "^[0-9]{1,4}[smhd]$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Rows",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "operation": {
+                      "type": "string"
+                    },
+                    "rows": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid parameter"
+          },
+          "502": {
+            "description": "Query failed"
+          }
+        },
+        "security": [
+          {
+            "apiKey": []
+          }
+        ]
+      }
     }
   },
   "components": {

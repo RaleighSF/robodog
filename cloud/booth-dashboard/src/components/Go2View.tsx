@@ -3,6 +3,7 @@
 // Robotics; notice in public/models/go2/LICENSE.txt). Rig mirrors go2.xml.
 // Legs are posed from the POSTURE CLASS, not raw joint angles, until the
 // LowState joint order is confirmed on the real dog (PRODUCT.md).
+import type { MotionFeed } from "@/lib/motion";
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { Joint, jointState, Leg, Posture } from "@/lib/model";
@@ -50,7 +51,10 @@ async function loadPart(name: string, meta: PartMeta): Promise<THREE.BufferGeome
   return g;
 }
 
-export interface Go2Props { posture: Posture; walking: boolean; joints: Joint[]; roll: number; stale: boolean; orbit: boolean }
+export interface Go2Props { posture: Posture; walking: boolean; joints: Joint[]; roll: number; stale: boolean; orbit: boolean; motion?: MotionFeed }
+
+// Live stream joint order: FR, FL, RR, RL legs x hip/thigh/calf (confirmed on the robot).
+const STREAM_LEG: Record<Leg, number> = { FR: 0, FL: 1, RR: 2, RL: 3 };
 
 export default function Go2View(props: Go2Props) {
   const host = useRef<HTMLDivElement>(null);
@@ -142,13 +146,17 @@ export default function Go2View(props: Go2Props) {
         // 2026-10-30); otherwise the posture pose. Same sign convention as go2.xml.
         const q = (name: string) => p.joints.find((x) => x.name === name)?.q ?? null;
         const liveQ = !p.stale && p.joints.length === 12 && p.joints.every((j) => j.q != null);
+        const mirror = p.motion?.sample() ?? null;          // ~20 Hz live mirror, when streaming
         let hF = 0, hR = 0;
         for (const leg of Object.keys(LEG_DEF) as Leg[]) {
-          const target: [number, number, number] = liveQ ? [q(`${leg}_hip`)!, q(`${leg}_thigh`)!, q(`${leg}_calf`)!] : pose[leg.startsWith("F") ? "front" : "rear"];
+          const si = STREAM_LEG[leg] * 3;
+          const target: [number, number, number] = mirror ? [mirror.q[si], mirror.q[si + 1], mirror.q[si + 2]]
+            : liveQ ? [q(`${leg}_hip`)!, q(`${leg}_thigh`)!, q(`${leg}_calf`)!] : pose[leg.startsWith("F") ? "front" : "rear"];
           const cur = (angles[leg] ??= [...target] as [number, number, number]);
           const phase = leg === "FL" || leg === "RR" ? 0 : Math.PI;
-          const gait = p.walking && !reduced ? [0, 0.22 * Math.sin(t * 9 + phase), -0.32 * Math.max(0, Math.sin(t * 9 + phase))] : [0, 0, 0];
-          for (let k = 0; k < 3; k++) cur[k] += (target[k] + gait[k] - cur[k]) * 0.08;    // ease toward the posture
+          const gait = p.walking && !reduced && !mirror ? [0, 0.22 * Math.sin(t * 9 + phase), -0.32 * Math.max(0, Math.sin(t * 9 + phase))] : [0, 0, 0];
+          const ease = mirror ? 0.45 : 0.08;                // follow the mirror closely; ease into postures
+          for (let k = 0; k < 3; k++) cur[k] += (target[k] + gait[k] - cur[k]) * ease;
           const lg = legs[leg];
           lg.hip.rotation.x = cur[0]; lg.thigh.rotation.y = cur[1]; lg.calf.rotation.y = cur[2];
           const h = L * (Math.cos(cur[1]) + Math.cos(cur[1] + cur[2])) + FOOT_R;      // hip height above the foot
@@ -173,7 +181,7 @@ export default function Go2View(props: Go2Props) {
         }
         base.position.z = (hF + hR) / 2;
         base.rotation.y = -Math.atan2(hF - hR, 2 * HIP_X);
-        base.rotation.x = p.roll;
+        base.rotation.x = mirror?.rpy ? mirror.rpy[0] : p.roll;
         // Dog faces screen-left with its left legs nearest; a gentle sway (not an
         // orbit) keeps every leg inside its dial quadrant.
         const ang = -1.22 + (p.orbit && !reduced ? 0.3 * Math.sin(t * 0.21) : 0);

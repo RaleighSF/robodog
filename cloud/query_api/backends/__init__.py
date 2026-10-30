@@ -18,6 +18,7 @@ OPERATIONS = {
     "motors_latest": ("Motors_Latest", {}),
     "motors_series": ("Motors_Series", {"window": "1h", "bin_size": "1m"}),
     "posture_timeline": ("Posture_Timeline", {"window": "1h"}),
+    "maneuvers_recent": ("Maneuvers_Recent", {"window": "1h"}),
 }
 
 

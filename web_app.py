@@ -1914,6 +1914,12 @@ def _init_telemetry():
     tm.start_heartbeat(_build_heartbeat_event)
     tm.start_vitals(_build_vitals_event, float(telemetry_cfg.get('vitals_interval_seconds', 5)))
     atexit.register(tm.stop)
+    try:
+        import motion_stream
+        web_app._motion = motion_stream.start_from_config(cfg.config.get('motion_stream') or {},
+                                                          telemetry_cfg.get('device_id', ''), tm.emit_maneuver)
+    except Exception as e:
+        logger.warning(f"[Motion] live mirror not started: {e}")
     logger.info("[Telemetry] Initialized and running")
 
 

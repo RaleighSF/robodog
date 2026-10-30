@@ -8,6 +8,7 @@ import { AskOverwatch } from "@/components/Ask";
 import { Annunciator, CasStack, FreshnessLamp, JointDial } from "@/components/Instruments";
 import { PAGES, Page, SynopticPage } from "@/components/Pages";
 import { useBrief } from "@/lib/agent";
+import { MANEUVER_LABEL, useMotion } from "@/lib/motion";
 import { LEGS, LIMITS, Leg } from "@/lib/model";
 import { theme } from "@/lib/theme";
 import { useTelemetry } from "@/lib/useTelemetry";
@@ -38,6 +39,10 @@ const QUADRANT: Record<Leg, string> = { FR: "q-tl", FL: "q-bl", RR: "q-tr", RL: 
 export default function Home() {
   const { data, source, api } = useTelemetry();
   const brief = useBrief(api, source === "live");
+  const motion = useMotion(api, source === "live");
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => { const id = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(id); }, []);
+  const recent = motion.maneuver && now - motion.maneuver.t < 6000 ? motion.maneuver : null;
   const [mode, setMode] = useState<"booth" | "staff">("booth");
   const [page, setPage] = useState<Page>("POWER");
   const [acked, setAcked] = useState<Set<string>>(new Set());
@@ -76,8 +81,15 @@ export default function Home() {
         <div className="stage">
           <AttitudeRing roll={stale ? 0 : s?.roll ?? 0} pitch={stale ? 0 : s?.pitch ?? 0} invalid={stale} />
           <Go2View posture={s?.posture ?? "unknown"} walking={!stale && !!s && Math.hypot(...(s.velocity ?? [0, 0])) > 0.05}
-            joints={s?.joints ?? []} roll={s?.roll ?? 0} stale={stale} orbit={mode === "booth"} />
+            joints={s?.joints ?? []} roll={s?.roll ?? 0} stale={stale} orbit={mode === "booth"} motion={motion.feed} />
         </div>
+        {source === "live" && (
+          <div className={`mirror ${motion.live ? "on" : ""}`} aria-live="polite">
+            <span className="mirror-lamp" aria-hidden="true" />
+            <span className="title">{motion.live ? "Live mirror" : "Mirror · posture only"}</span>
+            {recent && <b className="maneuver" key={recent.t}>{MANEUVER_LABEL[recent.name] ?? recent.name.toUpperCase()}{recent.paw ? <small> · {recent.paw} paw</small> : null}</b>}
+          </div>
+        )}
         {LEGS.map((leg) => (
           <div key={leg} className={`leg ${QUADRANT[leg]}`}>
             <h3 className="title">{LEG_NAME[leg]}</h3>

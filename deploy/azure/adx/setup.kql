@@ -262,6 +262,27 @@
     | extend AgeSeconds = datetime_diff('second', now(), Timestamp)
 }
 
+// ---------------------------------------------------------------------------
+// Schema 1.2: maneuvers recognized on the edge from the live joint stream
+// (motion_stream.py, ADR 0010). Advisory only: they never light a master.
+// ---------------------------------------------------------------------------
+.create-merge table Maneuvers (Timestamp: datetime, DeviceId: string, SessionId: string, Name: string, Detail: dynamic)
+
+.create-or-alter function with (folder="ingest") ExpandManeuvers() {
+    RawEvents
+    | where tostring(Raw.event_type) == "maneuver"
+    | project Timestamp = todatetime(Raw.timestamp), DeviceId = tostring(Raw.device.device_id),
+              SessionId = tostring(Raw.session_id), Name = tostring(Raw.maneuver.name),
+              Detail = bag_remove_keys(Raw.maneuver, dynamic(["name", "t"]))
+}
+
+.alter table Maneuvers policy update @'[{"IsEnabled":true,"Source":"RawEvents","Query":"ExpandManeuvers()","IsTransactional":false}]'
+
+.create-or-alter function with (folder="api", docstring="Maneuvers recognized from the live joint stream (hello, sit, stand_up, lie_down)") Maneuvers_Recent(window: timespan = 1h) {
+    Maneuvers | where Timestamp > ago(window) | order by Timestamp desc | take 50
+    | project Timestamp, DeviceId, Name, Detail
+}
+
 // Overwatch: joint CAUTION band (55 C) mirrored from the dashboard's LIMITS
 // (cloud/booth-dashboard/src/lib/model.ts). Thresholds are placeholders.
 .create-or-alter function with (folder="api", docstring="Health checks the overwatch agent alerts on") Overwatch_Findings() {
@@ -287,5 +308,9 @@
       (Motors | where Timestamp > ago(5m) and Lost > 0 | summarize n = max(Lost) by DeviceId, Joint
               | project DeviceId, Severity = "low", Finding = strcat(Joint, " motor lost ", n, " frames")),
       (Alerts | where Timestamp > ago(15m) and AlertType has "ppe" | summarize n = count() by DeviceId
-              | project DeviceId, Severity = "medium", Finding = strcat(n, " PPE violation alerts in 15 min"))
+              | project DeviceId, Severity = "medium", Finding = strcat(n, " PPE violation alerts in 15 min")),
+      (Maneuvers | where Timestamp > ago(2m) | summarize arg_max(Timestamp, *) by DeviceId
+              | project DeviceId, Severity = "low",
+                        Finding = strcat("Maneuver: ", replace_string(Name, "_", " "),
+                                         iff(isnotempty(tostring(Detail.paw)), strcat(" (", tostring(Detail.paw), " paw)"), "")))
 }

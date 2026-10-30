@@ -62,7 +62,7 @@ if CONTROL_TOKEN and (not CONTROL_TOKEN.isascii() or any(c.isspace() for c in CO
     _TOKEN_REJECTED = True
 else:
     _TOKEN_REJECTED = False
-OPEN_ENDPOINTS = {"status", "battery", "video_feed", "vitals"}   # read-only
+OPEN_ENDPOINTS = {"status", "battery", "video_feed", "vitals", "joints"}   # read-only
 AES_KEY = (os.environ.get("GO2_AES_KEY") or "").strip() or None
 JPEG_QUALITY = int(os.environ.get("GO2_JPEG_QUALITY", "80"))
 JPEG_PARAMS = [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY]
@@ -162,6 +162,8 @@ class RobotLink:
         self.motors = None
         self.low_mono = 0.0
         self._next_decode = 0.0
+        self.q = None                         # 12 joint angles from every LowState (for /joints)
+        self.q_mono = 0.0
         self.core = DDSCore("watchdog_go2_service").start()
         try:
             self.core.subscribe(TOPICS["LOW_STATE"], self._on_low, raw=True)
@@ -182,6 +184,8 @@ class RobotLink:
         b = m.bms_state
         self.battery = {"soc": int(b.soc), "voltage": float(m.power_v), "current": int(b.current)}
         now = payload["_recvMono"]
+        self.q = [round(float(m.motor_state[i].q), 4) for i in range(12)]
+        self.q_mono = now
         if now >= self._next_decode:          # full decode is throttled
             self._next_decode = now + 1.0 / VITALS_DECODE_HZ
             self.low = low_state_dict(m)
@@ -853,6 +857,29 @@ def vitals():
                                 "hottest_joint": hot["joint"], "lost_total": sum(mm["lost"] for mm in motors)}
     out["lidar"] = sensor_window.snapshot()
     return jsonify(out)
+
+
+JOINTS_HZ = 20.0                  # /joints stream rate (LowState arrives at ~20 Hz on /lf)
+
+
+@app.route("/joints")
+def joints():
+    """Server-sent events: 12 joint angles + attitude + body height at JOINTS_HZ,
+    for the dashboard's live 3D mirror. Read-only like /vitals; frames older than
+    the telemetry stale limit are not sent."""
+    def generate():
+        last = 0.0
+        while True:
+            time.sleep(1.0 / JOINTS_HZ)
+            d = link()
+            if d is None or d.q is None or d.q_mono == last or time.monotonic() - d.q_mono > TELEMETRY_STALE_S:
+                yield ": idle\n\n"              # comment line keeps the stream open
+                continue
+            last = d.q_mono
+            imu = (d.sport or {}).get("imu_state") or {}
+            frame = {"t": round(time.time(), 3), "q": d.q, "rpy": imu.get("rpy"), "h": d.body_height}
+            yield "data: " + json.dumps(frame, separators=(",", ":")) + "\n\n"
+    return Response(generate(), mimetype="text/event-stream", headers={"Cache-Control": "no-store"})
 
 
 @app.route("/battery")

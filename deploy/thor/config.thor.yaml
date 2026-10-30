@@ -10,6 +10,15 @@ telemetry:
     connection_file: /state/eventhub.conn
   vitals_interval_seconds: 5
 
+# Live 3D mirror + maneuver recognition (ADR 0010). The Thor holds only a
+# send-to-group token for hub `motion`, in the state volume, never in git.
+motion_stream:
+  enabled: true
+  pubsub_host: wd-motion-28628191.webpubsub.azure.com
+  hub: motion
+  group: motion
+  token_file: /state/motion.token
+
 scene_narrator:
   # Elastic-Vision's vLLM serves Cosmos Reason 2 8B on its compose network.
   backend: openai

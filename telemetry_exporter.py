@@ -28,7 +28,7 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = "1.1.0"   # 1.1: vitals events, robot posture/joints, edge health (additive)
+SCHEMA_VERSION = "1.2.0"   # 1.1: vitals, posture/joints, edge health; 1.2: maneuver events (additive)
 
 
 # ---------------------------------------------------------------------------
@@ -133,12 +133,13 @@ class TelemetryEvent:
     system_health: SystemHealth = field(default_factory=SystemHealth)
     robot_vitals: Optional[Dict[str, Any]] = None   # 1.1: full /vitals superset (joints, IMU, BMS, feet...)
     edge: Optional[Dict[str, Any]] = None           # 1.1: edge compute health (CPU, memory, temperatures)
+    maneuver: Optional[Dict[str, Any]] = None       # 1.2: recognized maneuver (name, t, detail)
 
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
         if d.get("vision") is None:
             del d["vision"]
-        for k in ("robot_vitals", "edge"):
+        for k in ("robot_vitals", "edge", "maneuver"):
             if d.get(k) is None:
                 del d[k]
         if d.get("robot", {}).get("last_command") is None:
@@ -639,6 +640,15 @@ class TelemetryManager:
         })
         event.robot_vitals = vitals
         event.edge = edge
+        self._enqueue(event)
+
+    def emit_maneuver(self, maneuver: Dict):
+        """Emit a 1.2 `maneuver` event (hello, sit, stand_up, lie_down) recognized
+        from the live joint stream (motion_stream.py)."""
+        if not self.enabled:
+            return
+        event = self._base_event("maneuver")
+        event.maneuver = maneuver
         self._enqueue(event)
 
     def start_vitals(self, collector_fn, interval_s: float):
