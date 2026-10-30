@@ -29,5 +29,12 @@ The cloud is a build-time theme plus an API base URL. Joint-to-leg mapping must 
 confirmed on hardware before live posing.
 
 ## AWS parity
+**Open (raised 2026-10-30 by the DESIGN.md documenter):** AWS orange (#FF9F1C, #FF9900) is
+nearly the same as caution amber (#FFB224). Under `THEME=aws`, advisory tags and the selected
+page key would read as cautions, which breaks the fixed status meanings. Before re:Invent,
+choose one of these and record it in a new ADR:
+- use AWS's secondary palette for the accent and keep orange for brand marks only;
+- or move caution to a distinguishable hue in both themes.
+
 The same app is built with `THEME=aws` (AWS orange accent; brand marks swapped) and the
 AWS query API URL. It is hosted on AWS Amplify Hosting or S3 + CloudFront.

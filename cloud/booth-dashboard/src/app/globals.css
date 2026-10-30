@@ -359,3 +359,6 @@ body {
 .keys { gap: calc(var(--u) * 0.25); }
 .keys button { padding: calc(var(--u) * 0.32) calc(var(--u) * 0.9); }
 @media (max-width: 900px) { .cockpit, .cockpit.staff { grid-template-rows: none; } }
+/* EICAS invalid data: every unavailable value is amber dashes, not neutral text. */
+.ro-v.invalid, .pin-posture b:only-child, .budget-head .num { font-variant-numeric: tabular-nums; }
+.ro-v.invalid { color: var(--status-warn); }

@@ -35,7 +35,7 @@ export function JointDial({ joint, stale, size = 100 }: { joint: Joint; stale: b
         {/* torque: inner arc, proportion of 20 Nm */}
         <path d={arc(c, c, r - 9, START, START + SWEEP)} stroke="var(--border-subtle)" strokeWidth={3} fill="none" />
         {valid && tq > 0.01 && <path d={arc(c, c, r - 9, START, START + tq * SWEEP)} stroke="var(--text-secondary)" strokeWidth={3} fill="none" style={{ transition: "d 400ms var(--ease-out)" }} />}
-        {valid && (() => { const [x, y] = polar(c, c, r - 2, toDeg(joint.temp!)); return <line x1={c} y1={c} x2={x} y2={y} stroke={STATUS_VAR[st]} strokeWidth={st === "ok" ? 2.5 : 3.5} strokeLinecap="round" style={{ transition: "all 600ms var(--ease-out)" }} />; })()}
+        {valid && (() => { const [x, y] = polar(c, c, r - 2, toDeg(joint.temp!)); return <line x1={c} y1={c} x2={x} y2={y} stroke={STATUS_VAR[st]} strokeWidth={st === "ok" ? 2.5 : 3.5} strokeLinecap="round" />; })()}
         <circle cx={c} cy={c} r={3.2} fill="var(--surface-3)" stroke="var(--border-strong)" />
       </svg>
       <div className={`readout num ${valid ? st : "invalid"}`}>{valid ? joint.temp!.toFixed(0) : "--"}<span>°C</span></div>

@@ -100,7 +100,7 @@ export default function Home() {
         <form className="ask panel" onSubmit={(e) => e.preventDefault()}>
           <label htmlFor="ask" className="title">Ask overwatch</label>
           <input id="ask" placeholder="e.g. Which joint is running hottest, and why?" disabled aria-describedby="ask-note" />
-          <span id="ask-note" className="muted">The agent is not connected yet. It arrives with the Azure AI Foundry deployment.</span>
+          <span id="ask-note" className="muted">The agent is not connected yet. It arrives with the {theme.agentHost} deployment.</span>
         </form>
       )}
       <footer className="legal">Go2 model: MuJoCo Menagerie, BSD-3-Clause, © Unitree Robotics. Read-only view; this screen cannot command the robot.</footer>

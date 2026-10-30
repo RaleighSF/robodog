@@ -12,7 +12,7 @@ function Readout({ label, value, unit, state }: { label: string; value: string; 
   return (
     <div className="ro">
       <span className="title">{label}</span>
-      <span className={`num ro-v ${state ?? ""}`}>{value}{unit && value !== "--" && <small>{unit}</small>}</span>
+      <span className={`num ro-v ${value === "--" ? "invalid" : state ?? ""}`}>{value}{unit && value !== "--" && <small>{unit}</small>}</span>
     </div>
   );
 }
