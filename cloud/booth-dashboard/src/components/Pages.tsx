@@ -113,7 +113,7 @@ function Attitude({ d, stale }: { d: Telemetry; stale: boolean }) {
   const recent = d.postures.slice(-8);
   return (
     <div className="pg pg-att">
-      <svg viewBox="0 0 160 160" className="adi" role="img" aria-label={`Attitude: roll ${deg(roll).toFixed(1)} degrees, pitch ${deg(pitch).toFixed(1)} degrees`}>
+      <svg viewBox="0 0 160 160" className="adi" role="img" aria-label={attFail ? "Attitude unavailable" : `Attitude: roll ${deg(roll).toFixed(1)} degrees, pitch ${deg(pitch).toFixed(1)} degrees`}>
         <defs><clipPath id="adi-clip"><circle cx="80" cy="80" r="70" /></clipPath></defs>
         <g clipPath="url(#adi-clip)">
           <g transform={`rotate(${-deg(roll)} 80 80) translate(0 ${deg(pitch) * 2})`} style={{ transition: "transform 500ms var(--ease-out)" }}>
