@@ -536,6 +536,7 @@ class TelemetryManager:
         self._heartbeat_thread: Optional[threading.Thread] = None
         self._vitals_thread: Optional[threading.Thread] = None
         self._closed = False                       # set at shutdown: no event is accepted after the final flush
+        self._stopped = False                      # stop() has run: a later start() is a restart
         self._events_rejected = 0
 
         # Counters
@@ -609,7 +610,7 @@ class TelemetryManager:
             return
         # Producers share one stop event: clearing it while a producer from the
         # previous run survives its shutdown join would revive that producer.
-        alive = self._alive_producers()
+        alive = self._alive_producers() if self._stopped else []   # collectors started before the first start() are fine
         if alive:
             logger.error(f"[Telemetry] not restarting: previous producers still running ({', '.join(alive)})")
             return
@@ -632,6 +633,7 @@ class TelemetryManager:
         logger.info(f"[Telemetry] Heartbeat started — interval={self.heartbeat_interval}s")
 
     def stop(self):
+        self._stopped = True
         self._stop_event.set()
         # Producers first (a flush or collection in progress may still hand over
         # events), then close the buffer, then the final flush, then let every
