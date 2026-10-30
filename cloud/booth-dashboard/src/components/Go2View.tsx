@@ -91,8 +91,9 @@ export default function Go2View(props: Go2Props) {
     const world = new THREE.Group(); world.rotation.x = -Math.PI / 2; scene.add(world);
     const base = new THREE.Group(); world.add(base);
     const mat = (c: number, metal = 0.35, rough = 0.55) => new THREE.MeshStandardMaterial({ color: c, metalness: metal, roughness: rough });
-    const legs: Record<string, { hip: THREE.Group; thigh: THREE.Group; calf: THREE.Group; foot: THREE.Mesh; housings: Record<string, THREE.MeshStandardMaterial>; markers: Record<string, THREE.Mesh> }> = {};
-    const markerMat: Record<string, THREE.MeshBasicMaterial> = {};
+    const legs: Record<string, { hip: THREE.Group; thigh: THREE.Group; calf: THREE.Group; foot: THREE.Mesh; housings: Record<string, THREE.MeshStandardMaterial>; markers: Record<string, THREE.Group> }> = {};
+    const markerMat: Record<string, { solid: THREE.MeshBasicMaterial; ghost: THREE.MeshBasicMaterial }> = {};
+    const tags: Record<string, HTMLDivElement> = {};
 
     let disposed = false;
     let raf = 0;
@@ -118,12 +119,31 @@ export default function Go2View(props: Go2Props) {
         calf.add(new THREE.Mesh(geo[d.mirror ? "calf_mirror_0" : "calf_0"], housings.calf));
         calf.add(new THREE.Mesh(geo[d.mirror ? "calf_mirror_1" : "calf_1"], mat(COLORS.black)));
         const foot = new THREE.Mesh(geo.foot, mat(COLORS.black)); foot.position.set(0, 0, -L); calf.add(foot);
-        // Severity markers (size ramp, not colour alone) at each joint centre.
-        const markers: Record<string, THREE.Mesh> = {};
+        // Severity reticles (size ramp, not colour alone) on each joint, drawn
+        // twice: solid where the joint is visible, faint "ghost" where the body
+        // hides it, so a far-side joint never reads as the near one. Flagged
+        // joints also get a name tag (below).
+        const markers: Record<string, THREE.Group> = {};
         for (const [seg, parent, z] of [["hip", hip, 0], ["thigh", thigh, 0], ["calf", calf, 0]] as const) {
-          const mm = (markerMat[`${leg}_${seg}`] = new THREE.MeshBasicMaterial({ color: STATUS.ok, transparent: true, opacity: 0, depthTest: false }));
-          const mk = new THREE.Mesh(new THREE.RingGeometry(0.03, 0.036, 48), mm);
-          mk.position.set(0, seg === "thigh" ? d.thighY * 0.35 : 0, z); mk.renderOrder = 10;
+          const solid = new THREE.MeshBasicMaterial({ color: STATUS.ok, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide });
+          const ghost = new THREE.MeshBasicMaterial({ color: STATUS.ok, transparent: true, opacity: 0, depthWrite: false, depthTest: false, side: THREE.DoubleSide });
+          markerMat[`${leg}_${seg}`] = { solid, ghost };
+          const mk = new THREE.Group();
+          for (const mm of [ghost, solid]) {
+            mk.add(new THREE.Mesh(new THREE.RingGeometry(0.015, 0.0185, 40), mm));
+            for (let i = 0; i < 4; i++) {                     // crosshair ticks outside the ring
+              const tick = new THREE.Mesh(new THREE.PlaneGeometry(0.011, 0.0032), mm);
+              const a = (i * Math.PI) / 2;
+              tick.position.set(Math.cos(a) * 0.026, Math.sin(a) * 0.026, 0); tick.rotation.z = a;
+              mk.add(tick);
+            }
+            mk.add(new THREE.Mesh(new THREE.CircleGeometry(0.0035, 16), mm));  // centre dot
+          }
+          const tag = document.createElement("div");
+          tag.className = "joint-tag"; tag.hidden = true; el.appendChild(tag);
+          tags[`${leg}_${seg}`] = tag;
+          mk.userData.base = new THREE.Vector3(0, seg === "thigh" ? d.thighY * 0.35 : 0, z);
+          mk.renderOrder = 10;
           parent.add(mk); markers[seg] = mk;
         }
         legs[leg] = { hip, thigh, calf, foot, housings, markers };
@@ -131,6 +151,7 @@ export default function Go2View(props: Go2Props) {
       const angles: Record<string, [number, number, number]> = {};
       const att = { r: 0, p: 0 };
       const footPos = new THREE.Vector3();
+      const camLocal = new THREE.Vector3();
       const start = performance.now();
       const resize = () => {
         const w = el.clientWidth, h = el.clientHeight;
@@ -168,12 +189,23 @@ export default function Go2View(props: Go2Props) {
             col.copy(baseCol[seg]);
             if (st === "caution" || st === "warning") col.lerp(new THREE.Color(STATUS[st]), st === "warning" ? 0.75 : 0.55);
             const mk = lg.markers[seg];
-            (mk.material as THREE.MeshBasicMaterial).color.setHex(STATUS[st]);
-            (mk.material as THREE.MeshBasicMaterial).opacity = st === "caution" || st === "warning" ? 0.95 : 0;
-            const scale = st === "warning" ? 2.2 + (reduced ? 0 : 0.25 * Math.sin(t * 6)) : st === "caution" ? 1.5 : 1;
+            const flagged = st === "caution" || st === "warning";
+            const mm = markerMat[`${leg}_${seg}`];
+            mm.solid.color.setHex(STATUS[st]); mm.ghost.color.setHex(STATUS[st]);
+            mm.solid.opacity = flagged ? 0.95 : 0; mm.ghost.opacity = flagged ? 0.3 : 0;
+            const tag = tags[`${leg}_${seg}`];
+            tag.hidden = !flagged;
+            if (flagged) {
+              const text = `${leg} ${seg} ${j?.temp != null ? Math.round(j.temp) : "--"}°`;
+              if (tag.textContent !== text) tag.textContent = text;
+              tag.dataset.sev = st;
+            }
+            const scale = st === "warning" ? 1.6 + (reduced ? 0 : 0.2 * Math.sin(t * 6)) : 1.2;
             mk.scale.setScalar(scale);
-            mk.quaternion.copy(camera.quaternion);                                  // billboard
             mk.parent?.updateMatrixWorld();
+            mk.parent?.worldToLocal(camLocal.copy(camera.position));
+            mk.position.copy(mk.userData.base).addScaledVector(camLocal.sub(mk.userData.base).normalize(), 0.075);
+            mk.quaternion.copy(camera.quaternion);                                  // billboard
             const parentQ = new THREE.Quaternion(); mk.parent?.getWorldQuaternion(parentQ);
             mk.quaternion.premultiply(parentQ.invert());
           }
@@ -195,6 +227,14 @@ export default function Go2View(props: Go2Props) {
         const ang = -1.22 + (p.orbit && !reduced ? 0.3 * Math.sin(t * 0.21) : 0);
         camera.position.set(Math.cos(ang) * 1.6, 0.66, Math.sin(ang) * 1.6);   // framed for the centre gap between dial quadrants
         camera.lookAt(0, base.position.z * 0.55 + 0.06, 0);
+        // Name tags follow their flagged joint on screen.
+        camera.updateMatrixWorld();
+        for (const leg of Object.keys(legs)) for (const seg of ["hip", "thigh", "calf"] as const) {
+          const tag = tags[`${leg}_${seg}`];
+          if (tag.hidden) continue;
+          legs[leg].markers[seg].getWorldPosition(camLocal).project(camera);
+          tag.style.transform = `translate(${((camLocal.x + 1) / 2) * el.clientWidth}px, ${((1 - camLocal.y) / 2) * el.clientHeight}px)`;
+        }
         renderer.render(scene, camera);
         raf = requestAnimationFrame(loop);
       };
@@ -205,8 +245,9 @@ export default function Go2View(props: Go2Props) {
       disposed = true; cancelAnimationFrame(raf);
       (el as HTMLDivElement & { _ro?: ResizeObserver })._ro?.disconnect();
       renderer.dispose(); el.removeChild(renderer.domElement);
+      Object.values(tags).forEach((t) => t.remove());
     };
   }, []);
 
-  return <div ref={host} style={{ position: "absolute", inset: 0 }} />;
+  return <div ref={host} style={{ position: "absolute", inset: 0, overflow: "hidden" }} />;
 }

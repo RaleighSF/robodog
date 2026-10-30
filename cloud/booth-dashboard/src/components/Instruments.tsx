@@ -68,7 +68,6 @@ export function Annunciator({ kind, lit, onAck }: { kind: "warning" | "caution";
 }
 
 const SEV_LABEL = { warning: "WARNING", caution: "CAUTION", advisory: "ADVISORY" } as const;
-function hhmmss(t: number) { return new Date(t).toLocaleTimeString([], { hour12: false }); }
 
 type St = "ok" | "caution" | "warning" | "unknown";
 function systems(s: Snapshot | null, stale: boolean): { name: string; state: St; text: string }[] {
@@ -119,37 +118,48 @@ export function RuntimeBudget({ soc, series, posture, stale }: { soc: number | n
   );
 }
 
-export function CasStack({ findings, stale, snapshot, socSeries, brief }: { findings: Finding[]; stale: boolean; snapshot: Snapshot | null; socSeries: SeriesPoint[]; brief?: Brief | null }) {
+const SEV_ORDER = { warning: 0, caution: 1, advisory: 2 } as const;
+
+/** Right column, EICAS order: one agent line, terse messages by severity, then
+ *  system lamps. Values show only when a system is off-nominal, or in the
+ *  staff view (detail), so nothing on the booth screen repeats a dial. */
+export function CasStack({ findings, stale, snapshot, socSeries, brief, detail = false }: {
+  findings: Finding[]; stale: boolean; snapshot: Snapshot | null; socSeries: SeriesPoint[]; brief?: Brief | null; detail?: boolean;
+}) {
+  // Level floor: the booth screen shows warnings and cautions only; staff also see advisories.
+  const shown = detail ? findings : findings.filter((f) => f.severity !== "advisory");
+  const sorted = [...shown].sort((a, b) => SEV_ORDER[a.severity] - SEV_ORDER[b.severity] || b.t - a.t);
+  const tally = (["warning", "caution", "advisory"] as const).map((k) => [k, shown.filter((f) => f.severity === k).length] as const).filter(([, n]) => n > 0);
+  const briefAge = brief ? Math.max(0, Math.round((Date.now() - brief.at) / 1000)) : 0;
   return (
     <section className="cas panel" aria-label="Agent overwatch crew-alerting messages">
-      <header className="cas-head"><h2 className="title">Overwatch · crew alerting</h2><span className="cas-count num">{findings.length}</span></header>
-      {stale && <p className="cas-stale">Telemetry is stale. Findings below are not current.</p>}
+      <header className="cas-head">
+        <h2 className="title">Overwatch</h2>
+        <span className="cas-tally">{tally.length ? tally.map(([k, n]) => <span key={k} className={`tally ${k}`}><b className="num">{n}</b> {SEV_LABEL[k].toLowerCase()}</span>) : <span className="tally ok">all clear</span>}</span>
+      </header>
+      {stale && <p className="cas-stale">Telemetry is stale. Messages below are not current.</p>}
       {brief && (
-        <div className="cas-agent" aria-live="polite">
-          <div className="cas-meta"><span className="sev agent">Agent brief</span><span className="cas-metric">{theme.agentHost}</span><time className="num">{hhmmss(brief.at)}</time></div>
-          <p>{brief.text}</p>
-        </div>
+        <figure className="cas-agent" aria-live="polite">
+          <blockquote>{brief.text}</blockquote>
+          <figcaption>Agent · {theme.agentHost} · <span className="num">{briefAge < 90 ? `${briefAge} s` : `${Math.round(briefAge / 60)} min`} ago</span></figcaption>
+        </figure>
       )}
       <ol className="cas-list">
-        {findings.length === 0 && <li className="cas-empty">No findings. All monitored systems inside limits.</li>}
-        {findings.map((f) => (
+        {sorted.length === 0 && <li className="cas-empty">All monitored systems inside limits.</li>}
+        {sorted.map((f) => (
           <li key={f.id} className={`cas-msg ${f.severity}`}>
-            <div className="cas-meta">
-              <span className={`sev ${f.severity}`}>{SEV_LABEL[f.severity]}</span>
-              <span className="num cas-metric">{f.metric}</span>
-              <time className="num">{hhmmss(f.t)}</time>
-            </div>
+            <span className={`sev ${f.severity}`}>{SEV_LABEL[f.severity]}</span>
             <p>{f.text}</p>
           </li>
         ))}
       </ol>
       <div className="status">
-        <h3 className="title">Status · monitored systems</h3>
+        <h3 className="title">Systems</h3>
         <ul>
           {systems(snapshot, stale).map((x) => (
             <li key={x.name} className={x.state}>
               <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d={SHAPE[x.state]} fill={x.state === "warning" || x.state === "unknown" ? "none" : "currentColor"} stroke="currentColor" strokeWidth={2} /></svg>
-              <span>{x.name}</span><span className="num">{x.text}</span>
+              <span>{x.name}</span>{(detail || x.state !== "ok") && <span className="num">{x.text}</span>}
             </li>
           ))}
         </ul>

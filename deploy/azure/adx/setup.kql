@@ -285,32 +285,37 @@
 
 // Overwatch: joint CAUTION band (55 C) mirrored from the dashboard's LIMITS
 // (cloud/booth-dashboard/src/lib/model.ts). Thresholds are placeholders.
-.create-or-alter function with (folder="api", docstring="Health checks the overwatch agent alerts on") Overwatch_Findings() {
+.create-or-alter function with (folder="api", docstring="Health checks the overwatch agent alerts on. Terse EICAS-style lines; the agent adds the explanation.") Overwatch_Findings() {
     let v = Vitals_Latest();
-    let hotJoints = Motors_Latest() | where Temperature >= 55;
+    // Hot joints carry their own history: change over the last 10 min and time spent at or above 55 C.
+    let hist = Motors | where Timestamp > ago(2h) | project DeviceId, Joint, Timestamp, Temperature;
+    let lastCool = hist | where Temperature < 55 | summarize LastCool = max(Timestamp) by DeviceId, Joint;
+    let since = hist | where Temperature >= 55 | join kind=leftouter lastCool on DeviceId, Joint
+        | where isnull(LastCool) or Timestamp > LastCool | summarize Since = min(Timestamp) by DeviceId, Joint;
+    let ref = hist | where Timestamp > ago(10m) | summarize arg_min(Timestamp, Temperature) by DeviceId, Joint
+        | project DeviceId, Joint, RefT = Timestamp, T0 = Temperature;
+    let hotJoints = Motors_Latest() | where Temperature >= 55
+        | join kind=leftouter ref on DeviceId, Joint | join kind=leftouter since on DeviceId, Joint
+        | extend D = Temperature - T0, WinMin = toint(round(datetime_diff('second', Timestamp, RefT) / 60.0)),
+                 InBandMin = toint(datetime_diff('minute', now(), Since))
+        | extend Trend = iff(isnull(D) or WinMin < 1, "", iff(abs(D) < 1, " · steady",
+                             strcat(" · ", iff(D > 0, "+", "−"), toint(round(abs(D))), "° in ", WinMin, " min"))),
+                 Held = iff(isnull(InBandMin), "", strcat(" · ", InBandMin, " min ", iff(Temperature >= 70, "over limit", "in caution")));
     union
       (v | where AgeSeconds > 120 | project DeviceId, Severity = "high", Finding = strcat("No telemetry for ", AgeSeconds, " s")),
-      (v | where BatterySoc < 20 | project DeviceId, Severity = iff(BatterySoc < 10, "high", "medium"), Finding = strcat("Battery at ", BatterySoc, "%")),
+      (v | where BatterySoc < 20 | project DeviceId, Severity = iff(BatterySoc < 10, "high", "medium"), Finding = strcat("Battery ", toint(BatterySoc), " %")),
       (hotJoints | project DeviceId, Severity = iff(Temperature >= 70, "high", "medium"),
-                   Finding = iff(Temperature >= 70, strcat(Joint, " at ", Temperature, " C - over the 70 C limit; sit or lie the dog down now"),
-                                                  strcat(Joint, " at ", Temperature, " C - in the caution band; watch it or sit the dog"))),
+                   Finding = strcat(replace_string(Joint, "_", " "), " ", toint(Temperature), " °C", Trend, Held)),
       (v | where Connected == false | project DeviceId, Severity = "high", Finding = "Robot link down"),
       (v | where isnotnull(ErrorCode) and ErrorCode != 0 and ErrorCode !in (100, 1001, 1002)   // posture states, not faults (dashboard STATE_CODES)
-         | project DeviceId, Severity = "medium", Finding = strcat("Robot error code ", ErrorCode)),
-      (v | where abs(Roll) > 0.6 or abs(Pitch) > 0.6 | project DeviceId, Severity = "high", Finding = "Body tilted - possible fall"),
-      (v | where EdgeTempMax > 85 | project DeviceId, Severity = "medium", Finding = strcat("Edge compute at ", EdgeTempMax, " C")),
+         | project DeviceId, Severity = "medium", Finding = strcat("Error code ", ErrorCode)),
+      (v | where abs(Roll) > 0.6 or abs(Pitch) > 0.6 | project DeviceId, Severity = "high", Finding = "Body tilt · possible fall"),
+      (v | where EdgeTempMax > 85 | project DeviceId, Severity = "medium", Finding = strcat("Thor ", toint(EdgeTempMax), " °C")),
       (v | where LidarWindow == "obstructed" and AgeSeconds <= 120
-         | project DeviceId, Severity = "medium", Finding = iff(ObstacleAvoidance == true,
-             "Head lidar sees returns close on every side: sensor window dirty, or the dog is boxed in. Obstacle avoidance will block walking - wipe the head sensor or clear the space.",
-             "Head lidar sees returns close on every side: sensor window dirty, or the dog is boxed in. Wipe the head sensor before turning obstacle avoidance on.")),
+         | project DeviceId, Severity = "medium", Finding = "Lidar window obstructed"),
       (v | where (LidarErrorState > 0 or LidarHz < 10) and AgeSeconds <= 120
-         | project DeviceId, Severity = "medium", Finding = strcat("Head lidar degraded (error ", LidarErrorState, ", ", LidarHz, " Hz)")),
-      (Motors | where Timestamp > ago(5m) and Lost > 0 | summarize n = max(Lost) by DeviceId, Joint
-              | project DeviceId, Severity = "low", Finding = strcat(Joint, " motor lost ", n, " frames")),
+         | project DeviceId, Severity = "medium", Finding = strcat("Lidar degraded · ", LidarHz, " Hz")),
+      // Motor "lost" frames are not alerted: the counter is undocumented and not actionable (LINK page shows it).
       (Alerts | where Timestamp > ago(15m) and AlertType has "ppe" | summarize n = count() by DeviceId
-              | project DeviceId, Severity = "medium", Finding = strcat(n, " PPE violation alerts in 15 min")),
-      (Maneuvers | where Timestamp > ago(2m) | summarize arg_max(Timestamp, *) by DeviceId
-              | project DeviceId, Severity = "low",
-                        Finding = strcat("Maneuver: ", replace_string(Name, "_", " "),
-                                         iff(isnotempty(tostring(Detail.paw)), strcat(" (", tostring(Detail.paw), " paw)"), "")))
+              | project DeviceId, Severity = "medium", Finding = strcat(n, " PPE alerts · 15 min"))
 }

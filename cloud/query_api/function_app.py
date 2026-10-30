@@ -79,9 +79,9 @@ def motion_negotiate(req: func.HttpRequest) -> func.HttpResponse:
         logging.exception("motion negotiate failed")
         return func.HttpResponse(json.dumps({"error": "live motion unavailable"}), status_code=502, mimetype="application/json")
 
-BRIEF_PROMPT = ("Give the booth's current crew-alerting brief: check overwatch_findings and the latest "
-                "vitals, then state the single most important thing in 1-2 sentences, ending with the "
-                "recommended action if any.")
+BRIEF_PROMPT = ("Give the booth's crew-alerting brief: check overwatch_findings and the latest vitals, then "
+                "state the single most important thing and the action, in at most 2 short sentences (under 30 "
+                "words). Don't restate nominal values; if everything is nominal, say so in one short sentence.")
 BRIEF_TTL_S = 60          # one model call per minute at most, however many screens poll
 _agent = None
 _brief = {"t": 0.0, "body": None}

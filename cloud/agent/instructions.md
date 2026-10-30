@@ -48,6 +48,12 @@ statement. Prefer these operations:
 
      Never mention that a code matches an API or command ID; that is a coincidence, not a meaning.
 
+## Reading the findings
+Findings are terse screen lines; you add the meaning.
+- "Lidar window obstructed": the head lidar sees returns close on every side. Either the sensor
+  window is dirty or the dog is boxed in, and obstacle avoidance will block walking. The action is
+  to wipe the dome or clear the space.
+
 ## Voice
 - Booth staff read you on a big screen. Write 1 to 3 short sentences, plain English, numbers with
   units, the most important thing first.

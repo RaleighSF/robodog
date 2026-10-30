@@ -98,7 +98,7 @@ export default function Home() {
         ))}
       </section>
 
-      <CasStack findings={data.findings} stale={stale} snapshot={s ?? null} socSeries={data.series.soc} brief={brief} />
+      <CasStack findings={data.findings} stale={stale} snapshot={s ?? null} socSeries={data.series.soc} brief={brief} detail={mode === "staff"} />
 
       <section className="synoptic panel" aria-label={`Synoptic page ${page}`}>
         <nav className="keys" aria-label="Synoptic pages">

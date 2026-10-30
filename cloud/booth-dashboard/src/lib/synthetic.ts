@@ -106,28 +106,24 @@ export class SyntheticSource {
       if (j.temp >= LIMITS.jointWarning) {
         live.add(j.name);
         this.upsert(`joint:${j.name}`, "warning", now, `${j.name} ${j.temp.toFixed(0)} °C`,
-          `${label(j)} motor reached ${j.temp.toFixed(0)}\u00a0°C, over the ${LIMITS.jointWarning}\u00a0°C limit. Sit or lie the dog down now.`, j.name);
+          `${label(j)} ${j.temp.toFixed(0)}\u00a0°C · over limit`, j.name);
       } else if (j.temp >= LIMITS.jointCaution) {
         live.add(j.name);
-        const eta = rate > 0.2 ? Math.max(1, Math.round((LIMITS.jointWarning - j.temp) / rate)) : null;
-        const toLimit = eta != null ? ` It reaches ${LIMITS.jointWarning}\u00a0°C in about ${eta}\u00a0min at this rate.` : "";
         this.upsert(`joint:${j.name}`, "caution", now, `${j.name} ${j.temp.toFixed(0)}\u00a0°C ${rate >= 0 ? "+" : ""}${rate.toFixed(1)}\u00a0°C/min`,
-          `${label(j)} motor is at ${j.temp.toFixed(0)}\u00a0°C and ${rate > 0.2 ? "climbing" : "steady"} while ${snap.posture}.${toLimit} Sit the dog to cool it.`, j.name);
+          `${label(j)} ${j.temp.toFixed(0)}\u00a0°C${rate > 0.2 ? ` · rising ${rate.toFixed(1)}\u00a0°C/min` : ""}`, j.name);
       }
     }
     // A joint that cooled back below caution clears its message (EICAS: messages leave when the condition clears).
     for (const key of [...this.findings.keys()]) if (key.startsWith("joint:") && !live.has(key.slice(6))) this.findings.delete(key);
 
+    // Battery only speaks when low; the runtime budget always shows it.
     const soc = snap.battery.soc ?? 0;
-    const drainPerMin = this.series.soc.length > 30 ? (this.series.soc[this.series.soc.length - 31].v - soc) / ((snap.t - this.series.soc[this.series.soc.length - 31].t) / 60000) : 0;
-    const mins = drainPerMin > 0.01 ? Math.round((soc - 10) / drainPerMin) : null;
-    this.upsert("battery", soc < LIMITS.batteryWarning ? "warning" : soc < LIMITS.batteryCaution ? "caution" : "advisory", now,
-      `SOC ${soc.toFixed(0)}\u00a0%`, mins != null ? `Battery ${soc.toFixed(0)}\u00a0%, about ${mins}\u00a0min of demo left at the current draw.` : `Battery ${soc.toFixed(0)}\u00a0%, draw is light while ${snap.posture}.`);
+    if (soc < LIMITS.batteryCaution) this.upsert("battery", soc < LIMITS.batteryWarning ? "warning" : "caution", now, `SOC ${soc.toFixed(0)}\u00a0%`, `Battery ${soc.toFixed(0)}\u00a0%`);
+    else this.findings.delete("battery");
 
     const pc = this.postures[this.postures.length - 1];
     if (pc && now - pc.t < 20000) {
-      const why = pc.posture === "standing" ? "Joint load is up; I am watching the calves." : pc.posture === "low" ? "Sitting takes the load off the rear calves so they can cool." : "Lying down, every motor is unloaded and cooling.";
-      this.upsert("posture", "advisory", pc.t, `POSTURE ${pc.posture.toUpperCase()}`, `Dog is now ${pc.posture === "low" ? "sitting" : pc.posture}. ${why}`);
+      this.upsert("posture", "advisory", pc.t, `POSTURE ${pc.posture.toUpperCase()}`, `Now ${pc.posture === "low" ? "sitting" : pc.posture}`);
     } else this.findings.delete("posture");
   }
 
