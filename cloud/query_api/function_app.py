@@ -9,7 +9,10 @@ import azure.functions as func
 
 from backends import OPERATIONS, get_backend
 
-app = func.FunctionApp(http_auth_level=func.AuthLevel.FUNCTION)
+# Keyless (ANONYMOUS) on purpose: every route is a read-only GET over robot
+# telemetry, and the caller is a public booth web page that cannot hold a
+# secret. Browsers are limited by CORS to the dashboard's origin (ADR 0007).
+app = func.FunctionApp(http_auth_level=func.AuthLevel.ANONYMOUS)
 _backend = None
 
 
