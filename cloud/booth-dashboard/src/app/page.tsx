@@ -81,7 +81,7 @@ export default function Home() {
         <div className="stage">
           <AttitudeRing roll={stale ? 0 : s?.roll ?? 0} pitch={stale ? 0 : s?.pitch ?? 0} invalid={stale} />
           <Go2View posture={s?.posture ?? "unknown"} walking={!stale && !!s && Math.hypot(...(s.velocity ?? [0, 0])) > 0.05}
-            joints={s?.joints ?? []} roll={s?.roll ?? 0} stale={stale} orbit={mode === "booth"} motion={motion.feed} />
+            joints={s?.joints ?? []} roll={s?.roll ?? 0} pitch={s?.pitch ?? 0} stale={stale} orbit={mode === "booth"} motion={motion.feed} />
         </div>
         {source === "live" && (
           <div className={`mirror ${motion.live ? "on" : ""}`} aria-live="polite">

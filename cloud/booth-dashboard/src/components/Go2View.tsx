@@ -51,7 +51,7 @@ async function loadPart(name: string, meta: PartMeta): Promise<THREE.BufferGeome
   return g;
 }
 
-export interface Go2Props { posture: Posture; walking: boolean; joints: Joint[]; roll: number; stale: boolean; orbit: boolean; motion?: MotionFeed }
+export interface Go2Props { posture: Posture; walking: boolean; joints: Joint[]; roll: number; pitch: number; stale: boolean; orbit: boolean; motion?: MotionFeed }
 
 // Live stream joint order: FR, FL, RR, RL legs x hip/thigh/calf (confirmed on the robot).
 const STREAM_LEG: Record<Leg, number> = { FR: 0, FL: 1, RR: 2, RL: 3 };
@@ -91,7 +91,7 @@ export default function Go2View(props: Go2Props) {
     const world = new THREE.Group(); world.rotation.x = -Math.PI / 2; scene.add(world);
     const base = new THREE.Group(); world.add(base);
     const mat = (c: number, metal = 0.35, rough = 0.55) => new THREE.MeshStandardMaterial({ color: c, metalness: metal, roughness: rough });
-    const legs: Record<string, { hip: THREE.Group; thigh: THREE.Group; calf: THREE.Group; housings: Record<string, THREE.MeshStandardMaterial>; markers: Record<string, THREE.Mesh> }> = {};
+    const legs: Record<string, { hip: THREE.Group; thigh: THREE.Group; calf: THREE.Group; foot: THREE.Mesh; housings: Record<string, THREE.MeshStandardMaterial>; markers: Record<string, THREE.Mesh> }> = {};
     const markerMat: Record<string, THREE.MeshBasicMaterial> = {};
 
     let disposed = false;
@@ -126,9 +126,11 @@ export default function Go2View(props: Go2Props) {
           mk.position.set(0, seg === "thigh" ? d.thighY * 0.35 : 0, z); mk.renderOrder = 10;
           parent.add(mk); markers[seg] = mk;
         }
-        legs[leg] = { hip, thigh, calf, housings, markers };
+        legs[leg] = { hip, thigh, calf, foot, housings, markers };
       }
       const angles: Record<string, [number, number, number]> = {};
+      const att = { r: 0, p: 0 };
+      const footPos = new THREE.Vector3();
       const start = performance.now();
       const resize = () => {
         const w = el.clientWidth, h = el.clientHeight;
@@ -147,7 +149,6 @@ export default function Go2View(props: Go2Props) {
         const q = (name: string) => p.joints.find((x) => x.name === name)?.q ?? null;
         const liveQ = !p.stale && p.joints.length === 12 && p.joints.every((j) => j.q != null);
         const mirror = p.motion?.sample() ?? null;          // ~20 Hz live mirror, when streaming
-        let hF = 0, hR = 0;
         for (const leg of Object.keys(LEG_DEF) as Leg[]) {
           const si = STREAM_LEG[leg] * 3;
           const target: [number, number, number] = mirror ? [mirror.q[si], mirror.q[si + 1], mirror.q[si + 2]]
@@ -159,8 +160,6 @@ export default function Go2View(props: Go2Props) {
           for (let k = 0; k < 3; k++) cur[k] += (target[k] + gait[k] - cur[k]) * ease;
           const lg = legs[leg];
           lg.hip.rotation.x = cur[0]; lg.thigh.rotation.y = cur[1]; lg.calf.rotation.y = cur[2];
-          const h = L * (Math.cos(cur[1]) + Math.cos(cur[1] + cur[2])) + FOOT_R;      // hip height above the foot
-          if (leg.startsWith("F")) hF += h / 2; else hR += h / 2;
           // Joint health: housing tint + severity marker ramp.
           for (const seg of ["hip", "thigh", "calf"] as const) {
             const j = p.joints.find((x) => x.name === `${leg}_${seg}`);
@@ -179,9 +178,18 @@ export default function Go2View(props: Go2Props) {
             mk.quaternion.premultiply(parentQ.invert());
           }
         }
-        base.position.z = (hF + hR) / 2;
-        base.rotation.y = -Math.atan2(hF - hR, 2 * HIP_X);
-        base.rotation.x = mirror?.rpy ? mirror.rpy[0] : p.roll;
+        // Attitude from the IMU (live mirror when streaming, else vitals), then
+        // lower the body until the lowest foot meets the floor (forward
+        // kinematics), so a raised paw can never tip the body.
+        const k = mirror ? 0.45 : 0.08;
+        att.r += ((mirror?.rpy ? mirror.rpy[0] : p.roll) - att.r) * k;
+        att.p += ((mirror?.rpy ? mirror.rpy[1] : p.pitch) - att.p) * k;
+        base.rotation.set(att.r, att.p, 0, "ZYX");
+        base.position.z = 0;
+        world.updateMatrixWorld(true);
+        let lowest = Infinity;
+        for (const lg of Object.values(legs)) lowest = Math.min(lowest, world.worldToLocal(lg.foot.getWorldPosition(footPos)).z);
+        base.position.z = FOOT_R - lowest;
         // Dog faces screen-left with its left legs nearest; a gentle sway (not an
         // orbit) keeps every leg inside its dial quadrant.
         const ang = -1.22 + (p.orbit && !reduced ? 0.3 * Math.sin(t * 0.21) : 0);

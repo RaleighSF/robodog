@@ -63,7 +63,7 @@ export const LIMITS = {
   tiltWarning: 0.6,                            // rad (~34 deg)
   edgeCaution: 85,                             // degC
   cellImbalanceMv: 50,                         // mV spread before a cell is flagged (placeholder)
-  staleS: 15,                                  // telemetry older than this is shown invalid
+  staleS: 25,   // telemetry older than this is shown invalid (sample 5 s + flush 2 s + ingest p90 ~10 s + poll 2.5 s)
 };
 
 export const DIAL = { min: 20, max: 90 };      // joint temperature dial span, degC

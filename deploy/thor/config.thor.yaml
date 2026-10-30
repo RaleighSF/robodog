@@ -9,6 +9,7 @@ telemetry:
     eventhub_name: watchdog-telemetry
     connection_file: /state/eventhub.conn
   vitals_interval_seconds: 5
+  flush_interval_seconds: 2             # live dashboards: the 10 s default was most of the lag
 
 # Live 3D mirror + maneuver recognition (ADR 0010). The Thor holds only a
 # send-to-group token for hub `motion`, in the state volume, never in git.
