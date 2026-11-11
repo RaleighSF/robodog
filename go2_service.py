@@ -100,6 +100,8 @@ STANDING_MIN_M = 0.27         # measured on Scout (1.1.15): standing 0.31-0.33, 
 LYING_MAX_M = 0.15
 VIDEO_STALE_S = 2.0
 VIDEO_RECONNECT_S = 10.0
+VIDEO_CALL_TIMEOUT_S = 20.0      # longest a WebRTC connect or disconnect may take before it is abandoned
+VIDEO_RETRY_BASE_S = 5.0         # wait before a video reconnect; grows per failed attempt, capped at 30 s
 LIMITS = TELEOP_LIMITS                          # Azimuth's envelope (go2dds.motion)
 # Speed floors (MIN_VX_FWD 0.22, MIN_VYAW 0.45) and rest thresholds (SETTLE_V/W)
 # come from go2dds.motion, measured by Azimuth on this robot.
@@ -767,6 +769,22 @@ def video_fresh():
         return latest_jpeg is not None and time.monotonic() - last_frame_mono < VIDEO_STALE_S
 
 
+async def bounded(coro, timeout, what):
+    """Await a WebRTC library call for at most `timeout` seconds.
+
+    The library's connect() and aiortc's close() (inside disconnect()) have no timeouts and can wait forever. On
+    2026-11-11 pc.close() never returned after the first reconnect at dog power-on, so the video loop never
+    retried and the camera stayed dark until the service was restarted by hand. A call that overruns is cancelled
+    and abandoned, never awaited again, so a call that also ignores cancellation cannot stall the loop."""
+    task = asyncio.ensure_future(coro)
+    done, _ = await asyncio.wait({task}, timeout=timeout)
+    if not done:
+        task.cancel()
+        task.add_done_callback(lambda t: t.cancelled() or t.exception())   # retrieve the outcome: no log noise
+        raise TimeoutError("%s did not finish in %.0fs" % (what, timeout))
+    return task.result()
+
+
 async def video_loop():
     global video_connected, latest_jpeg
     from unitree_webrtc_connect.webrtc_driver import UnitreeWebRTCConnection, WebRTCConnectionMethod
@@ -779,7 +797,7 @@ async def video_loop():
             if AES_KEY:
                 kw["aes_128_key"] = AES_KEY
             conn = UnitreeWebRTCConnection(WebRTCConnectionMethod.LocalSTA, **kw)
-            await conn.connect()
+            await bounded(conn.connect(), VIDEO_CALL_TIMEOUT_S, "WebRTC connect")
             conn.video.switchVideoChannel(True)
             conn.video.add_track_callback(on_track)
             video_connected = True
@@ -798,13 +816,13 @@ async def video_loop():
             video_connected = False
             with frame_lock:
                 latest_jpeg = None                        # never serve a frozen picture
-            wait = min(5 * max(attempt, 1), 30)
-            log("[Video] %s — retry in %ss" % (e, wait))
+            wait = min(VIDEO_RETRY_BASE_S * max(attempt, 1), 30)
+            log("[Video] %s — retry in %.0fs" % (e, wait))
             try:
                 if conn is not None:
-                    await conn.disconnect()
-            except Exception:                             # noqa: BLE001
-                pass
+                    await bounded(conn.disconnect(), VIDEO_CALL_TIMEOUT_S, "WebRTC disconnect")
+            except Exception as e2:                       # noqa: BLE001
+                log("[Video] %s — abandoning the old connection" % e2)
             await asyncio.sleep(wait)
 
 
