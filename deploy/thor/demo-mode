@@ -27,6 +27,7 @@ LOCK_FILE="$STATE_DIR/lock"
 VLLM_CONTAINER="compose-vllm-1"
 VLLM_MODEL="nvidia/cosmos-reason2-8b"
 VLLM_TIMEOUT="${VLLM_TIMEOUT:-900}"     # cold 8B load can take many minutes
+VLLM_FIRST_TIMEOUT="${VLLM_FIRST_TIMEOUT:-480}"   # first wait; still not serving by then = stuck, restart it once
 
 # Every docker call has an outer timeout: a stalled daemon RPC must fail the
 # switch, not hang it past its deadline.
@@ -86,11 +87,12 @@ ids = [m['id'] for m in json.load(urllib.request.urlopen('http://localhost:8000/
 sys.exit(0 if '$VLLM_MODEL' in ids else 1)" >/dev/null 2>&1
 }
 
-wait_vllm() {
-    local start=$SECONDS next_note=$(( SECONDS + 60 ))
+VLLM_WHY=""
+wait_vllm() {  # timeout-seconds; returns 1 with the reason in $VLLM_WHY when it does not serve
+    local limit=${1:-$VLLM_TIMEOUT} start=$SECONDS next_note=$(( SECONDS + 60 ))
     until vllm_ready; do
-        running "$VLLM_CONTAINER" || die "Cosmos vLLM container exited (docker logs $VLLM_CONTAINER)"
-        (( SECONDS - start >= VLLM_TIMEOUT )) && die "Cosmos vLLM not serving $VLLM_MODEL after ${VLLM_TIMEOUT}s"
+        running "$VLLM_CONTAINER" || { VLLM_WHY="Cosmos vLLM container exited (docker logs $VLLM_CONTAINER)"; return 1; }
+        (( SECONDS - start >= limit )) && { VLLM_WHY="Cosmos vLLM not serving $VLLM_MODEL after ${limit}s"; return 1; }
         if (( SECONDS >= next_note )); then
             say "waiting for Cosmos to load... $(( SECONDS - start ))s"; next_note=$(( SECONDS + 60 ))
         fi
@@ -108,7 +110,14 @@ ensure_vllm() {
         say "starting Cosmos vLLM (the 8B model takes a few minutes to load)"
         timeout 60 docker start "$VLLM_CONTAINER" >/dev/null || die "could not start $VLLM_CONTAINER"
     fi
-    wait_vllm
+    wait_vllm "$VLLM_FIRST_TIMEOUT" && return 0
+    # A container that runs but never serves does not recover by waiting. On
+    # 2026-11-11, after 21 days of uptime, the GPU driver reported out of
+    # memory during the KV-cache allocation and the engine spun forever; a
+    # stop and start released the memory and it served in about 90 s.
+    say "$VLLM_WHY; restarting it once"
+    timeout 150 docker restart -t 30 "$VLLM_CONTAINER" >/dev/null || die "could not restart $VLLM_CONTAINER"
+    wait_vllm "$VLLM_TIMEOUT" || die "$VLLM_WHY (after one restart)"
 }
 
 stop_watchdog() {
