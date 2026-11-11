@@ -224,6 +224,28 @@ def set_active_profile_id(pid):
     return pid
 
 
+def set_show_cloud(pid):
+    """The operator's show switch (Settings): 'azure' or 'aws' locks that skin,
+    which also picks the cloud path; 'default' unlocks and goes back to the NTT
+    DATA look, which sends to both clouds. Saved to config.yaml ui.lock_profile,
+    so it survives restarts. Raises ValueError or OSError."""
+    if not isinstance(pid, str) or pid not in PROFILES:
+        raise ValueError('unknown profile: %r' % (pid,))
+    import yaml
+    from config import get_config
+    cfg = get_config()
+    lock = '' if pid == 'default' else pid
+    cfg.config.setdefault('ui', {})['lock_profile'] = lock
+    cfg.save_config()
+    with open(cfg.config_path) as f:   # save_config logs failures instead of raising
+        saved = ((yaml.safe_load(f) or {}).get('ui') or {}).get('lock_profile', '')
+    if (saved or '') != lock:
+        raise OSError('could not save %s' % cfg.config_path)
+    if pid == 'default':
+        set_active_profile_id('default')
+    return pid
+
+
 def nvidia_badge():
     """Badge settings: shown on situational-awareness surfaces by default."""
     ui = _ui_config()
