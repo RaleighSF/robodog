@@ -291,7 +291,7 @@ def init_app(app, render_login):
         SESSION_COOKIE_NAME="watchdog_session",
         PERMANENT_SESSION_LIFETIME=timedelta(days=SESSION_DAYS),
     )
-    open_endpoints = {"login", "logout", "healthz", "static"}
+    open_endpoints = {"login", "logout", "healthz", "static", "theme_css"}
 
     def _supervisor(on_loopback):
         """On-box supervisor: a token that is only honoured on loopback."""

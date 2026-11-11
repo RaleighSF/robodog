@@ -470,6 +470,14 @@ def index():
                            nvidia=ui_profiles.nvidia_badge())
 
 
+@app.route('/static/themes/themes.css')
+def theme_css():
+    """The skin stylesheet, filtered to the locked skin (ui_profiles.theme_css).
+    Takes precedence over the static route for this one path."""
+    import ui_profiles
+    return Response(ui_profiles.theme_css(), mimetype='text/css', headers={'Cache-Control': 'no-cache'})
+
+
 @app.route('/api/ui/profile', methods=['GET'])
 def get_ui_profile():
     import ui_profiles

@@ -9,7 +9,9 @@ first-boot default.
 """
 
 import json
+import logging
 import os
+import re
 import threading
 
 _STATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ui_state.json')
@@ -79,14 +81,66 @@ def asset_exists(url):
     return path.startswith(_STATIC_ROOT + os.sep) and os.path.isfile(path)
 
 
+def theme_css():
+    """themes.css as served. A locked event build drops every other vendor's
+    rules and all comments (they name each vendor), so the stylesheet gives
+    no hint that another skin exists. Unlocked, the file is served as is."""
+    with open(os.path.join(_STATIC_ROOT, 'themes', 'themes.css'), encoding='utf-8') as f:
+        css = f.read()
+    locked = locked_profile_id()
+    if not locked:
+        return css
+    try:
+        return _drop_themes(re.sub(r'/\*.*?\*/', '', css, flags=re.S), [p for p in PROFILES if p != locked])
+    except IndexError:                  # unbalanced braces: still paint the skin
+        logging.getLogger(__name__).warning('themes.css: could not filter to %s; serving it whole', locked)
+        return css
+
+
+def _split_selectors(prelude):
+    """Split a selector list on top-level commas (not those inside :is(...))."""
+    parts, depth, start = [], 0, 0
+    for i, ch in enumerate(prelude):
+        depth += {'(': 1, ')': -1}.get(ch, 0)
+        if ch == ',' and depth == 0:
+            parts.append(prelude[start:i])
+            start = i + 1
+    return parts + [prelude[start:]]
+
+
+def _drop_themes(css, others):
+    """Remove the selectors that target `others` themes; a rule left with no
+    selector goes, and an @-block left empty goes with it."""
+    out, i = [], 0
+    while True:
+        j = css.find('{', i)
+        if j < 0:
+            out.append(css[i:])
+            return ''.join(out)
+        depth, k = 1, j + 1
+        while depth:
+            depth += {'{': 1, '}': -1}.get(css[k], 0)
+            k += 1
+        prelude, body = css[i:j], css[j + 1:k - 1]
+        if prelude.strip().startswith('@'):
+            inner = _drop_themes(body, others)
+            if inner.strip():
+                out.append('%s{%s}' % (prelude, inner))
+        else:
+            keep = [s for s in _split_selectors(prelude)
+                    if not any('data-theme="%s"' % o in s for o in others)]
+            if keep:
+                out.append('%s{%s}' % (','.join(keep), body))
+        i = k
+
+
 def theme_css_version():
-    """Content hash of themes.css so kiosks never keep a stale stylesheet.
-    Hashed per page load (the file is ~20 KB) so no metadata cache can go
-    stale; any read failure degrades to an unversioned URL, never a 500."""
+    """Content hash of the served themes.css so kiosks never keep a stale
+    stylesheet, and a lock change busts the cache. Hashed per page load (the
+    file is ~20 KB); any read failure degrades to an unversioned URL, never a 500."""
     import hashlib
     try:
-        with open(os.path.join(_STATIC_ROOT, 'themes', 'themes.css'), 'rb') as f:
-            return hashlib.sha1(f.read()).hexdigest()[:10]
+        return hashlib.sha1(theme_css().encode('utf-8')).hexdigest()[:10]
     except OSError:
         return '0'
 
