@@ -1341,6 +1341,17 @@ def set_scene_mode():
     if mode not in ('casual', 'gesture'):
         return jsonify({'success': False, 'message': f'Invalid mode: {mode}'}), 400
     global _gesture_enabled, _gesture_lease_until
+    # A page's periodic renewal extends a live arm but never re-arms: once any
+    # dashboard picks Observe (or the lease lapses), renewals from other open
+    # pages are told the current mode and follow it.
+    if data.get('renew') and mode == 'gesture':
+        _gesture_lease_check()
+        if not _gesture_enabled:
+            return jsonify({'success': True, 'mode': narrator.mode, 'renewed': False,
+                            'lease_seconds': _GESTURE_LEASE_S})
+        _gesture_lease_until = time.time() + _GESTURE_LEASE_S
+        return jsonify({'success': True, 'mode': narrator.mode, 'renewed': True,
+                        'lease_seconds': _GESTURE_LEASE_S})
     narrator.set_mode(mode)
     # The Gesture tab is the on/off control: 'gesture' arms (and each renewal
     # from a visible tab extends the lease), any other mode disarms. Firing a
