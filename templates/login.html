@@ -89,10 +89,13 @@
     <link rel="stylesheet" href="/static/themes/themes.css?v={{ theme_css_version }}">
     <style>
         /* The vendor themes restyle dashboard components; mirror their fills here. */
+        {% if profile.id == 'aws' %}
         html[data-theme="aws"] button { border-radius: 20px; }
+        html[data-theme="aws"] .card { border-radius: 16px; }
+        {% elif profile.id == 'azure' %}
         html[data-theme="azure"] button, html[data-theme="azure"] input[type=password] { border-radius: 4px; }
         html[data-theme="azure"] .card { border-radius: 8px; }
-        html[data-theme="aws"] .card { border-radius: 16px; }
+        {% endif %}
     </style>
 </head>
 <body>

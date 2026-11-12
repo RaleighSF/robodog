@@ -1936,19 +1936,15 @@
             <div class="config-modal-body">
                 <div id="configStatusMessage" style="display: none;"></div>
 
-                {% if not profile_locked %}
                 <div class="config-section profile-picker">
                     <div class="config-field" style="margin-bottom: 0;">
-                        <label class="config-label" for="profileSelect">Demo profile</label>
+                        <label class="config-label" for="profileSelect">Show</label>
                         <select id="profileSelect" class="config-input">
-                            {% for p in profiles.values() %}
-                            <option value="{{ p.id }}"{% if p.id == profile.id %} selected{% endif %}>{{ p.label }}</option>
-                            {% endfor %}
+                            <option value="{{ profile.id }}" selected>{{ profile.label }}</option>
                         </select>
-                        <div class="config-help-text">Repaints the dashboard with the event's brand. Applies instantly and is remembered on this edge device.</div>
+                        <div class="config-help-text">Sets the dashboard skin and the cloud that telemetry and the live twin go to. A show cloud hides every trace of the other one. Saved on this edge device and kept across restarts.</div>
                     </div>
                 </div>
-                {% endif %}
                 <form method="post" action="/logout" class="signout-row">
                     <span class="config-help-text" style="margin:0;">Signed in as operator on this browser.</span>
                     <button type="submit" class="config-button config-button-secondary">Sign out</button>
@@ -4279,70 +4275,46 @@
     })();
 </script>
 <script>
-    /* Demo profiles: live-repaint the dashboard, then persist on the edge. */
+    /* Show switch: the choices load only when Settings opens (operator-only API),
+       so the page source never names another cloud. A change saves on the edge,
+       then reloads so the skin, stylesheet and header links all follow. */
     (function () {
-        const PROFILES = {{ profiles|tojson }};
         const select = document.getElementById('profileSelect');
-        if (!select) return;
+        const modal = document.getElementById('configModal');
+        if (!select || !modal) return;
+        let committed = select.value, loaded = false;
 
-        function apply(p) {
-            document.documentElement.dataset.theme = p.id;
-            document.title = p.title;
-            const font = document.getElementById('themeFont');
-            if (p.font_href) {
-                if (font.getAttribute('href') !== p.font_href) font.setAttribute('href', p.font_href);
-                font.disabled = false;
-            } else {
-                font.disabled = true;
-            }
-            // Approved artwork when present on the edge, else a text reference.
-            // The skin also picks the cloud path: show where it can be watched live.
-            const links = document.getElementById('cloudLinks');
-            links.replaceChildren(...(p.cloud_links || []).map(l => {
-                const a = document.createElement('a');
-                a.className = 'cloud-link'; a.href = l.url; a.target = '_blank'; a.rel = 'noopener';
-                a.title = 'This skin streams telemetry and the live twin to ' + l.label.slice(8);
-                a.textContent = l.label + ' \u2197';
-                return a;
-            }));
-            const section = document.getElementById('partnerSection');
-            section.hidden = !p.partner && !(p.cloud_links || []).length;
-            const brand = [document.getElementById('partnerLabel'), document.getElementById('partnerLogo'), document.getElementById('partnerWordmark')];
-            if (!p.partner) { brand.forEach(el => { el.hidden = true; }); return; }
-            document.getElementById('partnerLabel').hidden = false;
-            const logo = document.getElementById('partnerLogo');
-            logo.hidden = !p.partner.has_logo;
-            logo.src = p.partner.has_logo ? p.partner.logo : '';
-            logo.alt = p.partner.alt;
-            logo.classList.toggle('is-tile', !!p.partner.tile);
-            document.getElementById('partnerLabel').textContent = p.partner.label;
-            const word = document.getElementById('partnerWordmark');
-            word.textContent = p.partner.wordmark || '';
-            word.hidden = !!p.partner.has_logo || !p.partner.wordmark;
+        function load() {
+            if (loaded) return;
+            fetch('/api/ui/show-cloud')
+                .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+                .then(d => {
+                    select.replaceChildren(...d.options.map(o => new Option(o.label, o.id, false, o.id === d.active)));
+                    committed = d.active; loaded = true;
+                })
+                .catch(err => showConfigMessage('Could not load the show list: ' + err.message, 'error'));
         }
+        new MutationObserver(() => { if (modal.classList.contains('show')) load(); })
+            .observe(modal, {attributes: true, attributeFilter: ['class']});
 
-        let committed = select.value;
         select.addEventListener('change', function () {
-            const next = PROFILES[select.value];
-            if (!next) return;
-            apply(next);
+            const next = select.value;
             select.disabled = true;
-            fetch('/api/ui/profile', {
+            fetch('/api/ui/show-cloud', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({profile: next.id})
+                body: JSON.stringify({profile: next})
             })
-                .then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+                .then(r => r.ok ? r.json() : r.json().then(d => Promise.reject(new Error(d.error || 'HTTP ' + r.status))))
                 .then(() => {
-                    committed = next.id;
-                    showConfigMessage(next.label + ' profile applied', 'success');
+                    showConfigMessage('Show switched; reloading', 'success');
+                    location.replace(location.pathname);
                 })
                 .catch(err => {
-                    apply(PROFILES[committed]);
                     select.value = committed;
-                    showConfigMessage('Could not save profile: ' + err.message, 'error');
-                })
-                .finally(() => { select.disabled = false; });
+                    select.disabled = false;
+                    showConfigMessage('Could not switch the show: ' + err.message, 'error');
+                });
         });
     })();
 </script>

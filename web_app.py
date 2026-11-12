@@ -464,10 +464,41 @@ def index():
     profile = ui_profiles.resolve(request.args.get('profile'))
     return render_template('index.html',
                            profile=profile,
-                           profiles=ui_profiles.all_profiles(),
-                           profile_locked=bool(ui_profiles.locked_profile_id()),
                            theme_css_version=ui_profiles.theme_css_version(),
                            nvidia=ui_profiles.nvidia_badge())
+
+
+@app.route('/api/ui/show-cloud', methods=['GET'])
+def get_show_cloud():
+    """Choices for the Settings show switch. Operator-only, and fetched only
+    when Settings opens, so the page itself never names another cloud."""
+    import ui_profiles
+    return jsonify({
+        'active': ui_profiles.get_active_profile_id(),
+        'options': [{'id': p['id'], 'label': p['label']} for p in ui_profiles.PROFILES.values()],
+    })
+
+
+@app.route('/api/ui/show-cloud', methods=['POST'])
+def set_show_cloud():
+    import ui_profiles
+    body = request.get_json(silent=True)
+    pid = body.get('profile') if isinstance(body, dict) else None
+    try:
+        ui_profiles.set_show_cloud(pid)
+    except ValueError:
+        return jsonify({'success': False, 'error': 'unknown profile'}), 400
+    except OSError as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+    return jsonify({'success': True, 'active': ui_profiles.get_active_profile_id()})
+
+
+@app.route('/static/themes/themes.css')
+def theme_css():
+    """The skin stylesheet, filtered to the locked skin (ui_profiles.theme_css).
+    Takes precedence over the static route for this one path."""
+    import ui_profiles
+    return Response(ui_profiles.theme_css(), mimetype='text/css', headers={'Cache-Control': 'no-cache'})
 
 
 @app.route('/api/ui/profile', methods=['GET'])
