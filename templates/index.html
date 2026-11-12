@@ -90,7 +90,9 @@
         .nav-container {
             width: 100%;
             display: grid;
-            grid-template-columns: minmax(200px, 1fr) auto minmax(200px, 1fr);
+            /* Sides size to their content and the controls centre in what is
+               left, so the partner block can never slide under the controls. */
+            grid-template-columns: auto minmax(0, 1fr) auto;
             align-items: center;
             padding: 10px 24px;
             gap: 16px;
@@ -1568,6 +1570,21 @@
             transform: scale(1.1);
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
             border-color: var(--brand-fg);
+        }
+
+        /* Header: drop secondary labels before anything can collide, then
+           move the controls to their own row. */
+        @media (max-width: 1600px) {
+            .mode-label { display: none; }
+        }
+        @media (max-width: 1360px) {
+            .partner-section .partner-label { display: none; }
+            .nav-container { gap: 12px; padding: 10px 16px; }
+            .header-controls { gap: 10px; }
+        }
+        @media (max-width: 1280px) and (min-width: 769px) {
+            .nav-container { grid-template-columns: auto 1fr; }
+            .nav-controls { grid-column: 1 / -1; grid-row: 2; }
         }
 
         @media (max-width: 1200px) {
@@ -4026,10 +4043,15 @@
             // The Gesture/Observe selector is the switch. While Gesture is selected
             // this page renews the server-side arm (also from a background window);
             // leaving or closing the page disarms it (see pagehide below).
+            // A renewal only extends an arm that is still live: if another
+            // dashboard chose Observe, this page follows it instead of
+            // switching every open dashboard back to Gesture.
             if (currentMode === 'gesture') {
                 fetch('/api/scene/mode', {
                     method: 'POST', headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({mode: 'gesture'})
+                    body: JSON.stringify({mode: 'gesture', renew: true})
+                }).then(r => r.json()).then(d => {
+                    if (d && d.success && d.mode !== currentMode) setModeUI(d.mode);
                 }).catch(function() {});
             }
             // Mode + pause status
