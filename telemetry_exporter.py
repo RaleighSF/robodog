@@ -320,11 +320,14 @@ class EventHubExporter:
             conn = self._conn_str()
             if not conn:
                 raise RuntimeError("no Event Hubs connection string configured")
-            from azure.eventhub import EventHubProducerClient
+            from azure.eventhub import EventHubProducerClient, TransportType
             # The SDK logs every AMQP state change at INFO; keep the Thor's log readable.
             logging.getLogger("azure").setLevel(logging.WARNING)
+            # AMQP over WebSockets uses port 443. Venue networks often allow only
+            # web traffic, so plain AMQP on port 5671 would be blocked.
             self._producer = EventHubProducerClient.from_connection_string(
-                conn, eventhub_name=self.eventhub_name)
+                conn, eventhub_name=self.eventhub_name,
+                transport_type=TransportType.AmqpOverWebsocket)
         return self._producer
 
     def put_json(self, key: str, data: Dict) -> bool:
