@@ -3,6 +3,7 @@
 // channel (GET motion/negotiate): Azure Web PubSub or AWS AppSync Events.
 "use client";
 import { useEffect, useRef, useState } from "react";
+import { IS_AWS } from "./theme";
 
 export interface MotionFrame { t: number; q: number[]; rpy: number[] | null; h: number | null }
 export interface Maneuver { name: string; t: number; paw?: string; posture_from?: string; posture_to?: string }
@@ -66,10 +67,11 @@ export function useMotion(api: string, enabled: boolean): { feed: MotionFeed; ma
         if (!r.ok) throw new Error(String(r.status));
         const n = (await r.json()) as Negotiated;
         if (stop) return;
-        const sock = n.provider === "aws-appsync-events" ? appSyncSocket(n) : new WebSocket(n.url, n.protocol);
+        // IS_AWS is a build-time literal: each bundle keeps only its own cloud's client.
+        const sock = IS_AWS ? appSyncSocket(n as AppSyncNeg) : new WebSocket((n as PubSubNeg).url, (n as PubSubNeg).protocol);
         ws = sock;
         sock.onmessage = (ev) => {
-          const batches = n.provider === "aws-appsync-events" ? appSyncData(sock, n, ev) : webPubSubData(ev);
+          const batches = IS_AWS ? appSyncData(sock, n as AppSyncNeg, ev) : webPubSubData(ev);
           for (const data of batches) {
             feed.push(data.frames ?? []);
             // Keep each maneuver's real time (robot clock); ignore any that are already old.
@@ -96,9 +98,9 @@ export function useMotion(api: string, enabled: boolean): { feed: MotionFeed; ma
 // -- cloud channels -----------------------------------------------------------
 // negotiate returns Azure Web PubSub {url, protocol} or AWS AppSync Events
 // {provider: "aws-appsync-events", httpDomain, realtimeDomain, apiKey, channel}.
-type Negotiated =
-  | { provider?: undefined; url: string; protocol: string }
-  | { provider: "aws-appsync-events"; httpDomain: string; realtimeDomain: string; apiKey: string; channel: string };
+type PubSubNeg = { provider?: undefined; url: string; protocol: string };
+type AppSyncNeg = { provider: "aws-appsync-events"; httpDomain: string; realtimeDomain: string; apiKey: string; channel: string };
+type Negotiated = PubSubNeg | AppSyncNeg;
 type Batch = { frames?: MotionFrame[]; maneuvers?: Maneuver[] };
 
 const isBatch = (b: unknown): b is Batch => !!b && typeof b === "object" && (Array.isArray((b as Batch).frames) || Array.isArray((b as Batch).maneuvers));
@@ -136,7 +138,7 @@ function disarm(sock: WebSocket, which?: keyof Timers) {
   for (const k of which ? [which] : (["handshake", "alive"] as const)) { clearTimeout(t[k]); t[k] = undefined; }
 }
 
-function appSyncSocket(n: Extract<Negotiated, { provider: "aws-appsync-events" }>): WebSocket {
+function appSyncSocket(n: AppSyncNeg): WebSocket {
   const auth = { host: n.httpDomain, "x-api-key": n.apiKey };   // subscribe-only key; publishing needs IAM
   const sock = new WebSocket(`wss://${n.realtimeDomain}/event/realtime`, ["aws-appsync-event-ws", `header-${b64url(JSON.stringify(auth))}`]);
   sock.onopen = () => { sock.send(JSON.stringify({ type: "connection_init" })); arm(sock, "handshake", ACK_DEADLINE_MS); };
@@ -146,7 +148,7 @@ function appSyncSocket(n: Extract<Negotiated, { provider: "aws-appsync-events" }
 
 const keepAliveMs = new WeakMap<WebSocket, number>();
 
-function appSyncData(sock: WebSocket, n: Extract<Negotiated, { provider: "aws-appsync-events" }>, ev: MessageEvent): Batch[] {
+function appSyncData(sock: WebSocket, n: AppSyncNeg, ev: MessageEvent): Batch[] {
   let m: { type?: string; event?: unknown; connectionTimeoutMs?: number };
   try { m = JSON.parse(String(ev.data)); } catch { return []; }
   const ka = keepAliveMs.get(sock);

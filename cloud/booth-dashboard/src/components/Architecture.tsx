@@ -1,6 +1,6 @@
 "use client";
 // "How it works": the live data path from the dog to this screen, named in the
-// show's cloud services (theme.ts ARCH). A native <dialog>: focus is trapped,
+// show's cloud services (theme.ts arch). A native <dialog>: focus is trapped,
 // Esc closes, and the page behind is inert.
 import { useRef } from "react";
 import { arch, theme } from "@/lib/theme";
