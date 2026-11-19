@@ -1,3 +1,9 @@
+> **Superseded (2026-09).** This describes the pre-1.1.15 WebRTC command
+> service. On firmware 1.1.15 the robot link uses DDS, runs in Docker on the
+> Orin, and speaks HTTPS with a control token and drive permits. See
+> [deploy/orin/README.md](deploy/orin/README.md) and
+> [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Kept for history only.
+
 # GO2 Service - Reference Implementation
 
 This directory contains a reference copy of the working GO2 WebRTC service that runs on the ORIN host.

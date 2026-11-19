@@ -1,0 +1,108 @@
+{
+  "title": "Choose the booth dashboard's direction",
+  "question": "Your pinned world (Azimuth industrial chassis, Azure-blue accent, 3D Go2 hero) stays fixed. The roll decides how the screen is organised: keep the assigned direction, take an alternate, or re-roll.",
+  "options": [
+    {
+      "id": "assigned",
+      "label": "Engine Indication & Crew Alerting (EICAS)",
+      "kicker": "THE ROLL",
+      "lineage": "Airliner glass-cockpit EICAS: engine dials with green arcs, amber bands, red lines; a crew-alerting message stack ranked WARNING / CAUTION / ADVISORY; synoptic pages",
+      "thesis": "The dog is flown, not charted: twelve joints read like engines, and the agent overwatch speaks as the crew-alerting system.",
+      "palette": ["#0B0E12", "#111519", "#2C363F", "#E6EDF3", "#3A9BF0", "#3FD68C", "#FFB224", "#FF5C5C"],
+      "materials": ["bevelled instrument panels (Azimuth chassis)", "round dial gauges with green arc / amber band / red line", "EICAS message stack", "artificial-horizon ring from the IMU"],
+      "viewport": "1920x1080 booth screen. Left two-thirds: the 3D Go2 on a dark field inside an attitude-horizon ring tilting with live roll/pitch; four leg quadrants (FR FL RR RL) each carry three compact joint dials (hip/thigh/calf) for temperature with torque as a needle. Right third: the crew-alerting stack - agent findings ranked WARNING (red) / CAUTION (amber) / ADVISORY (Azure blue), newest first, each citing the telemetry it saw. Top strip: master WARNING and CAUTION annunciators plus the freshness lamp 'LIVE 1.2 s'. Bottom: synoptic page keys for staff - JOINTS, POWER, ATTITUDE, VISION, EDGE.",
+      "risk": "Cockpit cosplay if any gauge is decorative; twelve dials must stay legible at 3 m, so dials carry one number each and the 3D model does the rest.",
+      "raised": [
+        {"from": "challenger-star-atlas", "raise": "Severity is also a fixed size ramp (a magnitude scale), not colour alone: an overheating joint's marker grows on the 3D model and in its quadrant."},
+        {"from": "challenger-doujin-catalog", "raise": "Density courage: all twelve joints are always on screen as equal cells; nothing hides behind a click on the booth view."},
+        {"from": "challenger-design-annual", "raise": "Registration discipline: every panel edge sits on one 1px hairline grid, so the cockpit reads engineered, not themed."},
+        {"from": "challenger-botanical-folio", "raise": "The ATTITUDE page shows posture history as fixed-scale registered silhouettes (lying, low, standing) on one shared baseline."},
+        {"from": "challenger-cassette-j-card", "raise": "Battery is a hard runtime budget like a tape side: minutes of demo left at the current draw, a strip that can never overflow."}
+      ]
+    },
+    {
+      "id": "model-pick",
+      "label": "Bedside Patient Monitor",
+      "kicker": "IMPECCABLE’S PICK",
+      "lineage": "ICU multiparameter monitors: colour-coded waveform traces, large numerics per vital, tiered alarm bar",
+      "thesis": "The dog is the patient: every vital is a live trace with its number, and the agent is the charge nurse calling out what changed.",
+      "palette": ["#0B0E12", "#111519", "#3FD68C", "#3A9BF0", "#FFB224", "#FF5C5C", "#E6EDF3"],
+      "materials": ["scrolling waveform traces", "oversized numerics", "alarm priority bar"],
+      "viewport": "3D Go2 top-left as the 'patient', with sweeping traces to the right (motor temp max, torque load, battery, tilt), big numerics at each trace end, and the agent's findings in the alarm bar across the top.",
+      "risk": "The most familiar 'vitals' metaphor - the direction most runs would land on; joints compress into aggregates rather than twelve visible parts."
+    },
+    {
+      "id": "challenger-split-flap",
+      "label": "Concourse Split-Flap Board",
+      "verdict": "competitive",
+      "lineage": "Rail concourse departure boards",
+      "thesis": "Every vital is a departure row whose flaps cascade when it changes; agent findings are announcements that flip the whole board's head.",
+      "palette": ["#0B0E12", "#1D242B", "#E6EDF3", "#FFB224", "#FF5C5C", "#3A9BF0"],
+      "materials": ["matte flap cells", "fixed character grid", "row lamps"],
+      "viewport": "Full-width board: rows for each joint, battery, posture, edge; columns for value, trend, status; the 3D dog inset top-right.",
+      "case": "Fuses well and wins audience identification at a crowded venue (readable from across the hall); loses product clarity - a table cannot show joints on a body.",
+      "risk": "The dog becomes a sidebar; the cascade motion fatigues on a 4-hour booth loop."
+    },
+    {
+      "id": "challenger-star-atlas",
+      "label": "Star Atlas",
+      "verdict": "declined",
+      "lineage": "Celestial star charts",
+      "palette": ["#0B1530", "#F2F2F2", "#E0533C"],
+      "materials": ["magnitude dots", "coordinate grid"],
+      "case": "Booth visitors don't identify with chart reading; joints are not stars.",
+      "kept": "Severity as a fixed magnitude size ramp, not colour alone."
+    },
+    {
+      "id": "challenger-doujin-catalog",
+      "label": "Convention Circle Catalog",
+      "verdict": "declined",
+      "lineage": "Doujin event catalogs",
+      "palette": ["#1A1A1A", "#E9E6DE"],
+      "materials": ["newsprint", "stamp-size cells"],
+      "case": "Hall-map browsing is the wrong job; nobody browses a robot.",
+      "kept": "Density courage - all twelve joints visible at once."
+    },
+    {
+      "id": "challenger-design-annual",
+      "label": "Design Annual Plates",
+      "verdict": "declined",
+      "lineage": "Design annual plate sections",
+      "palette": ["#F5F4F6", "#16181A", "#DCDDF3"],
+      "materials": ["uncoated stock", "registration crosshairs"],
+      "case": "A print gallery reads static; this screen must read live.",
+      "kept": "One 1px hairline registration grid for every panel."
+    },
+    {
+      "id": "challenger-botanical-folio",
+      "label": "Botanical Folio",
+      "verdict": "declined",
+      "lineage": "Life-stage botanical plates",
+      "palette": ["#F3EBDA", "#2F5D3A", "#B3261E"],
+      "materials": ["fixed-scale plates", "sepia rules"],
+      "case": "Seasonal pace mismatches 5-second telemetry.",
+      "kept": "Posture history as fixed-scale registered silhouettes."
+    },
+    {
+      "id": "challenger-cassette-j-card",
+      "label": "Mixtape J-Card",
+      "verdict": "declined",
+      "lineage": "Cassette inlay cards",
+      "palette": ["#FFFFFF", "#1F3A93", "#C8102E"],
+      "materials": ["ballpoint", "ruled inlay"],
+      "case": "Nostalgic craft undercuts an industrial Physical AI story.",
+      "kept": "Battery as a hard runtime budget that cannot overflow."
+    }
+  ],
+  "reroll": {"registers": ["safer", "bolder"]},
+  "canon": true,
+  "canonCard": {
+    "label": "The category standard",
+    "thesis": "An IoT monitoring dashboard (Grafana / Azure IoT Central style), executed impeccably.",
+    "palette": ["#0B0E12", "#111519", "#3A9BF0", "#E6EDF3"],
+    "materials": ["KPI tiles", "time-series charts", "3D model in a card"],
+    "viewport": "A header of KPI tiles, the 3D dog in a central card, time-series charts beneath, alerts in a side list.",
+    "risk": "Indistinguishable from every other booth's dashboard by design."
+  },
+  "steer": true
+}

@@ -19,6 +19,12 @@ class CameraManager:
         self.is_running = False
         self.capture_thread = None
         self.frame_lock = threading.Lock()
+        # Every published frame gets a sequence number and a receive time, so
+        # consumers can wait for a NEW frame (detection at the source rate) and
+        # refuse a STALE one (video loss is shown, gestures pause).
+        self.frame_seq = 0
+        self.frame_ts = 0.0                       # time.monotonic() of the newest frame
+        self.new_frame = threading.Condition(self.frame_lock)
         
         # Camera source options - default to Mac for reliability, Color Channel auto-starts via web UI
         self.camera_source = "mac"  # "mac", "unitree", "rtsp_*", or "go2_webrtc"
@@ -31,6 +37,10 @@ class CameraManager:
         # go2_service_url is a property resolved per access.
         self.go2_stream_active = False
         self.http_stream_active = False
+        # Each go2 capture thread owns one generation; a superseded thread (a
+        # restart whose old thread outlived the join) exits instead of
+        # publishing frames alongside its replacement.
+        self._capture_gen = 0
         
     # ---- robot address, resolved at access time -------------------------------
     @property
@@ -210,7 +220,8 @@ class CameraManager:
 
             # Test service connectivity
             try:
-                response = requests.get(f"{self.go2_service_url}/status", timeout=2)
+                import robot_host
+                response = robot_host.public().get(f"{self.go2_service_url}/status", timeout=2)
                 if response.status_code == 200:
                     print("GO2 service is accessible")
                 else:
@@ -224,7 +235,9 @@ class CameraManager:
             # Start capture thread
             self.is_running = True
             self.go2_stream_active = True
-            self.capture_thread = threading.Thread(target=self._go2_webrtc_capture_loop, daemon=True)
+            self._capture_gen += 1
+            self.capture_thread = threading.Thread(target=self._go2_webrtc_capture_loop,
+                                                   args=(self._capture_gen,), daemon=True)
             self.capture_thread.start()
 
             print("GO2 WebRTC camera started successfully")
@@ -315,6 +328,12 @@ class CameraManager:
         """Stop the camera capture with proper cleanup ordering"""
         print("🛑 DEBUG: stop() called")
         self.is_running = False
+        self._capture_gen += 1                      # retire the running capture thread
+        # A stopped camera has no fresh frame: forget the last one's time so
+        # nothing (supervisor, gesture, overlay) mistakes it for live video.
+        with self.frame_lock:
+            self.frame_ts = 0.0
+            self.current_frame = None
 
         # Wait for capture thread to exit BEFORE releasing resources
         if self.capture_thread:
@@ -408,7 +427,7 @@ class CameraManager:
             ret, frame = self.cap.read()
             if ret:
                 with self.frame_lock:
-                    self.current_frame = frame
+                    self._publish_locked(frame)
             else:
                 time.sleep(0.01)  # Brief pause if frame capture fails
                 
@@ -427,12 +446,12 @@ class CameraManager:
                 frame = self.unitree_client.get_frame()
                 if frame is not None:
                     with self.frame_lock:
-                        self.current_frame = frame
+                        self._publish_locked(frame)
                 time.sleep(1/30)  # 30 FPS
         except Exception as e:
             print(f"DEBUG: Frame loop error: {e}")
 
-    def _go2_webrtc_capture_loop(self):
+    def _go2_webrtc_capture_loop(self, gen=None):
         """Optimized capture loop for GO2 WebRTC camera from service with auto-reconnect"""
         video_url = f"{self.go2_service_url}/video_feed"
         frame_count = 0
@@ -440,14 +459,19 @@ class CameraManager:
 
         print(f"[GO2 Capture] Starting capture from {video_url}")
 
-        while self.is_running and self.go2_stream_active:
+        def current():
+            return self.is_running and self.go2_stream_active and (gen is None or gen == self._capture_gen)
+
+        while current():
             consecutive_failures = 0
             max_consecutive_failures = 15
             bytes_buffer = bytearray()
             response = None
             try:
                 # Open streaming connection with optimized chunk size
-                response = requests.get(video_url, stream=True, timeout=(5, 15))
+                import robot_host
+                # Video is a public read: CA-verified, no control token.
+                response = robot_host.public().get(video_url, stream=True, timeout=(5, 15))
                 print(f"[GO2 Capture] Connected, status code: {response.status_code}")
 
                 if response.status_code != 200:
@@ -458,8 +482,8 @@ class CameraManager:
                 # Parse MJPEG stream with larger chunks for better performance
                 chunk_count = 0
                 for chunk in response.iter_content(chunk_size=16384):  # 16KB chunks
-                    if not self.is_running or not self.go2_stream_active:
-                        print(f"[GO2 Capture] Stopping: is_running={self.is_running}, stream_active={self.go2_stream_active}")
+                    if not current():
+                        print(f"[GO2 Capture] Stopping (gen {gen}): is_running={self.is_running}, stream_active={self.go2_stream_active}")
                         return
 
                     bytes_buffer.extend(chunk)
@@ -485,7 +509,9 @@ class CameraManager:
 
                             if frame is not None:
                                 with self.frame_lock:
-                                    self.current_frame = frame  # No copy needed - frame is already new
+                                    if gen is not None and gen != self._capture_gen:
+                                        return          # superseded; finally closes the response
+                                    self._publish_locked(frame)
                                 consecutive_failures = 0
                                 frame_count += 1
                                 if frame_count == 1 or frame_count % 100 == 0:
@@ -514,18 +540,19 @@ class CameraManager:
             except Exception as e:
                 print(f"[GO2 Capture] Connection error: {e}, reconnecting in {reconnect_delay}s...")
             finally:
-                if response:
+                if response is not None:
                     try:
                         response.close()
                     except Exception:
                         pass
 
             # Wait before reconnect attempt
-            if self.is_running and self.go2_stream_active:
+            if current():
                 time.sleep(reconnect_delay)
 
-        print(f"[GO2 Capture] Exiting - captured {frame_count} total frames")
-        self.go2_stream_active = False
+        print(f"[GO2 Capture] Exiting (gen {gen}) - captured {frame_count} total frames")
+        if gen is None or gen == self._capture_gen:
+            self.go2_stream_active = False
 
     def _start_http_mjpeg_stream(self, video_url: str) -> bool:
         """Start a generic HTTP MJPEG stream (e.g., IR/depth proxies)."""
@@ -592,7 +619,7 @@ class CameraManager:
                         frame = cv2.imdecode(np.frombuffer(jpg, dtype=np.uint8), cv2.IMREAD_COLOR)
                         if frame is not None:
                             with self.frame_lock:
-                                self.current_frame = frame
+                                self._publish_locked(frame)
                             consecutive_failures = 0
                         else:
                             consecutive_failures += 1
@@ -646,7 +673,7 @@ class CameraManager:
                     if ret and frame is not None and frame.size > 0:
                         # Successfully got a frame
                         with self.frame_lock:
-                            self.current_frame = frame
+                            self._publish_locked(frame)
                         consecutive_failures = 0
                         last_frame_time = time.time()
                         
@@ -695,12 +722,36 @@ class CameraManager:
                     print(f"⚠️ Error releasing RTSP capture: {cleanup_error}")
                 self.cap = None
                 
-    def get_frame(self) -> Optional[np.ndarray]:
-        """Get the most recent frame"""
+    def _publish_locked(self, frame):
+        """Caller holds frame_lock (the Condition's lock)."""
+        self.current_frame = frame
+        self.frame_seq += 1
+        self.frame_ts = time.monotonic()
+        self.new_frame.notify_all()
+
+    def frame_age(self) -> Optional[float]:
+        """Seconds since the newest frame arrived (None if none yet)."""
         with self.frame_lock:
-            if self.current_frame is not None:
-                return self.current_frame.copy()
-        return None
+            return None if not self.frame_ts else time.monotonic() - self.frame_ts
+
+    def get_frame(self, max_age: Optional[float] = None) -> Optional[np.ndarray]:
+        """Get the most recent frame; None if there is none or it is older than max_age."""
+        with self.frame_lock:
+            if self.current_frame is None:
+                return None
+            if max_age is not None and time.monotonic() - self.frame_ts > max_age:
+                return None
+            return self.current_frame.copy()
+
+    def wait_for_new_frame(self, last_seq: int, timeout: float = 0.5):
+        """Block until a frame newer than last_seq arrives. Returns (frame, seq, ts)
+        or (None, last_seq, None) on timeout."""
+        with self.new_frame:
+            if self.frame_seq <= last_seq:
+                self.new_frame.wait(timeout)
+            if self.frame_seq <= last_seq or self.current_frame is None:
+                return None, last_seq, None
+            return self.current_frame.copy(), self.frame_seq, self.frame_ts
         
     def is_camera_available(self) -> bool:
         """Check if camera is available"""
@@ -710,7 +761,8 @@ class CameraManager:
             # Return True if unitree client exists and is streaming (includes test pattern fallback)
             return self.unitree_client is not None and self.unitree_client.is_streaming
         elif self.camera_source == "go2_webrtc":
-            return self.go2_stream_active
+            age = self.frame_age()
+            return self.go2_stream_active and age is not None and age < 2.0
         elif self.camera_source.startswith("rtsp"):
             if self.rtsp_url.startswith(("http://", "https://")):
                 return self.http_stream_active
@@ -739,10 +791,13 @@ class CameraManager:
             if self.unitree_client:
                 status.update(self.unitree_client.get_robot_status())
         elif self.camera_source == "go2_webrtc":
+            age = self.frame_age()
             status.update({
                 "go2_service_url": self.go2_service_url,
                 "stream_active": self.go2_stream_active,
-                "connected": self.go2_stream_active
+                "connected": self.go2_stream_active,
+                "frame_age_s": None if age is None else round(age, 2),
+                "video_fresh": age is not None and age < 2.0,
             })
         elif self.camera_source.startswith("rtsp"):
             connected = self.http_stream_active if self.rtsp_url.startswith(("http://", "https://")) else (self.cap is not None and self.cap.isOpened())

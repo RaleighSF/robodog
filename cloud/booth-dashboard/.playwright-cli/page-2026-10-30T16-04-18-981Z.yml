@@ -1,0 +1,76 @@
+- main [ref=e2]:
+  - generic [ref=e3]:
+    - img "NTT DATA" [ref=e4]
+    - generic [ref=e5]:
+      - heading "Watch Dog Overwatch" [level=1] [ref=e6]
+      - generic [ref=e7]: UNITREE GO2 · —
+    - generic [ref=e8]:
+      - button "Master warning, off" [disabled] [ref=e9]:
+        - generic [ref=e10]: MASTER
+        - generic [ref=e11]: WARNING
+      - button "Master caution, off" [disabled] [ref=e12]:
+        - generic [ref=e13]: MASTER
+        - generic [ref=e14]: CAUTION
+    - status [ref=e15]:
+      - generic [ref=e18]: NO DATA
+      - generic [ref=e19]: SYNTHETIC DATA
+    - generic [ref=e20]:
+      - generic [ref=e21]: Built on Microsoft Azure
+      - generic [ref=e22]: Powered by NVIDIA
+  - region "Robot body and joint motors" [ref=e23]:
+    - heading "Front left" [level=3] [ref=e26]
+    - heading "Front right" [level=3] [ref=e28]
+    - heading "Rear left" [level=3] [ref=e30]
+    - heading "Rear right" [level=3] [ref=e32]
+  - region "Agent overwatch crew-alerting messages" [ref=e33]:
+    - generic [ref=e34]:
+      - heading "Overwatch · crew alerting" [level=2] [ref=e35]
+      - generic [ref=e36]: "0"
+    - paragraph [ref=e37]: Telemetry is stale. Findings below are not current.
+    - list [ref=e38]:
+      - listitem [ref=e39]: No findings. All monitored systems inside limits.
+    - generic [ref=e40]:
+      - heading "Status · monitored systems" [level=3] [ref=e41]
+      - list [ref=e42]:
+        - listitem [ref=e43]:
+          - generic [ref=e45]: Joint motors
+          - generic [ref=e46]: NO DATA
+        - listitem [ref=e47]:
+          - generic [ref=e49]: Battery
+          - generic [ref=e50]: NO DATA
+        - listitem [ref=e51]:
+          - generic [ref=e53]: Attitude
+          - generic [ref=e54]: NO DATA
+        - listitem [ref=e55]:
+          - generic [ref=e57]: Robot link
+          - generic [ref=e58]: NO DATA
+        - listitem [ref=e59]:
+          - generic [ref=e61]: Video
+          - generic [ref=e62]: NO DATA
+        - listitem [ref=e63]:
+          - generic [ref=e65]: Edge compute
+          - generic [ref=e66]: NO DATA
+    - generic [ref=e67]:
+      - generic [ref=e68]:
+        - generic [ref=e69]: Posture
+        - generic [ref=e70]: "--"
+      - generic [ref=e71]:
+        - generic [ref=e72]:
+          - generic [ref=e73]: Battery · runtime budget
+          - generic [ref=e74]: "-- · --"
+        - img "About unknown minutes of demo left" [ref=e75]
+        - generic [ref=e94]:
+          - generic [ref=e95]: "0"
+          - generic [ref=e96]: "30"
+          - generic [ref=e97]: "60"
+          - generic [ref=e98]: 90 min
+  - region "Synoptic page POWER" [ref=e99]:
+    - navigation "Synoptic pages" [ref=e100]:
+      - button "POWER" [disabled] [pressed] [ref=e101]
+      - button "GAIT" [disabled] [ref=e102]
+      - button "ATTITUDE" [disabled] [ref=e103]
+      - button "VISION" [disabled] [ref=e104]
+      - button "EDGE" [disabled] [ref=e105]
+      - button "LINK" [disabled] [ref=e106]
+    - paragraph [ref=e109]: Waiting for the first telemetry sample…
+  - generic [ref=e110]: "Go2 model: MuJoCo Menagerie, BSD-3-Clause, © Unitree Robotics. Read-only view; this screen cannot command the robot."

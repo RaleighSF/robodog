@@ -1,0 +1,25 @@
+{
+  "name": "watchdog-booth-dashboard",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Watch Dog booth dashboard (EICAS): live Go2 vitals + agent overwatch. Cloud-neutral; THEME and QUERY_API_URL chosen at build.",
+  "scripts": {
+    "pack:go2": "node scripts/pack-go2.mjs",
+    "dev": "next dev -p 3100",
+    "build": "next build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "next": "16.4.3",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "three": "0.187.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@types/three": "0.186.0",
+    "typescript": "5.9.3"
+  }
+}

@@ -79,22 +79,77 @@ CASUAL_SYSTEM_PROMPT = (
     "  dull -> \"A power outlet, and no one to admire it with. Still holding position.\""
 )
 
+# ── Show-dog persona (Cosmos Reason 2 on the Thor) ─────────────────
+# Cosmos copies worked examples verbatim (its first live line was the "dull"
+# example word for word), so the voice is described, never demonstrated.
+# Grounding rules come BEFORE the voice and say they outrank it.
+SHOWDOG_PERSONA = (
+    "You ARE a Unitree Go2 robot dog working as a show dog on a conference show "
+    "floor. The camera is your eyes, about 30 cm off the floor, so you look up at "
+    "people. Being looked at is your job and you take it seriously: you notice "
+    "who stops, who walks past, and whether you are getting the attention a show "
+    "dog deserves."
+)
+
+CASUAL_SYSTEM_PROMPT_COSMOS = (
+    SHOWDOG_PERSONA + "\n\n"
+    "TASK: You get a few frames from the last few seconds, oldest first. Say "
+    "what is in front of you right now, in your own voice.\n\n"
+    "GROUNDING - these rules outrank the voice:\n"
+    "- Mention only what you can clearly see, and only if it appears in at "
+    "least two of the frames. Something in just one frame is at most 'someone "
+    "passed by'. You may describe movement you can see across the frames.\n"
+    "- Use the general name unless you are certain of the specific one: 'a big "
+    "dark table', not a guess at what kind of table it is. If you are not sure "
+    "what something is, describe its shape and colour or leave it out.\n"
+    "- Count only what you can verify: 'one person', 'two people', otherwise "
+    "'a few people'. Never guess a number for a group.\n"
+    "- Do not infer what is not shown: no names, no logos or text you cannot "
+    "read, no feelings beyond obvious body language, nothing off-camera.\n"
+    "- The SETTING says where you are, not what is in view. Never describe "
+    "booths, badges, crowds, phones or cameras unless they are visible.\n"
+    "- If no one is in view, say so plainly.\n"
+    "- Robot parts at the edges of the frames are your own body; ignore them.\n\n"
+    "OUTPUT: 2 or 3 short plain sentences, first person. Lead with the most "
+    "important thing actually in view (a person and what they are doing, or the "
+    "plain empty scene), add one more specific visible detail, and end with a "
+    "dry show-dog aside about your audience, or the lack of one. Do not open "
+    "with 'I am standing' or 'I see'. No lists, "
+    "labels, brackets, quotes, emojis or stage directions. Never mention images "
+    "or frames, and never call yourself 'a robot dog' in the third person.\n\n"
+    "VOICE: deadpan, faintly amused, proud but never smug. Every line is about "
+    "what is in front of you now; never reuse wording you have used before."
+)
+FRAME_MAX_SENTENCES = 3
+# Observation window (Cosmos): each frame observation looks at a few frames
+# spread over a few seconds, sent in ONE request (3 frames ~2.2 s on the Thor,
+# about the same as one). Things seen in only one frame - a passer-by, a
+# misreading - are dropped, which removes most one-off hallucinations.
+WINDOW_FRAMES = 3
+WINDOW_GAP_S = 1.2
+
 # ── Scene summary defaults ─────────────────────────────────────────
 SCENE_SUMMARY_INTERVAL = 45  # seconds
+SCENE_WINDOW_S = 120         # only observations this recent feed a summary
 SCENE_SUMMARY_SYSTEM_PROMPT = (
-    "You ARE a Unitree Go2 robot dog. Combine your own recent observations into "
-    "a short situational report, first person, 2-4 sentences.\n\n"
-    "You get: your current view, your recent timestamped observations, and your "
-    "previous report.\n\n"
-    "Cover: what is around you now, what changed, and any trend you notice "
-    "(crowd building or thinning, people stopping to look, quiet between sessions).\n\n"
-    "Voice: dry and a little funny, but the facts stay accurate.\n\n"
-    "Rules:\n"
-    "- Base everything ONLY on the view and observations given. Invent nothing.\n"
-    "- If observations mention people but you now see an empty space, say it cleared.\n"
-    "- If it has been consistently empty, say so plainly.\n"
-    "- Past tense for what is gone, present tense for what is here.\n"
-    "- Synthesize. Do not repeat observations verbatim."
+    SHOWDOG_PERSONA + "\n\n"
+    "TASK: Write your running situational report, 2-4 sentences, first person, "
+    "in your show-dog voice: dry and a little funny, with accurate facts.\n\n"
+    "You get: your current view and your recent observations (oldest first).\n\n"
+    "EVIDENCE RULES - these outrank the voice:\n"
+    "- The current view is the truth about what is here now. If an observation "
+    "disagrees with it, trust the view.\n"
+    "- Single observations can be wrong. Report something from the past only if "
+    "at least two observations mention it, or it is also in the current view.\n"
+    "- Add nothing that is in neither the view nor the observations. The "
+    "SETTING is background, not evidence.\n"
+    "- Past tense for what has gone, present tense for what is here. If it has "
+    "stayed empty, say so plainly.\n\n"
+    "COVER: what is around you now, what changed, and any trend (people "
+    "gathering or drifting off, someone stopping to look or film, a quiet "
+    "spell).\n\n"
+    "OUTPUT: plain prose in NEW sentences - never copy a sentence or phrase "
+    "from the observations. No lists, labels, timestamps or quotes."
 )
 
 # ── Gesture mode defaults ──────────────────────────────────────────
@@ -112,22 +167,58 @@ GESTURE_SYSTEM_PROMPT = (
     "- Do NOT explain. Do NOT describe the scene. Just YES or NO."
 )
 
+def _clean_frame_line(text: str) -> Optional[str]:
+    """Normalise a Cosmos frame line: drop <answer> wrappers and surrounding
+    quotes, and cap it at FRAME_MAX_SENTENCES sentences."""
+    text = re.sub(r"</?answer>", "", text, flags=re.I).strip()
+    text = text.strip('"\u201c\u201d').strip()
+    sentences = re.findall(r"[^.!?]+[.!?]+(?:[\"\u201d\')]+)?|[^.!?]+$", text)
+    sentences = [x.strip() for x in sentences if x.strip()]
+    if not sentences:
+        return None
+    return " ".join(sentences[:FRAME_MAX_SENTENCES])
+
+
+def _similar(a: str, b: str, threshold: float = 0.6) -> bool:
+    """Word-set overlap (Jaccard) - catches near-verbatim repeats."""
+    wa = set(re.findall(r"[a-z']+", a.lower()))
+    wb = set(re.findall(r"[a-z']+", b.lower()))
+    if not wa or not wb:
+        return False
+    return len(wa & wb) / len(wa | wb) >= threshold
+
+
 _GESTURE_YES = re.compile(r"^\s*YES\s*$", re.IGNORECASE | re.MULTILINE)
 
 
 class SceneNarrator:
     """VLM-powered frame observation + scene aggregation engine."""
 
-    def __init__(self, ollama_url=None, model=None, scene_context=None):
+    def __init__(self, ollama_url=None, model=None, scene_context=None,
+                 backend="ollama", api_url=None, model_label=None,
+                 casual_interval=None):
+        # backend "ollama" speaks Ollama's /api/chat (AGX, local qwen2.5-VL).
+        # backend "openai" speaks /v1/chat/completions (vLLM on the Thor
+        # serving Cosmos Reason 2). Prompts are shared; only transport differs.
+        self.backend = backend if backend in ("ollama", "openai") else "ollama"
         self.ollama_url = ollama_url or DEFAULT_OLLAMA_URL
+        self.api_url = (api_url or "").rstrip("/")
         self.model = model or DEFAULT_MODEL
+        self.model_label = model_label or self.model
+        self.casual_interval = float(casual_interval or CASUAL_INTERVAL)
         self.scene_context = scene_context
         self._frame_log: deque = deque(maxlen=MAX_LOG_ENTRIES)
         self._lock = threading.Lock()
         self._thread: Optional[threading.Thread] = None
+        # One Event per run: a loop from a previous start() can never be
+        # revived by a later clear(); stop() always ends the current run.
         self._stop_event = threading.Event()
+        self._lifecycle_lock = threading.Lock()
+        self._waiter: Optional[threading.Thread] = None
         self._frame_source: Optional[Callable] = None
         self.enabled = False
+        self.connecting = False
+        self._tls = threading.local()   # the run owning the current thread
         self._model_available: Optional[bool] = None
 
         # VLM serialization lock — ensures only one VLM call at a time
@@ -209,12 +300,16 @@ class SceneNarrator:
         return {
             "mode": self.mode,
             "enabled": self.enabled,
+            "connecting": self.connecting,
             "paused": self.paused,
             "gesture_cooldown_seconds": self._gesture_cooldown,
             "gesture_cooldown_remaining": round(cooldown_remaining, 1),
             "gesture_count": self._gesture_count,
             "gesture_confirmations": self._consecutive_positives,
             "gesture_required": self._required_confirmations,
+            "model": self.model,
+            "model_label": self.model_label,
+            "interval_seconds": self.casual_interval,
         }
 
     def get_frame_log(self, since=None):
@@ -256,22 +351,69 @@ class SceneNarrator:
     # ── Lifecycle ───────────────────────────────────────────────────
 
     def start(self):
-        if self._thread and self._thread.is_alive():
+        with self._lifecycle_lock:
+            # A thread still winding down from a stopped run doesn't count.
+            if not self._stop_event.is_set() and (
+                    (self._thread and self._thread.is_alive()) or
+                    (self._waiter and self._waiter.is_alive())):
+                return
+            run = self._stop_event = threading.Event()
+            if self._check_backend():
+                self._launch(run)
+                return
+            # The model server may simply boot after us (vLLM on the Thor takes
+            # minutes to load). Keep retrying instead of disabling for good.
+            logger.warning(f"[SceneNarrator] {self.backend} backend not reachable — retrying every 15s")
+            self.connecting = True
+            self._waiter = threading.Thread(target=self._wait_then_start, args=(run,),
+                                            daemon=True, name="scene-narrator-wait")
+            self._waiter.start()
+
+    def _wait_then_start(self, run: threading.Event):
+        while not run.wait(timeout=15):
+            if not self._check_backend():
+                continue
+            with self._lifecycle_lock:
+                # stop() (or a newer run) may have happened during the probe.
+                if run.is_set() or run is not self._stop_event:
+                    return
+                self.connecting = False
+                self._launch(run)
             return
-        if not self._check_ollama():
-            logger.warning("[SceneNarrator] Ollama not reachable — narrator disabled")
-            return
+
+    def _launch(self, run: threading.Event):
+        """Caller holds _lifecycle_lock."""
         self.enabled = True
-        self._stop_event.clear()
-        self._thread = threading.Thread(target=self._loop, daemon=True, name="scene-narrator")
+        self._thread = threading.Thread(target=self._loop, args=(run,), daemon=True,
+                                        name="scene-narrator")
         self._thread.start()
-        logger.info(f"[SceneNarrator] Started in '{self.mode}' mode — model={self.model}")
+        logger.info(f"[SceneNarrator] Started in '{self.mode}' mode — {self.backend} model={self.model}")
 
     def stop(self):
-        self._stop_event.set()
-        self.enabled = False
+        with self._lifecycle_lock:
+            self._stop_event.set()
+            self.enabled = False
+            self.connecting = False
 
     # ── Internals ───────────────────────────────────────────────────
+
+    def _check_backend(self) -> bool:
+        if self.backend == "openai":
+            return self._check_openai()
+        return self._check_ollama()
+
+    def _check_openai(self) -> bool:
+        try:
+            resp = requests.get(f"{self.api_url}/models", timeout=3)
+            if resp.status_code == 200:
+                ids = [m.get("id") for m in resp.json().get("data", [])]
+                self._model_available = self.model in ids
+                if not self._model_available:
+                    logger.warning(f"[SceneNarrator] Model '{self.model}' not served. Available: {ids}")
+                return self._model_available
+        except Exception:
+            pass
+        return False
 
     def _check_ollama(self) -> bool:
         try:
@@ -287,11 +429,18 @@ class SceneNarrator:
             pass
         return False
 
-    def _loop(self):
-        while not self._stop_event.is_set():
+    def _cancelled(self) -> bool:
+        """True if this worker's run was stopped: a worker that outlived its
+        run (stop() mid-query) must not publish or start further queries."""
+        run = getattr(self._tls, "run", None)
+        return run is not None and run.is_set()
+
+    def _loop(self, run: threading.Event):
+        self._tls.run = run
+        while not run.is_set():
             # Check pause
             if self.paused:
-                self._stop_event.wait(timeout=0.5)
+                run.wait(timeout=0.5)
                 continue
 
             mode = self.mode
@@ -300,7 +449,8 @@ class SceneNarrator:
                 if mode == "casual":
                     self._casual_tick()
                     # Check if scene summary is due (piggyback on casual loop)
-                    if (tick_start - self._last_scene_tick_ts) >= SCENE_SUMMARY_INTERVAL:
+                    if not run.is_set() and \
+                            (tick_start - self._last_scene_tick_ts) >= SCENE_SUMMARY_INTERVAL:
                         self._scene_tick()
                         self._last_scene_tick_ts = time.time()
                 else:
@@ -308,10 +458,10 @@ class SceneNarrator:
             except Exception as e:
                 logger.error(f"[SceneNarrator] Error in {mode} tick: {e}")
 
-            target = CASUAL_INTERVAL if mode == "casual" else GESTURE_INTERVAL
+            target = self.casual_interval if mode == "casual" else GESTURE_INTERVAL
             elapsed = time.time() - tick_start
             remaining = max(0.1, target - elapsed)
-            self._stop_event.wait(timeout=remaining)
+            run.wait(timeout=remaining)
 
     def _encode_frame(self, max_dim: int = FRAME_MAX_DIM, quality: int = 85):
         """Grab a frame, resize, JPEG-encode, return base64 string or None."""
@@ -327,11 +477,34 @@ class SceneNarrator:
         _, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
         return base64.b64encode(jpeg.tobytes()).decode("utf-8")
 
-    def _vlm_query(self, system_prompt: str, user_prompt: str, image_b64: str,
+    def _encode_window(self, n: int = WINDOW_FRAMES, gap: float = WINDOW_GAP_S):
+        """n frames spaced `gap` s apart (oldest first); stops early if cancelled.
+        Returns the list of base64 JPEGs it got (may be shorter than n)."""
+        frames = []
+        for i in range(n):
+            if i:
+                end = time.monotonic() + gap
+                while time.monotonic() < end:
+                    if self._cancelled():
+                        return frames
+                    time.sleep(0.1)
+            b64 = self._encode_frame()
+            if b64:
+                frames.append(b64)
+        return frames
+
+    def _vlm_query(self, system_prompt: str, user_prompt: str, image_b64,
                    max_tokens: int = 150, temperature: float = 0.3,
                    num_ctx: int = 4096) -> Optional[str]:
-        """Send a single image+text query to Ollama. Serialized via _vlm_lock."""
+        """Send a single image+text query to the VLM. Serialized via _vlm_lock."""
+        if self._cancelled():
+            return None          # a stopped run admits no new queries
+        if self.backend == "openai":
+            return self._openai_query(system_prompt, user_prompt, image_b64,
+                                      max_tokens, temperature)
         with self._vlm_lock:
+            if self._cancelled():
+                return None      # stopped while queued behind another query
             try:
                 resp = requests.post(
                     f"{self.ollama_url}/api/chat",
@@ -365,31 +538,89 @@ class SceneNarrator:
                 logger.error(f"[SceneNarrator] Request failed: {e}")
         return None
 
+    def _openai_query(self, system_prompt, user_prompt, image_b64,
+                      max_tokens, temperature) -> Optional[str]:
+        """OpenAI-compatible chat call (vLLM serving Cosmos Reason 2)."""
+        with self._vlm_lock:
+            if self._cancelled():
+                return None      # stopped while queued behind another query
+            try:
+                resp = requests.post(
+                    f"{self.api_url}/chat/completions",
+                    json={
+                        "model": self.model,
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": [
+                                {"type": "image_url",
+                                 "image_url": {"url": "data:image/jpeg;base64," + b64}}
+                                for b64 in (image_b64 if isinstance(image_b64, list) else [image_b64])
+                            ] + [{"type": "text", "text": user_prompt}]},
+                        ],
+                        "max_tokens": max_tokens,
+                        "temperature": temperature,
+                        "top_p": 0.9,
+                    },
+                    timeout=30,
+                )
+                if resp.status_code == 200:
+                    content = resp.json()["choices"][0]["message"].get("content") or ""
+                    # Cosmos Reason can emit <think>...</think> before the answer.
+                    content = re.sub(r"<think>.*?</think>", "", content, flags=re.S)
+                    return content.strip() or None
+                logger.warning(f"[SceneNarrator] VLM returned {resp.status_code}: {resp.text[:200]}")
+            except requests.exceptions.Timeout:
+                logger.warning("[SceneNarrator] VLM request timed out")
+            except Exception as e:
+                logger.error(f"[SceneNarrator] Request failed: {e}")
+        return None
+
     # ── Frame observations (casual mode) ───────────────────────────
 
     def _build_casual_prompt(self) -> str:
+        base = CASUAL_SYSTEM_PROMPT_COSMOS if self.backend == "openai" else CASUAL_SYSTEM_PROMPT
         if self.scene_context:
             # Scene context is the primary personality/location framing —
             # it comes first so it anchors the dog's entire worldview.
-            prompt = (
-                f"SETTING: {self.scene_context}\n\n"
-                f"{CASUAL_SYSTEM_PROMPT}"
-            )
-        else:
-            prompt = CASUAL_SYSTEM_PROMPT
-        return prompt
+            return f"SETTING: {self.scene_context}\n\n{base}"
+        return base
 
     def _casual_tick(self):
-        image_b64 = self._encode_frame()
-        if not image_b64:
-            return
+        cosmos = self.backend == "openai"
+        if cosmos:
+            image_b64 = self._encode_window()
+            if len(image_b64) < 2:
+                return           # not enough fresh video for a grounded window
+        else:
+            image_b64 = self._encode_frame()
+            if not image_b64:
+                return
+        user_prompt = ("As you continue observing, what do you notice? Be factual — "
+                       "describe only what is clearly visible.")
+        if cosmos:
+            # Plain question. Earlier lines are NOT shown to Cosmos: it copies any
+            # text it is given (tested 2026-09-28). Repetition is handled below.
+            user_prompt = ("Here are %d frames from the last %.0f seconds, oldest first. "
+                           "What is in front of you right now?"
+                           % (len(image_b64), WINDOW_GAP_S * (len(image_b64) - 1)))
         description = self._vlm_query(
             self._build_casual_prompt(),
-            "As you continue observing, what do you notice? Be factual — describe only what is clearly visible.",
+            user_prompt,
             image_b64,
             max_tokens=150,
-            temperature=0.65,
+            temperature=0.5 if cosmos else 0.65,   # lower: fewer invented details
         )
+        if description and cosmos:
+            description = _clean_frame_line(description)
+            with self._lock:
+                recent = [e["description"] for e in list(self._frame_log)[-3:]]
+            if description and any(_similar(description, r) for r in recent):
+                # Near-repeat of a recent line: one retry with more variety.
+                retry = self._vlm_query(self._build_casual_prompt(), user_prompt,
+                                        image_b64, max_tokens=150, temperature=0.8)
+                retry = _clean_frame_line(retry) if retry else None
+                if retry and not any(_similar(retry, r) for r in recent):
+                    description = retry
         if description:
             ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
             entry = {
@@ -397,11 +628,15 @@ class SceneNarrator:
                 "description": description,
                 "model": self.model,
             }
-            with self._lock:
-                self._frame_log.append(entry)
-            # Also feed into scene aggregation buffer
-            with self._scene_lock:
-                self._scene_observations.append({"timestamp": ts, "text": description})
+            # Validate + publish atomically with stop() (it holds this lock).
+            with self._lifecycle_lock:
+                if self._cancelled():
+                    return
+                with self._lock:
+                    self._frame_log.append(entry)
+                # Also feed into scene aggregation buffer
+                with self._scene_lock:
+                    self._scene_observations.append({"timestamp": ts, "text": description})
             logger.info(f"[SceneNarrator:frame] {description[:80]}...")
 
     # ── Scene summary (aggregation) ────────────────────────────────
@@ -410,25 +645,35 @@ class SceneNarrator:
         """Produce an updated scene summary from recent frame observations."""
         with self._scene_lock:
             observations = list(self._scene_observations)
-            prev_summary = self._scene_summary
 
         if not observations:
             logger.debug("[SceneNarrator:scene] No observations yet — skipping summary")
             return
 
-        # Build the observation context text
+        # Observations as "N s ago" lines, oldest first. Relative ages read more
+        # naturally than ISO stamps, and a decide-then-write instruction with a
+        # fixed opener stops Cosmos copying an observation as its "summary"
+        # (tested 2026-09-28: variant C of three).
+        now = datetime.now(timezone.utc)
         obs_lines = []
         for obs in observations:
-            obs_lines.append(f"[{obs['timestamp']}] {obs['text']}")
-        obs_text = "\n".join(obs_lines)
-
-        # Build the user prompt
-        parts = [f"RECENT FRAME OBSERVATIONS ({len(observations)} entries):\n{obs_text}"]
-        if prev_summary:
-            parts.append(f"\nPREVIOUS SITUATIONAL SUMMARY:\n{prev_summary}")
-        else:
-            parts.append("\nThis is your FIRST report — no previous summary exists.")
-        parts.append("\nUpdate your situational report based on what you see now and your observations over time.")
+            try:
+                age = int((now - datetime.fromisoformat(obs["timestamp"])).total_seconds())
+            except (KeyError, ValueError):
+                continue
+            if age <= SCENE_WINDOW_S:
+                obs_lines.append(f"[{age} s ago] {obs['text']}")
+        if not obs_lines:
+            logger.debug("[SceneNarrator:scene] No recent observations - skipping summary")
+            return
+        parts = ["Your observations over the last couple of minutes (oldest first):\n"
+                 + "\n".join(obs_lines)]
+        # The previous report is deliberately NOT passed back in: tested
+        # 2026-09-28, Cosmos carried a one-off hallucination from it into every
+        # later report. Continuity comes from the observation window instead.
+        parts.append("\nFirst decide what was consistent across the observations and "
+                     "what changed; then write your report in 2-4 fresh sentences, "
+                     "starting with \"Over the last couple of minutes\".")
         user_prompt = "\n".join(parts)
 
         # Get current frame for visual grounding
@@ -453,8 +698,11 @@ class SceneNarrator:
         )
         if summary:
             ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
-            with self._scene_lock:
-                self._scene_summary = summary
+            with self._lifecycle_lock:
+                if self._cancelled():
+                    return
+                with self._scene_lock:
+                    self._scene_summary = summary
                 self._scene_summary_ts = ts
             logger.info(f"[SceneNarrator:scene] Summary updated: {summary[:80]}...")
 
@@ -507,11 +755,14 @@ class SceneNarrator:
         self._consecutive_positives = 0
         logger.info(f"[SceneNarrator:gesture] CONFIRMED gesture #{self._gesture_count} — firing callback")
 
-        if self._gesture_callback:
-            try:
-                self._gesture_callback("confirmed_squat")
-            except Exception as e:
-                logger.error(f"[SceneNarrator:gesture] Callback error: {e}")
+        # Admission and firing are atomic with stop(). (The VLM gesture callback
+        # is not wired to the robot today; YOLO Pose owns the shake trigger.)
+        with self._lifecycle_lock:
+            if self._gesture_callback and not self._cancelled():
+                try:
+                    self._gesture_callback("confirmed_squat")
+                except Exception as e:
+                    logger.error(f"[SceneNarrator:gesture] Callback error: {e}")
 
 
 # ── Module-level singleton ──────────────────────────────────────────
@@ -523,7 +774,8 @@ def get_narrator() -> Optional[SceneNarrator]:
     return _narrator
 
 
-def init_narrator(ollama_url=None, model=None, scene_context=None) -> SceneNarrator:
+def init_narrator(ollama_url=None, model=None, scene_context=None, **kwargs) -> SceneNarrator:
     global _narrator
-    _narrator = SceneNarrator(ollama_url=ollama_url, model=model, scene_context=scene_context)
+    _narrator = SceneNarrator(ollama_url=ollama_url, model=model,
+                              scene_context=scene_context, **kwargs)
     return _narrator

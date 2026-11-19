@@ -9,7 +9,9 @@ first-boot default.
 """
 
 import json
+import logging
 import os
+import re
 import threading
 
 _STATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ui_state.json')
@@ -19,7 +21,7 @@ PROFILES = {
     'default': {
         'id': 'default',
         'label': 'Default — NTT DATA',
-        'title': 'Project Watch Dog - Factory Patrol Monitoring | NTT DATA',
+        'title': 'Watch Dog · Physical AI Robot Patrol | NTT DATA',
         'font_href': 'https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap',
         'partner': None,   # no co-brand on the house look
     },
@@ -79,14 +81,66 @@ def asset_exists(url):
     return path.startswith(_STATIC_ROOT + os.sep) and os.path.isfile(path)
 
 
+def theme_css():
+    """themes.css as served. A locked event build drops every other vendor's
+    rules and all comments (they name each vendor), so the stylesheet gives
+    no hint that another skin exists. Unlocked, the file is served as is."""
+    with open(os.path.join(_STATIC_ROOT, 'themes', 'themes.css'), encoding='utf-8') as f:
+        css = f.read()
+    locked = locked_profile_id()
+    if not locked:
+        return css
+    try:
+        return _drop_themes(re.sub(r'/\*.*?\*/', '', css, flags=re.S), [p for p in PROFILES if p != locked])
+    except IndexError:                  # unbalanced braces: still paint the skin
+        logging.getLogger(__name__).warning('themes.css: could not filter to %s; serving it whole', locked)
+        return css
+
+
+def _split_selectors(prelude):
+    """Split a selector list on top-level commas (not those inside :is(...))."""
+    parts, depth, start = [], 0, 0
+    for i, ch in enumerate(prelude):
+        depth += {'(': 1, ')': -1}.get(ch, 0)
+        if ch == ',' and depth == 0:
+            parts.append(prelude[start:i])
+            start = i + 1
+    return parts + [prelude[start:]]
+
+
+def _drop_themes(css, others):
+    """Remove the selectors that target `others` themes; a rule left with no
+    selector goes, and an @-block left empty goes with it."""
+    out, i = [], 0
+    while True:
+        j = css.find('{', i)
+        if j < 0:
+            out.append(css[i:])
+            return ''.join(out)
+        depth, k = 1, j + 1
+        while depth:
+            depth += {'{': 1, '}': -1}.get(css[k], 0)
+            k += 1
+        prelude, body = css[i:j], css[j + 1:k - 1]
+        if prelude.strip().startswith('@'):
+            inner = _drop_themes(body, others)
+            if inner.strip():
+                out.append('%s{%s}' % (prelude, inner))
+        else:
+            keep = [s for s in _split_selectors(prelude)
+                    if not any('data-theme="%s"' % o in s for o in others)]
+            if keep:
+                out.append('%s{%s}' % (','.join(keep), body))
+        i = k
+
+
 def theme_css_version():
-    """Content hash of themes.css so kiosks never keep a stale stylesheet.
-    Hashed per page load (the file is ~20 KB) so no metadata cache can go
-    stale; any read failure degrades to an unversioned URL, never a 500."""
+    """Content hash of the served themes.css so kiosks never keep a stale
+    stylesheet, and a lock change busts the cache. Hashed per page load (the
+    file is ~20 KB); any read failure degrades to an unversioned URL, never a 500."""
     import hashlib
     try:
-        with open(os.path.join(_STATIC_ROOT, 'themes', 'themes.css'), 'rb') as f:
-            return hashlib.sha1(f.read()).hexdigest()[:10]
+        return hashlib.sha1(theme_css().encode('utf-8')).hexdigest()[:10]
     except OSError:
         return '0'
 
@@ -97,6 +151,38 @@ def _ui_config():
         return get_config().config.get('ui', {}) or {}
     except Exception:
         return {}
+
+
+# The skin picks the cloud path (ADR 0011): telemetry, the live twin and the
+# "Live on ..." dashboard link all follow it. Overridable with config.yaml
+# telemetry.cloud_routing; dashboard URLs come from ui.cloud_dashboards.
+DEFAULT_CLOUD_ROUTES = {'azure': ['azure'], 'aws': ['aws'], 'default': ['azure', 'aws']}
+CLOUD_LABELS = {'azure': 'Azure', 'aws': 'AWS'}
+
+
+def _config_section(name):
+    try:
+        from config import get_config
+        return get_config().config.get(name, {}) or {}
+    except Exception:
+        return {}
+
+
+def clouds_for(pid):
+    routes = _config_section('telemetry').get('cloud_routing') or DEFAULT_CLOUD_ROUTES
+    clouds = routes.get(pid, DEFAULT_CLOUD_ROUTES.get(pid, ['azure', 'aws']))
+    return [c for c in clouds if c in CLOUD_LABELS]
+
+
+def active_clouds():
+    return clouds_for(get_active_profile_id())
+
+
+def cloud_links(pid):
+    """Where to watch this skin's cloud path: one link per cloud it sends to."""
+    urls = _ui_config().get('cloud_dashboards') or {}
+    return [{'cloud': c, 'label': 'Live on ' + CLOUD_LABELS[c], 'url': urls[c]}
+            for c in clouds_for(pid) if isinstance(urls.get(c), str) and urls[c].startswith('https://')]
 
 
 def default_profile_id():
@@ -138,6 +224,28 @@ def set_active_profile_id(pid):
     return pid
 
 
+def set_show_cloud(pid):
+    """The operator's show switch (Settings): 'azure' or 'aws' locks that skin,
+    which also picks the cloud path; 'default' unlocks and goes back to the NTT
+    DATA look, which sends to both clouds. Saved to config.yaml ui.lock_profile,
+    so it survives restarts. Raises ValueError or OSError."""
+    if not isinstance(pid, str) or pid not in PROFILES:
+        raise ValueError('unknown profile: %r' % (pid,))
+    import yaml
+    from config import get_config
+    cfg = get_config()
+    lock = '' if pid == 'default' else pid
+    cfg.config.setdefault('ui', {})['lock_profile'] = lock
+    cfg.save_config()
+    with open(cfg.config_path) as f:   # save_config logs failures instead of raising
+        saved = ((yaml.safe_load(f) or {}).get('ui') or {}).get('lock_profile', '')
+    if (saved or '') != lock:
+        raise OSError('could not save %s' % cfg.config_path)
+    if pid == 'default':
+        set_active_profile_id('default')
+    return pid
+
+
 def nvidia_badge():
     """Badge settings: shown on situational-awareness surfaces by default."""
     ui = _ui_config()
@@ -159,6 +267,7 @@ def nvidia_badge():
 
 def _with_assets(profile):
     p = dict(profile)
+    p['cloud_links'] = cloud_links(p['id'])
     if p.get('partner'):
         partner = dict(p['partner'])
         partner['has_logo'] = asset_exists(partner.get('logo'))

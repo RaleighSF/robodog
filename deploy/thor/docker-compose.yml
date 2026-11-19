@@ -1,0 +1,45 @@
+# Watch Dog on the Jetson AGX Thor. Normally driven by `demo-mode`, which
+# swaps this in for Elastic-Vision's app stack while sharing its Cosmos vLLM.
+name: watchdog
+
+services:
+  watchdog:
+    build: .
+    image: watchdog-thor:latest
+    container_name: watchdog
+    runtime: nvidia
+    restart: unless-stopped        # demo-mode stops it in Elastic-Vision mode
+    shm_size: 2g
+    init: true                     # reap the auto-arm supervisor's children
+    ports:
+      - "8443:8000"                 # HTTPS only; no plain-HTTP port is published
+    environment:
+      WATCHDOG_CONFIG: /state/config.yaml
+      WATCHDOG_CONFIG_OVERLAY: /app/deploy/thor/config.thor.yaml
+      WATCHDOG_TLS_CERT: /state/tls/cert.pem
+      WATCHDOG_TLS_KEY: /state/tls/key.pem
+      WATCHDOG_TLS_HOSTNAME: nvidia-thor
+      WATCHDOG_TLS_IPS: "192.168.1.234 10.0.0.109 192.168.50.209 192.168.50.210"   # ethernet, home WiFi, Cradlepoint WiFi + wired
+      WATCHDOG_TRUST_LOOPBACK: "0"      # the supervisor uses its token instead
+      WATCHDOG_AUTOARM: "1"
+      WATCHDOG_DASH: https://127.0.0.1:8000
+      WATCHDOG_SUPERVISOR_TOKEN_FILE: /state/auth.json
+      WATCHDOG_ROBOT_TOKEN_FILE: /state/robot_token   # control token for the robot link (Thor only)
+      WATCHDOG_ROBOT_CA: /state/tls/ca.pem   # demo CA: the robot link's HTTPS cert is verified against it
+      YOLO_OFFLINE: "1"                      # shows run with no internet: never wait on Ultralytics' online checks
+      NVIDIA_VISIBLE_DEVICES: all
+    volumes:
+      - ../..:/app                              # git checkout (code + *.pt weights;
+                                                #  ultralytics caches CLIP in weights/clip)
+      - watchdog-state:/state                   # writable config
+    networks:
+      - default
+      - elastic                                 # reach Cosmos at http://vllm:8000
+
+volumes:
+  watchdog-state:
+
+networks:
+  elastic:
+    external: true
+    name: compose_default                       # Elastic-Vision's compose network

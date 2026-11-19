@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 import cv2
+import numpy as np
 import time
 import os
+import math
 import atexit
 import signal
 import queue
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
 from flask import Flask, render_template, Response, jsonify, request, send_file
 from hybrid_detector import HybridDetector
 from camera import CameraManager
@@ -27,6 +30,17 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+
+
+def _render_login(error, configured):
+    import ui_profiles
+    return render_template('login.html', error=error, configured=configured,
+                           profile=ui_profiles.resolve(),
+                           theme_css_version=ui_profiles.theme_css_version())
+
+
+import auth  # noqa: E402  operator login guard over every route
+auth.init_app(app, _render_login)
 camera_manager = CameraManager()
 detector = HybridDetector()
 detection_logger = DetectionLogger()
@@ -70,9 +84,6 @@ class WebApp:
         self._last_detections = []
         self._last_detection_ts = 0.0
         # Retuned 2026-09-02 for GPU. Was 0.25 (~4 FPS), a CPU-era compromise.
-        # YOLO11m @1280 measures ~59 ms on the Orin GPU, so 0.1 s (~10 FPS) leaves
-        # roughly 40% headroom for the VLM, JPEG encode and telemetry.
-        self._detection_interval = 0.1   # seconds between detector invocations (~10 FPS)
         # Source frames are 1280x720; 1280 means no downscale at all. The old 800 px
         # cap existed only to make CPU inference tractable and cost small-object recall.
         self._max_detection_width = 1280 # native width — no downscale on GPU
@@ -83,7 +94,6 @@ class WebApp:
         self._detection_queue = queue.Queue(maxsize=1)
         self._detection_thread = None
         self._detection_stop_event = threading.Event()
-        self._last_detection_enqueue_ts = 0.0
         self._last_detection_frame_size = (0, 0)
         self._feeder_thread = None
         self._feeder_stop_event = threading.Event()
@@ -156,40 +166,36 @@ class WebApp:
             self._feeder_thread = None
 
     def _detection_feeder_loop(self):
+        """One detection per NEW camera frame (the source rate, ~14 fps from the
+        dog) instead of a fixed interval tuned for the AGX. The queue is a
+        single latest-frame slot: if the worker is behind, the waiting frame is
+        replaced by the newer one, so detection never lags the camera."""
         frame_count = 0
-        none_frame_count = 0
-        loop_iterations = 0
-        print(f"[DetectionFeeder] Starting feeder loop...")
+        last_seq = 0
+        print("[DetectionFeeder] Starting feeder loop (new-frame driven)...")
         while not self._feeder_stop_event.is_set():
-            loop_iterations += 1
-            if loop_iterations <= 5:  # Log first 5 iterations for debugging
-                print(f"[DetectionFeeder] Iteration {loop_iterations}: is_running={self.is_running}, camera_available={camera_manager.is_camera_available()}")
-
-            if self.is_running and camera_manager.is_camera_available():
-                frame = camera_manager.get_frame()
-                if frame is not None:
-                    now = time.time()
-                    if ((now - self._last_detection_enqueue_ts) >= self._detection_interval
-                            and not self._detection_queue.full()):
-                        try:
-                            self._detection_queue.put(frame.copy(), timeout=0.01)
-                            self._last_detection_enqueue_ts = now
-                            self._last_detection_frame_size = (frame.shape[1], frame.shape[0])
-                            frame_count += 1
-                            if frame_count == 1 or frame_count % 20 == 0:  # Log first frame and every 20 frames
-                                print(f"[DetectionFeeder] Enqueued {frame_count} frames for detection")
-                        except queue.Full:
-                            pass
-                else:
-                    none_frame_count += 1
-                    if none_frame_count <= 10 or none_frame_count % 100 == 0:  # Log first 10 and every 100
-                        print(f"[DetectionFeeder] Frame is None (count: {none_frame_count})")
-                    time.sleep(0.01)
-            else:
-                if loop_iterations <= 5:
-                    print(f"[DetectionFeeder] Not running or camera not available, sleeping...")
+            if not self.is_running:
                 time.sleep(0.05)
-        print(f"[DetectionFeeder] Exiting - enqueued {frame_count} total frames, got {none_frame_count} None frames, {loop_iterations} iterations")
+                continue
+            frame, seq, cap_ts = camera_manager.wait_for_new_frame(last_seq, timeout=0.5)
+            if frame is None:
+                continue
+            last_seq = seq
+            try:
+                self._detection_queue.get_nowait()          # drop the unprocessed older frame
+                self._detection_queue.task_done()
+            except queue.Empty:
+                pass
+            try:
+                # the capture time travels with the frame, so the gesture
+                # decision can refuse a picture that is old by then
+                self._detection_queue.put_nowait((frame, cap_ts))
+            except queue.Full:
+                continue
+            self._last_detection_frame_size = (frame.shape[1], frame.shape[0])
+            frame_count += 1
+            if frame_count == 1 or frame_count % 100 == 0:
+                print(f"[DetectionFeeder] Enqueued {frame_count} frames for detection")
 
     def _detection_worker_loop(self):
         """Background worker that runs detection so streaming thread stays responsive."""
@@ -220,6 +226,7 @@ class WebApp:
             if frame is None:
                 self._detection_queue.task_done()
                 break
+            frame, cap_ts = frame
 
             try:
                 # Skip detection when paused (queue is still drained above)
@@ -276,7 +283,7 @@ class WebApp:
                 # person, so gating on `detections` meant the check never ran in
                 # exactly the situation it exists for.
                 if _gesture_enabled:
-                    _check_outstretched_hand(frame)
+                    _offer_gesture_frame(frame, cap_ts)   # own worker: never slows detection
 
                 if self._config_manager.is_alert_logging_enabled():
                     now = time.time()
@@ -405,6 +412,27 @@ class WebApp:
                                    b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
                     else:
                         time.sleep(0.01)  # Reduced sleep when waiting for frames
+                elif has_activity and camera_manager.camera_source == "go2_webrtc":
+                    # The robot camera went stale: say so on the picture itself
+                    # (a frozen frame would mislead the operator), ~1 fps.
+                    if time.time() - last_emit_ts >= 1.0:
+                        last_emit_ts = time.time()
+                        lost = camera_manager.get_frame()
+                        if lost is None:
+                            lost = np.zeros((720, 1280, 3), np.uint8)
+                        lost = (lost * 0.35).astype(np.uint8)
+                        h, w = lost.shape[:2]
+                        age = camera_manager.frame_age()
+                        cv2.putText(lost, "VIDEO LOST - reconnecting", (int(w * 0.18), h // 2),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 1.4, (80, 80, 255), 3, cv2.LINE_AA)
+                        if age is not None:
+                            cv2.putText(lost, "last frame %.0fs ago" % age, (int(w * 0.18), h // 2 + 50),
+                                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, (200, 200, 200), 2, cv2.LINE_AA)
+                        ok, buf = cv2.imencode('.jpg', lost, jpeg_params)
+                        if ok:
+                            yield (b'--frame\r\n'
+                                   b'Content-Type: image/jpeg\r\n\r\n' + buf.tobytes() + b'\r\n')
+                    time.sleep(0.1)
                 else:
                     # Detection stopped - exit gracefully instead of looping.
                     # Must consider PPE too: during a mode switch is_running goes
@@ -436,10 +464,41 @@ def index():
     profile = ui_profiles.resolve(request.args.get('profile'))
     return render_template('index.html',
                            profile=profile,
-                           profiles=ui_profiles.all_profiles(),
-                           profile_locked=bool(ui_profiles.locked_profile_id()),
                            theme_css_version=ui_profiles.theme_css_version(),
                            nvidia=ui_profiles.nvidia_badge())
+
+
+@app.route('/api/ui/show-cloud', methods=['GET'])
+def get_show_cloud():
+    """Choices for the Settings show switch. Operator-only, and fetched only
+    when Settings opens, so the page itself never names another cloud."""
+    import ui_profiles
+    return jsonify({
+        'active': ui_profiles.get_active_profile_id(),
+        'options': [{'id': p['id'], 'label': p['label']} for p in ui_profiles.PROFILES.values()],
+    })
+
+
+@app.route('/api/ui/show-cloud', methods=['POST'])
+def set_show_cloud():
+    import ui_profiles
+    body = request.get_json(silent=True)
+    pid = body.get('profile') if isinstance(body, dict) else None
+    try:
+        ui_profiles.set_show_cloud(pid)
+    except ValueError:
+        return jsonify({'success': False, 'error': 'unknown profile'}), 400
+    except OSError as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+    return jsonify({'success': True, 'active': ui_profiles.get_active_profile_id()})
+
+
+@app.route('/static/themes/themes.css')
+def theme_css():
+    """The skin stylesheet, filtered to the locked skin (ui_profiles.theme_css).
+    Takes precedence over the static route for this one path."""
+    import ui_profiles
+    return Response(ui_profiles.theme_css(), mimetype='text/css', headers={'Cache-Control': 'no-cache'})
 
 
 @app.route('/api/ui/profile', methods=['GET'])
@@ -638,6 +697,7 @@ def get_status():
     return jsonify({
         'is_running': web_app.is_running and camera_manager.is_running,
         'camera_available': camera_manager.is_camera_available(),
+        'video_fresh': bool(camera_status.get('video_fresh', camera_manager.is_camera_available())),
         'camera_status': camera_status,
         'current_model': detector.get_current_model()
     })
@@ -646,7 +706,7 @@ def get_status():
 def go2_battery():
     """Proxy endpoint for GO2 battery data to avoid CORS issues"""
     try:
-        response = requests.get(f'{robot_host.service_url()}/battery', timeout=2)
+        response = robot_host.public().get(f'{robot_host.service_url()}/battery', timeout=2)
         if response.status_code == 200:
             return jsonify(response.json())
         else:
@@ -654,14 +714,14 @@ def go2_battery():
     except Exception as e:
         robot_host.report_failure()
         logger.error(f"Failed to fetch GO2 battery: {e}")
-        return jsonify({'connected': False, 'soc': None, 'error': str(e)}), 503
+        return jsonify({'connected': False, 'soc': None, 'error': 'robot link unreachable'}), 503
 
 @app.route('/go2/video_passthrough')
 def go2_video_passthrough():
     """Zero-copy proxy that relays the GO2 MJPEG stream for low-latency viewing."""
     def proxy():
         try:
-            with requests.get(f'{robot_host.service_url()}/video_feed', stream=True, timeout=(3, 30)) as resp:
+            with robot_host.public().get(f'{robot_host.service_url()}/video_feed', stream=True, timeout=(3, 30)) as resp:
                 resp.raise_for_status()
                 for chunk in resp.iter_content(chunk_size=8192):
                     if chunk:
@@ -703,10 +763,38 @@ def latest_detections():
 # A person standing close will be tall & narrow (fails #1).
 # A person's head/torso cropped at frame edge may have odd aspect but
 # won't be large enough or low enough (fails #2 or #3).
-_GESTURE_COOLDOWN = 5.0    # seconds between shake triggers
+_GESTURE_COOLDOWN = 3.0    # seconds between shake triggers
 _gesture_last_trigger_ts = 0.0
 _gesture_count = 0
 _gesture_enabled = False    # toggled by scene narrator mode
+# The dashboard's Gesture/Observe selector is the switch: Gesture arms, Observe
+# disarms. Arming is a LEASE the open page renews every poll (even in a
+# background window), and the page disarms explicitly when it is closed or left;
+# the lease is the backstop for a page that dies without saying goodbye
+# (90 s outlasts browsers' background-timer throttling).
+_GESTURE_LEASE_S = 90.0
+_gesture_lease_until = 0.0
+
+
+def _gesture_disarm(reason):
+    """Drop the gesture arm and put the narrator back to observing."""
+    global _gesture_enabled
+    if not _gesture_enabled:
+        return
+    _gesture_enabled = False
+    try:
+        n = get_narrator()
+        if n and n.mode == 'gesture':
+            n.set_mode('casual')
+    except Exception:
+        pass
+    logger.info("[GesturePose] DISARMED (%s)", reason)
+
+
+def _gesture_lease_check():
+    """Lapse the arm if no dashboard page has renewed it within the lease."""
+    if _gesture_enabled and time.time() > _gesture_lease_until:
+        _gesture_disarm("no open dashboard in Gesture mode for %.0fs" % _GESTURE_LEASE_S)
 
 # ---------------------------------------------------------------------------
 # PPE compliance detection. Runs in its own worker thread so it never shares a
@@ -766,13 +854,48 @@ def _ppe_worker_loop():
     logger.info("[PPE] Worker thread stopped")
 
 
-def _check_outstretched_hand(frame):
+_gesture_slot = {"frame": None, "ts": 0.0}
+_gesture_slot_lock = threading.Condition()
+_gesture_thread = None
+_GESTURE_MAX_FRAME_AGE_S = 0.5     # never decide a shake on an old picture
+
+
+def _offer_gesture_frame(frame, cap_ts):
+    """Latest-frame slot for the gesture worker (older unprocessed frame dropped).
+    cap_ts is the camera's receive time (time.monotonic) of this very frame."""
+    global _gesture_thread
+    with _gesture_slot_lock:
+        _gesture_slot["frame"] = frame
+        _gesture_slot["ts"] = cap_ts or 0.0
+        _gesture_slot_lock.notify()
+    if _gesture_thread is None or not _gesture_thread.is_alive():
+        _gesture_thread = threading.Thread(target=_gesture_worker, name="gesture-worker", daemon=True)
+        _gesture_thread.start()
+
+
+def _gesture_worker():
+    while True:
+        with _gesture_slot_lock:
+            while _gesture_slot["frame"] is None:
+                _gesture_slot_lock.wait(1.0)
+            frame, ts = _gesture_slot["frame"], _gesture_slot["ts"]
+            _gesture_slot["frame"] = None
+        if time.monotonic() - ts > _GESTURE_MAX_FRAME_AGE_S:
+            continue                           # stale: skip, a fresher frame will come
+        try:
+            _check_outstretched_hand(frame, ts)
+        except Exception as e:
+            logger.warning("[Gesture] worker error: %s", e)
+
+
+def _check_outstretched_hand(frame, cap_ts):
     """Run YOLO Pose keypoint detection for outstretched hand and fire shake.
 
     Uses the lightweight yolo11n-pose model (~6MB) to check shoulder-elbow-wrist
     geometry.  Runs on the raw detection frame — no extra capture needed.
     """
     global _gesture_last_trigger_ts, _gesture_count
+    _gesture_lease_check()
     if not _gesture_enabled:
         return
     now = time.time()
@@ -797,6 +920,15 @@ def _check_outstretched_hand(frame):
               "fingers": hres["fingers"]}
 
     if result["detected"]:
+        # Re-check at the moment of decision: inference took time, and the
+        # operator may have left the Gesture tab or the video may have died.
+        _gesture_lease_check()
+        if not _gesture_enabled:
+            return
+        if time.monotonic() - cap_ts > _GESTURE_MAX_FRAME_AGE_S:
+            logger.info("[Gesture] hand seen on a frame that is now %.2fs old - not shaking",
+                        time.monotonic() - cap_ts)
+            return
         _gesture_last_trigger_ts = now
         _gesture_count += 1
         logger.info(
@@ -807,15 +939,36 @@ def _check_outstretched_hand(frame):
         _gesture_shake_callback(f"outstretched_hand_{result['arm']}")
 
 
-_go2_last_move_ts = 0.0
 _go2_last_command_ts = 0.0
 _go2_watchdog_thread = None
 _go2_watchdog_running = False
-_GO2_MOVE_TIMEOUT = 0.6
-# True while a /move request is awaiting the robot. The first Move includes a
-# BalanceStand and can take ~3s; the watchdog must not fire /stop during it.
-_go2_move_inflight = False
-_go2_move_inflight_lock = threading.Lock()
+# Backup deadman (the authoritative one runs on the Orin next to the robot, see
+# go2_service.py): while a drive may be active and no input has arrived for
+# _GO2_MOVE_TIMEOUT, keep sending /stop until the robot confirms it.
+_GO2_MOVE_TIMEOUT = 0.8
+# gen counts drive inputs; a confirmed stop clears possibly_moving only if no
+# newer input arrived while it was in flight. Ordering between Moves and Stops is
+# enforced on the Orin by the browser's drive session + seq (Azimuth's model).
+_go2_drive = {"possibly_moving": False, "last_input": 0.0, "gen": 0}
+_go2_drive_lock = threading.Lock()
+# Released presses. `_go2_unretired`: sessions the operator released whose
+# retirement the Orin has not confirmed yet - re-sent with every stop (and by the
+# backup deadman) until confirmed, so a lost release can never let a delayed
+# Move of that press start motion later. `_go2_released`: every recently
+# released press; Moves for them are refused here before reaching the robot.
+from collections import OrderedDict
+_go2_unretired = OrderedDict()
+_go2_released = OrderedDict()
+_GO2_RELEASED_MAX = 256
+
+
+def _go2_mark_released(session):
+    with _go2_drive_lock:
+        for d in (_go2_unretired, _go2_released):
+            d[session] = time.time()
+            d.move_to_end(session)
+            while len(d) > _GO2_RELEASED_MAX:
+                d.popitem(last=False)
 _GO2_COMMAND_COOLDOWN = 1.5
 _GO2_MAX_VX = 0.25
 _GO2_MAX_VY = 0.2
@@ -823,18 +976,87 @@ _GO2_MAX_VYAW = 0.5
 # Robot address is resolved at call time by robot_host (see robot_host.py).
 
 
+# Move proxy deadline. requests' (connect, read) timeouts bound inactivity, not
+# the whole call, so the proxy's ANSWER is bounded here at _GO2_MOVE_DEADLINE_S.
+# There is no backlog: a Move runs only if a sender slot is free right now
+# (otherwise it is refused, never queued), and a sender re-checks the deadline
+# immediately before publishing, so an expired Move is never sent. A Move whose
+# HTTP call is already on the wire cannot be recalled; if it lands late, the
+# Orin's own rules decide it: an older seq is SUPERSEDED, a released press was
+# retired by its stop (even one the Orin never saw a Move for), and a lapsed
+# drive is stopped at admission. At worst it renews a press the operator is
+# still holding.
+# Deliberate fail-stop: continuous renewal is NOT guaranteed under network
+# stalls. If renewals miss the robot's 0.4 s lease, the Orin stops the dog and
+# retires the press; the operator presses again. The deadman is never
+# lengthened to hide a stall.
+_GO2_MOVE_DEADLINE_S = 0.3
+_GO2_MOVE_SENDERS = 2
+_go2_move_pool = ThreadPoolExecutor(max_workers=_GO2_MOVE_SENDERS, thread_name_prefix="go2-move")
+_go2_move_slots = threading.BoundedSemaphore(_GO2_MOVE_SENDERS)
+
+
+def _go2_send_stop(session=None, timeout=4, everything=False):
+    """Send a stop; returns (ok, body). A session-less stop (E-stop, deadman)
+    stops the robot and retires whatever drive is active ON THE ORIN — never a
+    session guessed here. Clears the drive-uncertainty flag only if the
+    confirmed stop covers the newest input."""
+    with _go2_drive_lock:
+        gen = _go2_drive["gen"]
+        retire = list(_go2_unretired)[-32:]
+    payload = {'session': session, 'all': bool(everything or not session)}
+    if retire:
+        payload['retire'] = retire
+    try:
+        r = robot_host.http().post(f'{robot_host.service_url()}/stop', json=payload, timeout=timeout)
+        body = r.json()
+        ok = r.status_code == 200 and bool(body.get('success'))
+        # The Orin retires the listed sessions on receipt (before any stop wait).
+        if r.status_code == 200 and body.get('retired') == len(retire):
+            with _go2_drive_lock:
+                for s in retire:
+                    _go2_unretired.pop(s, None)
+    except Exception as e:
+        logger.warning(f"[GO2] stop request failed: {e}")
+        return False, {'success': False, 'message': 'robot link unreachable'}
+    if ok:
+        with _go2_drive_lock:
+            if _go2_drive["gen"] == gen:
+                _go2_drive["possibly_moving"] = False
+    return ok, body
+
+
+def _go2_retire_released():
+    """Retire-only call: never stops a different, live press."""
+    with _go2_drive_lock:
+        retire = list(_go2_unretired)[-32:]
+    if not retire:
+        return True
+    try:
+        r = robot_host.http().post(f'{robot_host.service_url()}/stop',
+                                   json={'session': None, 'all': False, 'retire': retire}, timeout=2)
+        body = r.json()
+    except Exception as e:
+        logger.warning(f"[GO2] retire request failed: {e}")
+        return False
+    if r.status_code == 200 and body.get('retired') == len(retire):
+        with _go2_drive_lock:
+            for s in retire:
+                _go2_unretired.pop(s, None)
+        return True
+    return False
+
+
 def _go2_watchdog_loop():
     global _go2_watchdog_running
     _go2_watchdog_running = True
     while _go2_watchdog_running:
-        with _go2_move_inflight_lock:
-            _inflight = _go2_move_inflight
-        if (not _inflight) and _go2_last_move_ts > 0 and (time.time() - _go2_last_move_ts) > _GO2_MOVE_TIMEOUT:
-            try:
-                requests.post(f'{robot_host.service_url()}/stop', json={}, timeout=1)
-                logger.debug("[GO2 Watchdog] Auto-stop — no move command received")
-            except Exception:
-                pass
+        with _go2_drive_lock:
+            due = _go2_drive["possibly_moving"] and time.time() - _go2_drive["last_input"] > _GO2_MOVE_TIMEOUT
+        if due and not _go2_send_stop()[0]:
+            logger.warning("[GO2 Watchdog] auto-stop not confirmed yet — retrying")
+        elif not due and _go2_unretired and not _go2_retire_released():
+            logger.warning("[GO2 Watchdog] released press not yet retired on the robot — retrying")
         time.sleep(0.2)
 
 
@@ -849,7 +1071,7 @@ def _ensure_go2_watchdog():
 
 @app.route('/go2/command', methods=['POST'])
 def go2_command():
-    global _go2_last_command_ts, _go2_last_move_ts
+    global _go2_last_command_ts
     try:
         data = request.get_json()
         command = data.get('command')
@@ -864,12 +1086,10 @@ def go2_command():
 
         logger.info(f"Sending GO2 command: {command}")
         _go2_last_command_ts = now
+        # Posture commands are stop-gated on the Orin (it stops and verifies
+        # rest first), so the drive state is left to the deadman here.
 
-        # Kill the move watchdog when issuing posture commands — the watchdog
-        # sends /stop repeatedly which triggers BalanceStand on a standing robot
-        _go2_last_move_ts = 0.0
-
-        response = requests.post(f'{robot_host.service_url()}/command',
+        response = robot_host.http().post(f'{robot_host.service_url()}/command',
                                 json={'command': command},
                                 timeout=5)
 
@@ -894,51 +1114,82 @@ def go2_command():
 
     except Exception as e:
         logger.error(f"Failed to send GO2 command: {e}")
-        return jsonify({'success': False, 'message': str(e)}), 503
+        return jsonify({'success': False, 'message': 'robot link unreachable'}), 503
 
 @app.route('/go2/move', methods=['POST'])
 def go2_move():
-    global _go2_last_move_ts
     _ensure_go2_watchdog()
+    data = request.get_json(silent=True) or {}
     try:
-        data = request.get_json()
-        vx = max(-_GO2_MAX_VX, min(_GO2_MAX_VX, float(data.get('vx', 0))))
-        vy = max(-_GO2_MAX_VY, min(_GO2_MAX_VY, float(data.get('vy', 0))))
-        vyaw = max(-_GO2_MAX_VYAW, min(_GO2_MAX_VYAW, float(data.get('vyaw', 0))))
+        raw = [float(data.get(k, 0)) for k in ('vx', 'vy', 'vyaw')]
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'message': 'vx/vy/vyaw must be numbers'}), 400
+    if not all(math.isfinite(v) for v in raw):
+        return jsonify({'success': False, 'message': 'velocities must be finite'}), 400
+    vx = max(-_GO2_MAX_VX, min(_GO2_MAX_VX, raw[0]))
+    vy = max(-_GO2_MAX_VY, min(_GO2_MAX_VY, raw[1]))
+    vyaw = max(-_GO2_MAX_VYAW, min(_GO2_MAX_VYAW, raw[2]))
+    session, seq = data.get('session'), data.get('seq')   # generated in the browser, per press
+    permit = data.get('permit') if isinstance(data.get('permit'), str) and len(data.get('permit')) <= 64 else None
+    if not isinstance(session, str) or not isinstance(seq, int) or isinstance(seq, bool):
+        return jsonify({'success': False, 'message': 'session and seq are required'}), 400
+    with _go2_drive_lock:
+        released = session in _go2_released
+    if released:
+        return jsonify({'success': False, 'error': 'SESSION_RETIRED',
+                        'message': 'That drive was stopped — press again.'}), 409
+    with _go2_drive_lock:
+        _go2_drive["possibly_moving"] = True  # until a covering stop is confirmed
+        _go2_drive["last_input"] = time.time()
+        _go2_drive["gen"] += 1
+    try:
+        url = robot_host.cached_service_url()     # no discovery inside the drive deadline
+        if url is None:
+            return jsonify({'success': False, 'message': 'robot link unreachable'}), 503
+        # ~45 ms on a reused keep-alive.
+        if not _go2_move_slots.acquire(blocking=False):
+            return jsonify({'success': False, 'error': 'DEADLINE',
+                            'message': 'robot link slow — renewing'}), 504
+        expires = time.monotonic() + _GO2_MOVE_DEADLINE_S
 
-        _go2_last_move_ts = time.time()
-        global _go2_move_inflight
-        with _go2_move_inflight_lock:
-            _go2_move_inflight = True
+        def send():
+            if time.monotonic() >= expires:
+                return None                          # expired before sending: never published
+            return robot_host.http().post(f'{url}/move',
+                json={'vx': vx, 'vy': vy, 'vyaw': vyaw, 'session': session, 'seq': seq, 'permit': permit},
+                timeout=(0.3, 0.3))
         try:
-            # Must exceed the Orin's own 3.0s move-result timeout, or this proxy
-            # gives up before the robot can answer.
-            response = requests.post(f'{robot_host.service_url()}/move',
-                json={'vx': vx, 'vy': vy, 'vyaw': vyaw},
-                timeout=4
-            )
-        finally:
-            with _go2_move_inflight_lock:
-                _go2_move_inflight = False
-            _go2_last_move_ts = time.time()
+            fut = _go2_move_pool.submit(send)
+        except Exception:
+            _go2_move_slots.release()
+            raise
+        # The slot frees when the send finishes OR is cancelled while queued.
+        fut.add_done_callback(lambda _f: _go2_move_slots.release())
+        try:
+            response = fut.result(timeout=max(0.0, expires - time.monotonic()))
+        except FutureTimeout:
+            fut.cancel()                             # no effect if already on the wire (see above)
+            response = None
+        if response is None:
+            return jsonify({'success': False, 'error': 'DEADLINE',
+                            'message': 'robot link slow — renewing'}), 504
         return jsonify(response.json()), response.status_code
     except Exception as e:
-        _go2_last_move_ts = 0.0
         robot_host.report_failure()   # a venue change looks like a connection error
-        return jsonify({'success': False, 'message': str(e)}), 503
+        logger.warning(f"[GO2] move request failed: {e}")
+        return jsonify({'success': False, 'message': 'robot link unreachable'}), 503
 
 @app.route('/go2/stop', methods=['POST'])
 def go2_stop():
-    global _go2_last_move_ts
-    _go2_last_move_ts = 0.0
-    try:
-        response = requests.post(f'{robot_host.service_url()}/stop',
-            json={},
-            timeout=3
-        )
-        return jsonify(response.json()), response.status_code
-    except Exception as e:
-        return jsonify({'success': False, 'message': str(e)}), 503
+    _ensure_go2_watchdog()
+    data = request.get_json(silent=True) or {}
+    session = data.get('session')
+    session = session if isinstance(session, str) and 8 <= len(session) <= 64 else None
+    if session:
+        _go2_mark_released(session)          # retried until the Orin confirms retirement
+    ok, body = _go2_send_stop(session, everything=bool(data.get('all')))
+    # if not confirmed, the deadman (here and on the Orin) keeps retrying
+    return jsonify(body), (200 if ok else 202)
 
 @app.route('/go2/motion_mode', methods=['POST'])
 def go2_motion_mode():
@@ -949,7 +1200,7 @@ def go2_motion_mode():
 
         logger.info(f"Setting GO2 motion mode to: {mode}")
 
-        response = requests.post(f'{robot_host.service_url()}/motion_mode',
+        response = robot_host.http().post(f'{robot_host.service_url()}/motion_mode',
                                  json={'mode': mode},
                                  timeout=5)
 
@@ -963,7 +1214,7 @@ def go2_motion_mode():
 
     except Exception as e:
         logger.error(f"Failed to set GO2 motion mode: {e}")
-        return jsonify({'success': False, 'message': str(e)}), 503
+        return jsonify({'success': False, 'message': 'robot link unreachable'}), 503
 
 @app.route('/switch_model', methods=['POST'])
 def switch_detection_model():
@@ -1065,6 +1316,7 @@ def set_scene_context():
 @app.route('/api/scene/mode', methods=['GET'])
 def get_scene_mode():
     """Return the current narrator mode + gesture detection stats."""
+    _gesture_lease_check()
     narrator = get_narrator()
     if not narrator:
         return jsonify({'enabled': False})
@@ -1088,18 +1340,31 @@ def set_scene_mode():
     mode = data.get('mode', '').strip().lower()
     if mode not in ('casual', 'gesture'):
         return jsonify({'success': False, 'message': f'Invalid mode: {mode}'}), 400
-    global _gesture_enabled
+    global _gesture_enabled, _gesture_lease_until
+    # A page's periodic renewal extends a live arm but never re-arms: once any
+    # dashboard picks Observe (or the lease lapses), renewals from other open
+    # pages are told the current mode and follow it.
+    if data.get('renew') and mode == 'gesture':
+        _gesture_lease_check()
+        if not _gesture_enabled:
+            return jsonify({'success': True, 'mode': narrator.mode, 'renewed': False,
+                            'lease_seconds': _GESTURE_LEASE_S})
+        _gesture_lease_until = time.time() + _GESTURE_LEASE_S
+        return jsonify({'success': True, 'mode': narrator.mode, 'renewed': True,
+                        'lease_seconds': _GESTURE_LEASE_S})
     narrator.set_mode(mode)
-    # The slider is the gesture on/off control: 'gesture' arms, any other mode
-    # disarms. Firing a shake is a physical action, so the transition is always
-    # logged (never silent) and the operator can still override via
-    # POST /api/gesture {"enabled": ...}.
-    want = (mode == 'gesture')
-    if want != _gesture_enabled:
-        _gesture_enabled = want
-        logger.info("[GesturePose] %s via narrator slider (mode=%s)",
-                    'ARMED' if want else 'DISARMED', mode)
-    return jsonify({'success': True, 'mode': narrator.mode})
+    # The Gesture tab is the on/off control: 'gesture' arms (and each renewal
+    # from a visible tab extends the lease), any other mode disarms. Firing a
+    # shake is a physical action, so arming/disarming is always logged.
+    if mode == 'gesture':
+        _gesture_lease_until = time.time() + _GESTURE_LEASE_S
+        if not _gesture_enabled:
+            _gesture_enabled = True
+            logger.info("[GesturePose] ARMED from the dashboard Gesture tab (lease %.0fs, renewed by the open tab)",
+                        _GESTURE_LEASE_S)
+    else:
+        _gesture_disarm("dashboard switched to %s" % mode)
+    return jsonify({'success': True, 'mode': narrator.mode, 'lease_seconds': _GESTURE_LEASE_S})
 
 @app.route('/api/scene/summary')
 def get_scene_summary():
@@ -1591,7 +1856,7 @@ def rtsp_stop():
 def _refresh_robot_state():
     """Fetch battery/status from go2_service and cache for telemetry."""
     try:
-        resp = requests.get(f'{robot_host.service_url()}/battery', timeout=2)
+        resp = robot_host.public().get(f'{robot_host.service_url()}/battery', timeout=2)
         if resp.status_code == 200:
             data = resp.json()
             web_app._cached_robot_state.update({
@@ -1604,10 +1869,50 @@ def _refresh_robot_state():
         pass
 
 
+def _edge_health():
+    """Edge (Thor) compute health for 1.1 vitals events."""
+    import psutil
+    temps = []
+    try:
+        import glob
+        for p in glob.glob('/sys/class/thermal/thermal_zone*/temp'):
+            with open(p) as f:
+                temps.append(int(f.read().strip()) / 1000.0)
+    except Exception:
+        pass
+    vm = psutil.virtual_memory()
+    return {'cpu_percent': psutil.cpu_percent(interval=None),
+            'mem_used_gb': round((vm.total - vm.available) / 1e9, 1),
+            'mem_available_gb': round(vm.available / 1e9, 1),
+            'temp_max_c': round(max(temps), 1) if temps else None,
+            'detection_fps': web_app._detection_fps,
+            'video_frame_age_s': camera_manager.frame_age()}
+
+
+def _build_vitals_event():
+    """Fetch the robot link's /vitals superset and emit a `vitals` event."""
+    telemetry = get_telemetry()
+    if not telemetry or not telemetry.enabled:
+        return
+    try:
+        r = robot_host.public().get(f'{robot_host.service_url()}/vitals', timeout=2)
+        vitals = r.json() if r.status_code == 200 else {'connected': False}
+    except Exception:
+        vitals = {'connected': False}
+    web_app._cached_vitals = vitals
+    telemetry.emit_vitals(vitals, _edge_health())
+
+
 def _build_heartbeat_event():
     """Collect system state for periodic heartbeat telemetry."""
     import psutil
     _refresh_robot_state()
+    v = getattr(web_app, '_cached_vitals', None) or {}
+    web_app._cached_robot_state.update({
+        'posture': v.get('posture'),
+        'body_height': (v.get('sport') or {}).get('body_height'),
+        'motor_temp_max': (v.get('motor_summary') or {}).get('temp_max'),
+    })
     from config import get_config
     cfg = get_config()
     telemetry = get_telemetry()
@@ -1616,7 +1921,7 @@ def _build_heartbeat_event():
     # Check if go2_service is reachable
     go2_reachable = False
     try:
-        r = requests.get(f'{robot_host.service_url()}/status', timeout=2)
+        r = robot_host.public().get(f'{robot_host.service_url()}/status', timeout=2)
         go2_reachable = r.status_code == 200
     except Exception:
         pass
@@ -1649,7 +1954,32 @@ def _init_telemetry():
     tm = init_telemetry(cfg.config)
     tm.start()
     tm.start_heartbeat(_build_heartbeat_event)
+    tm.start_vitals(_build_vitals_event, float(telemetry_cfg.get('vitals_interval_seconds', 5)))
     atexit.register(tm.stop)
+    selector = _cloud_selector(telemetry_cfg.get('cloud_routing'))
+    tm.set_cloud_selector(selector)
+    try:
+        import motion_stream
+        web_app._motion = motion_stream.start_from_config(cfg.config.get('motion_stream') or {},
+                                                          telemetry_cfg.get('device_id', ''), tm.emit_maneuver,
+                                                          cloud_selector=selector)
+    except Exception as e:
+        logger.warning(f"[Motion] live twin not started: {e}")
+
+
+# The conference demo profile (UI settings) picks the cloud path (ADR 0011);
+# the mapping lives in ui_profiles so the header link and the data path agree.
+def _cloud_selector(_routes=None):
+    import ui_profiles
+    cache = {'t': 0.0, 'clouds': ['azure', 'aws']}
+
+    def select():
+        now = time.monotonic()
+        if now - cache['t'] > 1.0:                 # the twin asks 20 times a second; read the profile once a second
+            cache['clouds'] = ui_profiles.active_clouds()
+            cache['t'] = now
+        return cache['clouds']
+    return select
     logger.info("[Telemetry] Initialized and running")
 
 
@@ -1666,7 +1996,7 @@ def _gesture_shake_callback(gesture_text: str):
     def _send():
         try:
             logger.info(f"[Gesture] Sending GO2 shake — triggered by: '{gesture_text}'")
-            resp = requests.post(
+            resp = robot_host.http().post(
                 f'{robot_host.service_url()}/command',
                 json={'command': 'shake'},
                 timeout=8,
@@ -1695,8 +2025,12 @@ def _init_scene_narrator():
         ollama_url=narrator_cfg.get('ollama_url'),
         model=narrator_cfg.get('model'),
         scene_context=narrator_cfg.get('scene_context'),
+        backend=narrator_cfg.get('backend', 'ollama'),
+        api_url=narrator_cfg.get('api_url'),
+        model_label=narrator_cfg.get('model_label'),
+        casual_interval=narrator_cfg.get('interval_seconds'),
     )
-    narrator.set_frame_source(lambda: camera_manager.get_frame())
+    narrator.set_frame_source(lambda: camera_manager.get_frame(max_age=2.0))   # never narrate a frozen frame
 
     # VLM gesture callback is DISABLED — YOLO Pose keypoints are the sole
     # shake trigger now (faster, no hallucination false-positives).
@@ -1712,7 +2046,7 @@ def _init_scene_narrator():
     global _gesture_enabled
     default_mode = narrator_cfg.get('default_mode', 'casual')
     narrator.set_mode(default_mode)
-    _gesture_enabled = (default_mode == 'gesture')
+    _gesture_enabled = False   # armed only by a visible dashboard tab (lease), never at boot
     logger.info(f"[GesturePose] Outstretched hand detection {'ENABLED' if _gesture_enabled else 'DISABLED'} (default mode: {default_mode})")
 
     narrator.start()
@@ -1720,6 +2054,34 @@ def _init_scene_narrator():
 
 
 _init_scene_narrator()
+
+
+def _ppe_preload():
+    """Warm the PPE model in the background shortly after start-up, so the
+    first switch to PPE mode is instant instead of a ~30 s pipeline stall.
+    Delayed so it never competes with auto-arm and the first narration."""
+    try:
+        from config import get_config
+        cfg = get_config().config.get('ppe') or {}
+    except Exception:
+        cfg = {}
+    if not cfg.get('preload', True):
+        return
+    time.sleep(float(cfg.get('preload_delay_s', 45)))
+    try:
+        pd = get_ppe_detector()
+        try:
+            import torch
+            # same device choice as the PPE mode switch, so that switch is a no-op
+            pd.set_device('cuda' if torch.cuda.is_available() else 'cpu')
+        except Exception:
+            pd.set_device('cpu')
+        pd.warmup()
+    except Exception as e:
+        logger.warning(f"[PPE] preload failed: {e}")
+
+
+threading.Thread(target=_ppe_preload, daemon=True, name='ppe-preload').start()
 
 @app.route('/api/detection/mode', methods=['GET'])
 def get_detection_mode():
@@ -1849,4 +2211,13 @@ if __name__ == '__main__':
     print("Starting Computer Vision Object Detector Web App")
     print("Open your browser and go to: http://0.0.0.0:8000")
     # Debug mode disabled to prevent double camera initialization (Flask spawns child process in debug mode)
-    app.run(debug=False, host='0.0.0.0', port=8000, threaded=True, use_reloader=False)
+    # HTTPS when a certificate is configured (Thor: generated by the container
+    # entrypoint), so operator passwords and session cookies never cross the
+    # network in clear text.
+    cert, key = os.environ.get('WATCHDOG_TLS_CERT'), os.environ.get('WATCHDOG_TLS_KEY')
+    if bool(cert) != bool(key):
+        raise SystemExit("WATCHDOG_TLS_CERT and WATCHDOG_TLS_KEY must be set together; "
+                         "refusing to start without TLS")
+    ssl_context = (cert, key) if cert and key else None
+    app.run(debug=False, host='0.0.0.0', port=8000, threaded=True, use_reloader=False,
+            ssl_context=ssl_context)

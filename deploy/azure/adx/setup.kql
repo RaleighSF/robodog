@@ -1,0 +1,337 @@
+// Watch Dog telemetry schema in Azure Data Explorer.
+// Run in the ADX web UI against the database (e.g. "watchdog"), one block at
+// a time or with "Run all". Idempotent: .create-merge / .create-or-alter.
+
+// 1) Landing table: one row per event, whole JSON kept (schema-agnostic).
+.create-merge table RawEvents (Raw: dynamic, IngestedAt: datetime)
+
+.create-or-alter table RawEvents ingestion json mapping "RawEventsMapping"
+'[{"column":"Raw","path":"$","datatype":"dynamic"},{"column":"IngestedAt","path":"$.timestamp","datatype":"datetime","transform":null}]'
+
+.alter-merge table RawEvents policy retention softdelete = 30d
+
+// The query API's ingest function streams Event Hubs batches into RawEvents
+// (ADR 0008). Grant its managed identity separately, once per deployment:
+//   .add database watchdog ingestors ('aadapp=<function MI app id>;<tenant id>')
+//   .add database watchdog viewers   ('aadapp=<function MI app id>;<tenant id>')
+.alter database watchdog policy streamingingestion enable
+
+.alter table RawEvents policy streamingingestion enable
+
+// 2) Typed tables, filled automatically by update policies.
+.create-merge table Heartbeats (
+    Timestamp: datetime, DeviceId: string, DeviceType: string, SessionId: string,
+    RobotId: string, BatterySoc: real, BatteryVoltage: real, BatteryCurrentMa: real,
+    RobotConnected: bool, MotionMode: string, Posture: string, BodyHeight: real,
+    MotorTempMax: real, DetectionFps: real, FramesProcessed: long,
+    StreamActive: bool, DetectionWorkerAlive: bool, RobotLinkReachable: bool,
+    UptimeSeconds: real, Raw: dynamic)
+
+.create-merge table Detections (
+    Timestamp: datetime, DeviceId: string, SessionId: string, EventId: string,
+    Detector: string, ClassName: string, Confidence: real,
+    BboxX: int, BboxY: int, BboxW: int, BboxH: int, ImageKey: string)
+
+.create-merge table Commands (
+    Timestamp: datetime, DeviceId: string, SessionId: string, Command: string,
+    Success: bool, Message: string)
+
+.create-merge table Alerts (
+    Timestamp: datetime, DeviceId: string, SessionId: string, AlertType: string,
+    EventId: string, DetectionCount: int, Raw: dynamic)
+
+// Optional robot.* fields (posture, body_height, motor_temp_max) arrive with
+// schema 1.1; on 1.0 events they are simply null.
+.create-or-alter function with (folder="ingest") ExpandHeartbeats() {
+    RawEvents
+    | where tostring(Raw.event_type) == "heartbeat"
+    | project Timestamp = todatetime(Raw.timestamp),
+              DeviceId = tostring(Raw.device.device_id), DeviceType = tostring(Raw.device.device_type),
+              SessionId = tostring(Raw.session_id), RobotId = tostring(Raw.robot.robot_id),
+              BatterySoc = toreal(Raw.robot.battery.soc), BatteryVoltage = toreal(Raw.robot.battery.voltage),
+              BatteryCurrentMa = toreal(Raw.robot.battery.current), RobotConnected = tobool(Raw.robot.battery.connected),
+              MotionMode = tostring(Raw.robot.motion_mode), Posture = tostring(Raw.robot.posture),
+              BodyHeight = toreal(Raw.robot.body_height), MotorTempMax = toreal(Raw.robot.motor_temp_max),
+              DetectionFps = toreal(Raw.system_health.detection_fps), FramesProcessed = tolong(Raw.system_health.frames_processed),
+              StreamActive = tobool(Raw.system_health.stream_active), DetectionWorkerAlive = tobool(Raw.system_health.detection_worker_alive),
+              RobotLinkReachable = tobool(Raw.system_health.go2_service_reachable),
+              UptimeSeconds = toreal(Raw.system_health.uptime_seconds), Raw
+}
+
+.create-or-alter function with (folder="ingest") ExpandDetections() {
+    RawEvents
+    | where tostring(Raw.event_type) == "detection" or tostring(Raw.event_type) startswith "alert"
+    | mv-expand d = Raw.vision.detections
+    | where isnotnull(d)
+    | project Timestamp = todatetime(Raw.timestamp), DeviceId = tostring(Raw.device.device_id),
+              SessionId = tostring(Raw.session_id), EventId = tostring(Raw.event_id),
+              Detector = tostring(Raw.vision.detector), ClassName = tostring(d.class_name),
+              Confidence = toreal(d.confidence), BboxX = toint(d.bbox.x), BboxY = toint(d.bbox.y),
+              BboxW = toint(d.bbox.w), BboxH = toint(d.bbox.h), ImageKey = tostring(Raw.vision.detection_image_key)
+}
+
+.create-or-alter function with (folder="ingest") ExpandCommands() {
+    RawEvents
+    | where tostring(Raw.event_type) == "command"
+    | project Timestamp = todatetime(Raw.timestamp), DeviceId = tostring(Raw.device.device_id),
+              SessionId = tostring(Raw.session_id), Command = tostring(Raw.robot.last_command.command),
+              Success = tobool(Raw.robot.last_command.success), Message = tostring(Raw.robot.last_command.message)
+}
+
+.create-or-alter function with (folder="ingest") ExpandAlerts() {
+    RawEvents
+    | where tostring(Raw.event_type) startswith "alert"
+    | project Timestamp = todatetime(Raw.timestamp), DeviceId = tostring(Raw.device.device_id),
+              SessionId = tostring(Raw.session_id), AlertType = tostring(Raw.event_type),
+              EventId = tostring(Raw.event_id), DetectionCount = toint(Raw.vision.detection_count), Raw
+}
+
+.alter table Heartbeats policy update @'[{"IsEnabled":true,"Source":"RawEvents","Query":"ExpandHeartbeats()","IsTransactional":false}]'
+.alter table Detections policy update @'[{"IsEnabled":true,"Source":"RawEvents","Query":"ExpandDetections()","IsTransactional":false}]'
+.alter table Commands   policy update @'[{"IsEnabled":true,"Source":"RawEvents","Query":"ExpandCommands()","IsTransactional":false}]'
+.alter table Alerts     policy update @'[{"IsEnabled":true,"Source":"RawEvents","Query":"ExpandAlerts()","IsTransactional":false}]'
+
+// 3) Query API functions - the ONLY surface the agent/dashboard use. The AWS
+//    build implements the same names over Athena, so callers never change.
+.create-or-alter function with (folder="api", docstring="Latest vitals per device") Vitals_Latest() {
+    Heartbeats | summarize arg_max(Timestamp, *) by DeviceId
+    | project DeviceId, Timestamp, AgeSeconds = datetime_diff('second', now(), Timestamp),
+              BatterySoc, BatteryVoltage, RobotConnected, Posture, BodyHeight, MotorTempMax,
+              DetectionFps, StreamActive, DetectionWorkerAlive, RobotLinkReachable
+}
+
+.create-or-alter function with (folder="api", docstring="Detections by class") Detections_Summary(window: timespan = 1h) {
+    Detections | where Timestamp > ago(window)
+    | summarize Count = count(), AvgConfidence = round(avg(Confidence), 3), LastSeen = max(Timestamp) by ClassName
+    | order by Count desc
+}
+
+.create-or-alter function with (folder="api", docstring="Recent alerts") Alerts_Recent(window: timespan = 1h) {
+    Alerts | where Timestamp > ago(window)
+    | project Timestamp, DeviceId, AlertType, DetectionCount | order by Timestamp desc | take 50
+}
+
+.create-or-alter function with (folder="api", docstring="Recent commands") Commands_Recent(window: timespan = 1h) {
+    Commands | where Timestamp > ago(window) | order by Timestamp desc | take 50
+}
+
+.create-or-alter function with (folder="api", docstring="Health checks the overwatch agent alerts on") Overwatch_Findings() {
+    let v = Vitals_Latest();
+    union
+      (v | where AgeSeconds > 120 | project DeviceId, Severity = "high", Finding = strcat("No telemetry for ", AgeSeconds, " s")),
+      (v | where BatterySoc < 20 | project DeviceId, Severity = iff(BatterySoc < 10, "high", "medium"), Finding = strcat("Battery at ", BatterySoc, "%")),
+      (v | where isnotnull(MotorTempMax) and MotorTempMax > 70 | project DeviceId, Severity = "high", Finding = strcat("Motor temperature ", MotorTempMax, " C - overheating risk")),
+      (v | where RobotConnected == false | project DeviceId, Severity = "high", Finding = "Robot link down"),
+      (v | where DetectionWorkerAlive == false | project DeviceId, Severity = "medium", Finding = "Detection pipeline stopped"),
+      (Alerts | where Timestamp > ago(15m) and AlertType has "ppe" | summarize n = count() by DeviceId
+              | project DeviceId, Severity = "medium", Finding = strcat(n, " PPE violation alerts in 15 min"))
+}
+
+// ---------------------------------------------------------------------------
+// Schema 1.1: `vitals` events (every ~5 s) - the robot's full state + edge health.
+// ---------------------------------------------------------------------------
+.create-merge table Vitals (
+    Timestamp: datetime, DeviceId: string, SessionId: string, Connected: bool, HasVideo: bool,
+    Posture: string, BodyHeight: real, SportMode: int, GaitType: int, ErrorCode: int,
+    VelocityX: real, VelocityY: real, YawSpeed: real, Roll: real, Pitch: real, Yaw: real,
+    BatterySoc: real, PackVoltage: real, PackCurrentA: real, BmsCycles: int, BmsTempMax: real,
+    BoardTempMax: real, ImuTemp: real, MotorTempMax: real, MotorTempAvg: real, HottestJoint: string,
+    LostFrames: long, FootForce: dynamic, RangeObstacle: dynamic,
+    EdgeCpuPercent: real, EdgeMemAvailableGb: real, EdgeTempMax: real, EdgeDetectionFps: real, Raw: dynamic,
+    LidarWindow: string, LidarRingSectors: dynamic, LidarHz: real, LidarErrorState: int, ObstacleAvoidance: bool,
+    BatteryCurrentA: real, Charging: bool)
+
+.create-merge table Motors (
+    Timestamp: datetime, DeviceId: string, Joint: string, Leg: string, Segment: string,
+    Temperature: real, TorqueEst: real, Position: real, Velocity: real, Lost: long, Mode: int)
+
+.create-or-alter function with (folder="ingest") ExpandVitals() {
+    RawEvents
+    | where tostring(Raw.event_type) == "vitals"
+    | extend v = Raw.robot_vitals, e = Raw.edge
+    // Sport state can stop while LowState continues: attitude and height count only while fresh.
+    | extend SportFresh = isnull(v.sport_age_s) or toreal(v.sport_age_s) <= 2.0
+    | project Timestamp = todatetime(Raw.timestamp), DeviceId = tostring(Raw.device.device_id),
+              SessionId = tostring(Raw.session_id), Connected = tobool(v.connected), HasVideo = tobool(v.has_video),
+              Posture = tostring(v.posture), BodyHeight = iff(SportFresh, toreal(v.sport.body_height), real(null)),
+              SportMode = toint(v.sport.mode), GaitType = toint(v.sport.gait_type), ErrorCode = toint(v.sport.error_code),
+              VelocityX = toreal(v.sport.velocity[0]), VelocityY = toreal(v.sport.velocity[1]), YawSpeed = toreal(v.sport.yaw_speed),
+              Roll = iff(SportFresh, toreal(v.imu.rpy[0]), real(null)), Pitch = iff(SportFresh, toreal(v.imu.rpy[1]), real(null)),
+              Yaw = iff(SportFresh, toreal(v.imu.rpy[2]), real(null)),
+              BatterySoc = toreal(v.power.bms.soc), PackVoltage = toreal(v.power.power_v), PackCurrentA = toreal(v.power.power_a),
+              BmsCycles = toint(v.power.bms.cycle),
+              BmsTempMax = toreal(array_sort_desc(array_concat(v.power.bms.bq_ntc, v.power.bms.mcu_ntc))[0]),
+              BoardTempMax = toreal(max_of(toint(v.board_temps.ntc1), toint(v.board_temps.ntc2))),
+              ImuTemp = toreal(v.imu.temperature),
+              MotorTempMax = toreal(v.motor_summary.temp_max), MotorTempAvg = toreal(v.motor_summary.temp_avg),
+              HottestJoint = tostring(v.motor_summary.hottest_joint), LostFrames = tolong(v.motor_summary.lost_total),
+              FootForce = v.feet.force, RangeObstacle = v.sport.range_obstacle,
+              EdgeCpuPercent = toreal(e.cpu_percent), EdgeMemAvailableGb = toreal(e.mem_available_gb),
+              EdgeTempMax = toreal(e.temp_max_c), EdgeDetectionFps = toreal(e.detection_fps), Raw,
+              LidarWindow = tostring(v.lidar.window), LidarRingSectors = v.lidar.ring_sectors,
+              LidarHz = toreal(v.lidar.cloud_hz), LidarErrorState = toint(v.lidar.error_state),
+              ObstacleAvoidance = tobool(v.lidar.avoidance),
+              // BMS current is signed mA: + charging (observed +7.7 A docked), - discharging (-2.7 A standing).
+              BatteryCurrentA = toreal(v.power.bms.current) / 1000.0, Charging = toreal(v.power.bms.current) > 500
+}
+
+.create-or-alter function with (folder="ingest") ExpandMotors() {
+    RawEvents
+    | where tostring(Raw.event_type) == "vitals"
+    | mv-expand m = Raw.robot_vitals.motors
+    | where isnotnull(m)
+    | extend Joint = tostring(m.joint)
+    | project Timestamp = todatetime(Raw.timestamp), DeviceId = tostring(Raw.device.device_id), Joint,
+              Leg = tostring(split(Joint, "_")[0]), Segment = tostring(split(Joint, "_")[1]),
+              Temperature = toreal(m.temperature), TorqueEst = toreal(m.tau_est), Position = toreal(m.q),
+              Velocity = toreal(m.dq), Lost = tolong(m.lost), Mode = toint(m.mode)
+}
+
+.alter table Vitals policy update @'[{"IsEnabled":true,"Source":"RawEvents","Query":"ExpandVitals()","IsTransactional":false}]'
+.alter table Motors policy update @'[{"IsEnabled":true,"Source":"RawEvents","Query":"ExpandMotors()","IsTransactional":false}]'
+
+.create-or-alter function with (folder="api", docstring="Vitals time series") Vitals_Series(window: timespan = 1h, bin_size: timespan = 1m) {
+    // From the 5 s vitals stream (schema 1.1+); BatteryCurrentA added for runtime estimates.
+    Vitals | where Timestamp > ago(window)
+    | summarize BatterySoc = avg(BatterySoc), DetectionFps = avg(EdgeDetectionFps),
+                MotorTempMax = max(MotorTempMax), Connected = max(toint(Connected)),
+                BatteryCurrentA = avg(BatteryCurrentA)
+            by bin(Timestamp, bin_size), DeviceId
+}
+
+// Vitals_Latest prefers the 5-second vitals stream; falls back to heartbeats.
+.create-or-alter function with (folder="api", docstring="Latest vitals per device") Vitals_Latest() {
+    let fromVitals = Vitals | summarize arg_max(Timestamp, *) by DeviceId
+        | project DeviceId, Timestamp, BatterySoc, PackVoltage, Connected, HasVideo, Posture, BodyHeight,
+                  MotorTempMax, MotorTempAvg, HottestJoint, Roll, Pitch, ErrorCode,
+                  DetectionFps = EdgeDetectionFps, EdgeTempMax, EdgeMemAvailableGb,
+                  LidarWindow, LidarHz, LidarErrorState, ObstacleAvoidance, BatteryCurrentA, Charging;
+    let fromHeartbeats = Heartbeats | summarize arg_max(Timestamp, *) by DeviceId
+        | where DeviceId !in ((fromVitals | project DeviceId))
+        | project DeviceId, Timestamp, BatterySoc, PackVoltage = BatteryVoltage, Connected = RobotConnected,
+                  HasVideo = bool(null), Posture, BodyHeight, MotorTempMax, MotorTempAvg = real(null),
+                  HottestJoint = "", Roll = real(null), Pitch = real(null), ErrorCode = int(null),
+                  DetectionFps, EdgeTempMax = real(null), EdgeMemAvailableGb = real(null),
+                  LidarWindow = "", LidarHz = real(null), LidarErrorState = int(null), ObstacleAvoidance = bool(null),
+                  BatteryCurrentA = real(null), Charging = bool(null);
+    union fromVitals, fromHeartbeats
+    | extend AgeSeconds = datetime_diff('second', now(), Timestamp)
+}
+
+.create-or-alter function with (folder="api", docstring="Latest state of each of the 12 joints") Motors_Latest() {
+    Motors | summarize arg_max(Timestamp, *) by DeviceId, Joint
+    | project DeviceId, Joint, Leg, Segment, Temperature, TorqueEst, Position, Velocity, Lost, Timestamp
+    | order by Leg asc, Segment asc
+}
+
+.create-or-alter function with (folder="api", docstring="Joint temperature/torque over time") Motors_Series(window: timespan = 1h, bin_size: timespan = 1m) {
+    Motors | where Timestamp > ago(window)
+    | summarize Temperature = max(Temperature), TorqueAbs = avg(abs(TorqueEst)) by bin(Timestamp, bin_size), Joint
+}
+
+.create-or-alter function with (folder="api", docstring="Posture changes over time") Posture_Timeline(window: timespan = 1h) {
+    Vitals | where Timestamp > ago(window)
+    | order by Timestamp asc
+    | extend Prev = prev(Posture)
+    | where Posture != Prev
+    | project Timestamp, DeviceId, Posture, BodyHeight
+}
+
+// Overwatch: re-declared to include joint/edge findings (thresholds are placeholders
+// until calibrated on the real dog).
+.create-or-alter function with (folder="api", docstring="Health checks the overwatch agent alerts on") Overwatch_Findings() {
+    let v = Vitals_Latest();
+    union
+      (v | where AgeSeconds > 120 | project DeviceId, Severity = "high", Finding = strcat("No telemetry for ", AgeSeconds, " s")),
+      (v | where BatterySoc < 20 | project DeviceId, Severity = iff(BatterySoc < 10, "high", "medium"), Finding = strcat("Battery at ", BatterySoc, "%")),
+      (v | where MotorTempMax > 70 | project DeviceId, Severity = "high", Finding = strcat(HottestJoint, " at ", MotorTempMax, " C - overheating risk; sit or lie the dog down")),
+      (v | where Connected == false | project DeviceId, Severity = "high", Finding = "Robot link down"),
+      (v | where isnotnull(ErrorCode) and ErrorCode != 0 and ErrorCode !in (100, 1001, 1002)   // posture states, not faults (dashboard STATE_CODES)
+         | project DeviceId, Severity = "medium", Finding = strcat("Robot error code ", ErrorCode)),
+      (v | where abs(Roll) > 0.6 or abs(Pitch) > 0.6 | project DeviceId, Severity = "high", Finding = "Body tilted - possible fall"),
+      (v | where EdgeTempMax > 85 | project DeviceId, Severity = "medium", Finding = strcat("Edge compute at ", EdgeTempMax, " C")),
+      (v | where LidarWindow == "obstructed" and AgeSeconds <= 120
+         | project DeviceId, Severity = "medium", Finding = iff(ObstacleAvoidance == true,
+             "Head lidar sees returns close on every side: sensor window dirty, or the dog is boxed in. Obstacle avoidance will block walking - wipe the head sensor or clear the space.",
+             "Head lidar sees returns close on every side: sensor window dirty, or the dog is boxed in. Wipe the head sensor before turning obstacle avoidance on.")),
+      (v | where (LidarErrorState > 0 or LidarHz < 10) and AgeSeconds <= 120
+         | project DeviceId, Severity = "medium", Finding = strcat("Head lidar degraded (error ", LidarErrorState, ", ", LidarHz, " Hz)")),
+      (Motors | where Timestamp > ago(5m) and Lost > 0 | summarize n = max(Lost) by DeviceId, Joint
+              | project DeviceId, Severity = "low", Finding = strcat(Joint, " motor lost ", n, " frames")),
+      (Alerts | where Timestamp > ago(15m) and AlertType has "ppe" | summarize n = count() by DeviceId
+              | project DeviceId, Severity = "medium", Finding = strcat(n, " PPE violation alerts in 15 min"))
+}
+
+// ---------------------------------------------------------------------------
+// Booth dashboard (live mode): the full latest vitals row, incl. Raw for cell
+// voltages / BMS temperatures. Same name on every cloud (ADR 0002).
+// ---------------------------------------------------------------------------
+.create-or-alter function with (folder="api", docstring="Full latest vitals row per device (dashboard live mode)") Vitals_Snapshot() {
+    Vitals | summarize arg_max(Timestamp, *) by DeviceId
+    | extend AgeSeconds = datetime_diff('second', now(), Timestamp)
+}
+
+// ---------------------------------------------------------------------------
+// Schema 1.2: maneuvers recognized on the edge from the live joint stream
+// (motion_stream.py, ADR 0010). Advisory only: they never light a master.
+// ---------------------------------------------------------------------------
+.create-merge table Maneuvers (Timestamp: datetime, DeviceId: string, SessionId: string, Name: string, Detail: dynamic)
+
+.create-or-alter function with (folder="ingest") ExpandManeuvers() {
+    RawEvents
+    | where tostring(Raw.event_type) == "maneuver"
+    | project Timestamp = todatetime(Raw.timestamp), DeviceId = tostring(Raw.device.device_id),
+              SessionId = tostring(Raw.session_id), Name = tostring(Raw.maneuver.name),
+              Detail = bag_remove_keys(Raw.maneuver, dynamic(["name", "t"]))
+}
+
+.alter table Maneuvers policy update @'[{"IsEnabled":true,"Source":"RawEvents","Query":"ExpandManeuvers()","IsTransactional":false}]'
+
+.create-or-alter function with (folder="api", docstring="Maneuvers recognized from the live joint stream (hello, sit, stand_up, lie_down)") Maneuvers_Recent(window: timespan = 1h) {
+    Maneuvers | where Timestamp > ago(window) | order by Timestamp desc | take 50
+    | project Timestamp, DeviceId, Name, Detail
+}
+
+// Overwatch: joint CAUTION band (55 C) mirrored from the dashboard's LIMITS
+// (cloud/booth-dashboard/src/lib/model.ts). Thresholds are placeholders.
+.create-or-alter function with (folder="api", docstring="Health checks the overwatch agent alerts on. Terse EICAS-style lines; the agent adds the explanation.") Overwatch_Findings() {
+    let v = Vitals_Latest();
+    // Hot joints carry their own history: change over the last 10 min and time spent at or above 55 C.
+    let hist = Motors | where Timestamp > ago(2h) | project DeviceId, Joint, Timestamp, Temperature;
+    let lastCool = hist | where Temperature < 55 | summarize LastCool = max(Timestamp) by DeviceId, Joint;
+    let since = hist | where Temperature >= 55 | join kind=leftouter lastCool on DeviceId, Joint
+        | where isnull(LastCool) or Timestamp > LastCool | summarize Since = min(Timestamp) by DeviceId, Joint;
+    // Over-limit time is measured on its own: only the current run at or above 70 C.
+    let lastUnder = hist | where Temperature < 70 | summarize LastUnder = max(Timestamp) by DeviceId, Joint;
+    let sinceOver = hist | where Temperature >= 70 | join kind=leftouter lastUnder on DeviceId, Joint
+        | where isnull(LastUnder) or Timestamp > LastUnder | summarize SinceOver = min(Timestamp) by DeviceId, Joint;
+    let ref = hist | where Timestamp > ago(10m) | summarize arg_min(Timestamp, Temperature) by DeviceId, Joint
+        | project DeviceId, Joint, RefT = Timestamp, T0 = Temperature;
+    let hotJoints = Motors_Latest() | where Temperature >= 55
+        | join kind=leftouter ref on DeviceId, Joint | join kind=leftouter since on DeviceId, Joint
+        | join kind=leftouter sinceOver on DeviceId, Joint
+        | extend D = Temperature - T0, WinMin = toint(round(datetime_diff('second', Timestamp, RefT) / 60.0)),
+                 InBandMin = toint(datetime_diff('minute', now(), iff(Temperature >= 70, SinceOver, Since)))
+        | join kind=leftouter (v | project DeviceId, NowPosture = Posture, NowCharging = Charging) on DeviceId
+        | extend Context = strcat(" · ", iff(NowPosture == "low", "sitting", NowPosture), iff(NowCharging == true, ", charging", ""))
+        | extend Trend = iff(isnull(D) or WinMin < 1, "", iff(abs(D) < 1, " · steady",
+                             strcat(" · ", iff(D > 0, "+", "−"), toint(round(abs(D))), "° in ", WinMin, " min"))),
+                 Held = iff(isnull(InBandMin), "", strcat(" · ", InBandMin, " min ", iff(Temperature >= 70, "over limit", "in caution")));
+    union
+      (v | where AgeSeconds > 120 | project DeviceId, Severity = "high", Finding = strcat("No telemetry for ", AgeSeconds, " s")),
+      (v | where BatterySoc < 20 | project DeviceId, Severity = iff(BatterySoc < 10, "high", "medium"), Finding = strcat("Battery ", toint(BatterySoc), " %")),
+      (hotJoints | project DeviceId, Severity = iff(Temperature >= 70, "high", "medium"),
+                   Finding = strcat(replace_string(Joint, "_", " "), " ", toint(Temperature), " °C", Trend, Held, Context)),
+      (v | where Connected == false | project DeviceId, Severity = "high", Finding = "Robot link down"),
+      (v | where isnotnull(ErrorCode) and ErrorCode != 0 and ErrorCode !in (100, 1001, 1002)   // posture states, not faults (dashboard STATE_CODES)
+         | project DeviceId, Severity = "medium", Finding = strcat("Error code ", ErrorCode)),
+      (v | where abs(Roll) > 0.6 or abs(Pitch) > 0.6 | project DeviceId, Severity = "high", Finding = "Body tilt · possible fall"),
+      (v | where EdgeTempMax > 85 | project DeviceId, Severity = "medium", Finding = strcat("Thor ", toint(EdgeTempMax), " °C")),
+      (v | where LidarWindow == "obstructed" and AgeSeconds <= 120
+         | project DeviceId, Severity = "medium", Finding = "Lidar window obstructed"),
+      (v | where (LidarErrorState > 0 or LidarHz < 10) and AgeSeconds <= 120
+         | project DeviceId, Severity = "medium", Finding = strcat("Lidar degraded · ", LidarHz, " Hz")),
+      // Motor "lost" frames are not alerted: the counter is undocumented and not actionable (LINK page shows it).
+      (Alerts | where Timestamp > ago(15m) and AlertType has "ppe" | summarize n = count() by DeviceId
+              | project DeviceId, Severity = "medium", Finding = strcat(n, " PPE alerts · 15 min"))
+}

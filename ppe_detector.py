@@ -128,6 +128,23 @@ class PPEDetector:
                 logger.error(f"[PPEDetector] Failed to load model: {e}")
                 return False
 
+    def warmup(self) -> bool:
+        """Load the model and run one throwaway inference, so the first real
+        PPE frame is fast. Cold, the first PPE call took ~31 s on the Thor
+        (model + CLIP text encoder + CUDA kernels) and stalled the pipeline
+        (2026-09-29 smoke test); warm, inference is 15-30 ms."""
+        t0 = time.time()
+        if not self._ensure_model():
+            return False
+        try:
+            blank = np.zeros((_PPE_FRAME_DIM * 9 // 16, _PPE_FRAME_DIM, 3), dtype=np.uint8)
+            self._model(blank, verbose=False, conf=_PPE_CONF)
+        except Exception as e:
+            logger.warning(f"[PPEDetector] warm-up inference failed: {e}")
+            return False
+        logger.info(f"[PPEDetector] warmed up in {time.time() - t0:.1f}s")
+        return True
+
     def should_run_this_frame(self) -> bool:
         self._frame_counter += 1
         return (self._frame_counter % _PPE_FRAME_SKIP) == 0
