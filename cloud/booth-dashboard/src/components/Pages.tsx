@@ -1,6 +1,7 @@
 "use client";
 // Synoptic pages (EICAS): every vital not on the main display.
 import { LIMITS, Posture, STATE_CODES, Telemetry } from "@/lib/model";
+import { showTemp, TEMP_UNIT } from "@/lib/temp";
 import { TrendTape } from "./Instruments";
 
 export const PAGES = ["POWER", "GAIT", "ATTITUDE", "VISION", "EDGE", "LINK"] as const;
@@ -41,8 +42,8 @@ function Power({ d, stale }: { d: Telemetry; stale: boolean }) {
         <Readout label={b.charging ? "Charging" : "Battery"} value={stale || b.batteryA == null ? "--" : `${b.batteryA > 0 ? "+" : ""}${b.batteryA.toFixed(1)}`} unit=" A" state={!stale && b.charging ? "ok" : undefined} />
         <Readout label="Load" value={stale ? "--" : f(b.packA, 1)} unit=" A" />
         <Readout label="Cycles" value={stale ? "--" : f(b.cycles)} />
-        <Readout label="BMS max" value={stale ? "--" : f(b.bmsTemps.length ? Math.max(...b.bmsTemps) : null, 0)} unit=" °C" />
-        <Readout label="Board" value={stale ? "--" : f(b.boardTemps.length ? Math.max(...b.boardTemps) : null, 0)} unit=" °C" />
+        <Readout label="BMS max" value={stale ? "--" : showTemp(b.bmsTemps.length ? Math.max(...b.bmsTemps) : null)} unit={` ${TEMP_UNIT}`} />
+        <Readout label="Board" value={stale ? "--" : showTemp(b.boardTemps.length ? Math.max(...b.boardTemps) : null)} unit={` ${TEMP_UNIT}`} />
       </div>
       <TrendTape label="State of charge" unit="%" data={series} min={0} max={100} limits={[{ v: LIMITS.batteryCaution, kind: "caution" }, { v: LIMITS.batteryWarning, kind: "warning" }]} />
     </div>
@@ -132,7 +133,7 @@ function Attitude({ d, stale }: { d: Telemetry; stale: boolean }) {
         <div className="ro-grid two">
           <Readout label="Roll" value={attFail ? "--" : f(deg(roll), 1)} unit="°" state={!attFail && Math.abs(roll) > LIMITS.tiltWarning ? "warning" : undefined} />
           <Readout label="Pitch" value={attFail ? "--" : f(deg(pitch), 1)} unit="°" state={!attFail && Math.abs(pitch) > LIMITS.tiltWarning ? "warning" : undefined} />
-          <Readout label="IMU temp" value={stale ? "--" : f(s.imuTemp, 0)} unit=" °C" />
+          <Readout label="IMU temp" value={stale ? "--" : showTemp(s.imuTemp)} unit={` ${TEMP_UNIT}`} />
           <Readout label="Posture" value={stale ? "--" : s.posture.toUpperCase()} />
         </div>
         <div className="sil-strip" aria-label="Posture history">
@@ -174,11 +175,11 @@ function Edge({ d, stale }: { d: Telemetry; stale: boolean }) {
       <div className="ro-grid">
         <Readout label="Thor CPU" value={stale ? "--" : f(e.cpu, 0)} unit=" %" />
         <Readout label="Memory free" value={stale ? "--" : f(e.memAvailGb, 1)} unit=" GB" />
-        <Readout label="Thor temp" value={stale ? "--" : f(e.temp, 0)} unit=" °C" state={e.temp != null && e.temp > LIMITS.edgeCaution ? "caution" : undefined} />
+        <Readout label="Thor temp" value={stale ? "--" : showTemp(e.temp)} unit={` ${TEMP_UNIT}`} state={e.temp != null && e.temp > LIMITS.edgeCaution ? "caution" : undefined} />
         <Readout label="Video age" value={stale ? "--" : f(e.videoAgeS, 2)} unit=" s" />
       </div>
       <TrendTape label="Detector rate" unit=" fps" data={d.series.fps} min={0} max={20} digits={1} />
-      <TrendTape label="Thor temperature" unit=" °C" data={d.series.edgeTemp} min={30} max={95} limits={[{ v: LIMITS.edgeCaution, kind: "caution" }]} />
+      <TrendTape label="Thor temperature" unit={` ${TEMP_UNIT}`} show={showTemp} data={d.series.edgeTemp} min={30} max={95} limits={[{ v: LIMITS.edgeCaution, kind: "caution" }]} />
     </div>
   );
 }

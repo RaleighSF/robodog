@@ -73,7 +73,9 @@ the robot.
   each hip, thigh and calf, per Unitree convention. It must be confirmed on hardware
   before the 3D legs are driven by live angles.
 - **No paid image or 3D generation.**
-- **Alert thresholds are placeholders.** Joint above 70 °C, battery below 20%, tilt above
+- **Temperatures display in °F** (owner decision, 2026-11-11) on every skin. Data and
+  limits stay in °C; only the drawn value is converted.
+- **Alert thresholds are placeholders.** Joint above 70 °C (158 °F), battery below 20%, tilt above
   about 35°. Do not present them as Unitree specifications.
 
 ## Brand Commitments

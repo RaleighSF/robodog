@@ -7,6 +7,7 @@ import type { MotionFeed } from "@/lib/motion";
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { Joint, jointState, Leg, Posture } from "@/lib/model";
+import { showTemp } from "@/lib/temp";
 
 type PartMeta = { vertices: number; indices: number; index: "u16" | "u32"; min: number[]; max: number[] };
 const BASE = "/models/go2";
@@ -197,7 +198,7 @@ export default function Go2View(props: Go2Props) {
             const tag = tags[`${leg}_${seg}`];
             tag.hidden = !flagged;
             if (flagged) {
-              const text = `${leg} ${seg} ${j?.temp != null ? Math.round(j.temp) : "--"}°`;
+              const text = `${leg} ${seg} ${showTemp(j?.temp)}°`;
               if (tag.textContent !== text) tag.textContent = text;
               tag.dataset.sev = st;
             }
