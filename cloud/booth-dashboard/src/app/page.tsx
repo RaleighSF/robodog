@@ -82,7 +82,7 @@ export default function Home() {
   return (
     <main className={`cockpit ${mode}`}>
       <header className="strip">
-        <img src="/brand/nttdata.svg" alt="NTT DATA" className="ntt" />
+        <img src={theme.nttLogo} alt="NTT DATA" className="ntt" />
         <div className="ident">
           <h1>Watch Dog <span>Overwatch</span></h1>
           <span className="num ident-sub">UNITREE GO2 · {s?.deviceId ?? "—"}</span>
