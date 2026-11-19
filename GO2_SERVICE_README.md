@@ -35,15 +35,19 @@ This reference copy serves as the **known-good version** that can be quickly res
 
 If the GO2 service on ORIN stops working:
 
+> Credentials are not stored in this repo. Get the Orin password from the gitignored
+> `CONNECTIONS.md` and export it first: `export ORIN_PASS='<from CONNECTIONS.md>'`
+> (or set up SSH keys and drop the `sshpass` prefix).
+
 ```bash
 # 1. Copy this reference version to ORIN
-sshpass -p "123" ssh unitree@192.168.86.21 "cat > ~/go2_service.py" < go2_service.py
+sshpass -p "$ORIN_PASS" ssh unitree@192.168.86.21 "cat > ~/go2_service.py" < go2_service.py
 
 # 2. Kill any running instances
-sshpass -p "123" ssh unitree@192.168.86.21 "pkill -f go2_service.py"
+sshpass -p "$ORIN_PASS" ssh unitree@192.168.86.21 "pkill -f go2_service.py"
 
 # 3. Start the service
-sshpass -p "123" ssh unitree@192.168.86.21 "cd ~ && python3 go2_service.py > go2_service.log 2>&1 &"
+sshpass -p "$ORIN_PASS" ssh unitree@192.168.86.21 "cd ~ && python3 go2_service.py > go2_service.log 2>&1 &"
 
 # 4. Verify it's working
 curl http://192.168.86.21:5001/status
@@ -116,16 +120,16 @@ Execute robot commands:
 ### Service won't start
 ```bash
 # Check if port 5001 is in use
-sshpass -p "123" ssh unitree@192.168.86.21 "lsof -ti tcp:5001"
+sshpass -p "$ORIN_PASS" ssh unitree@192.168.86.21 "lsof -ti tcp:5001"
 
 # Kill the process holding the port
-sshpass -p "123" ssh unitree@192.168.86.21 "lsof -ti tcp:5001 | xargs kill"
+sshpass -p "$ORIN_PASS" ssh unitree@192.168.86.21 "lsof -ti tcp:5001 | xargs kill"
 ```
 
 ### No video frames
 ```bash
 # Check the logs
-sshpass -p "123" ssh unitree@192.168.86.21 "tail -50 ~/go2_service.log"
+sshpass -p "$ORIN_PASS" ssh unitree@192.168.86.21 "tail -50 ~/go2_service.log"
 
 # Look for:
 # - WebRTC connection established
@@ -149,7 +153,7 @@ If you need advanced features, create a separate experimental version and test t
 To view the IR and depth feeds in the dashboard, run the provided `rtsp_proxy.py` on the Orin. It opens the RTSP streams locally and republishes them as MJPEG over HTTP, which the Mac client can decode reliably.
 
 ```
-sshpass -p "123" ssh unitree@192.168.1.207
+sshpass -p "$ORIN_PASS" ssh unitree@192.168.1.207
 python3 ~/rtsp_proxy.py
 ```
 
