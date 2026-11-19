@@ -3,6 +3,7 @@
 // crew-alerting stack, trend tapes. Colour always travels with a label or shape.
 import type { Brief } from "@/lib/agent";
 import { DIAL, Finding, Joint, jointState, LIMITS, SeriesPoint, Snapshot } from "@/lib/model";
+import { showTemp, showTempText, TEMP_UNIT } from "@/lib/temp";
 import { theme } from "@/lib/theme";
 
 const SWEEP = 210;                         // degrees, EICAS round-dial sweep
@@ -24,7 +25,7 @@ export function JointDial({ joint, stale, size = 100 }: { joint: Joint; stale: b
   const tq = joint.torque == null ? 0 : Math.min(Math.abs(joint.torque) / 20, 1);
   const valid = !stale && joint.temp != null;
   return (
-    <figure className="dial" aria-label={`${joint.leg} ${joint.seg} motor ${valid ? `${joint.temp!.toFixed(0)} degrees C, ${st}` : "no valid data"}`} style={{ width: size }}>
+    <figure className="dial" aria-label={`${joint.leg} ${joint.seg} motor ${valid ? `${showTemp(joint.temp)} degrees Fahrenheit, ${st}` : "no valid data"}`} style={{ width: size }}>
       <svg viewBox="0 0 100 92" width={size} height={size * 0.92} role="img" aria-hidden="true">
         <path d={arc(c, c, r, START, toDeg(LIMITS.jointCaution))} stroke="var(--status-ok)" strokeOpacity={0.55} strokeWidth={3} fill="none" />
         <path d={arc(c, c, r, toDeg(LIMITS.jointCaution), toDeg(LIMITS.jointWarning))} stroke="var(--status-warn)" strokeOpacity={0.75} strokeWidth={5} fill="none" />
@@ -40,7 +41,7 @@ export function JointDial({ joint, stale, size = 100 }: { joint: Joint; stale: b
         {valid && (() => { const [x, y] = polar(c, c, r - 2, toDeg(joint.temp!)); return <line x1={c} y1={c} x2={x} y2={y} stroke={STATUS_VAR[st]} strokeWidth={st === "ok" ? 2.5 : 3.5} strokeLinecap="round" />; })()}
         <circle cx={c} cy={c} r={3.2} fill="var(--surface-3)" stroke="var(--border-strong)" />
       </svg>
-      <div className={`readout num ${valid ? st : "invalid"}`}>{valid ? joint.temp!.toFixed(0) : "--"}<span>°C</span></div>
+      <div className={`readout num ${valid ? st : "invalid"}`}>{valid ? showTemp(joint.temp) : "--"}<span>{TEMP_UNIT}</span></div>
       <figcaption className="title">{joint.seg}</figcaption>
     </figure>
   );
@@ -78,7 +79,7 @@ function systems(s: Snapshot | null, stale: boolean): { name: string; state: St;
   const attKnown = s.roll != null && s.pitch != null;
   const tilt = attKnown ? Math.max(Math.abs(s.roll!), Math.abs(s.pitch!)) : 0;
   return [
-    { name: "Joint motors", state: jointState(tmax), text: tmax == null ? "NO DATA" : `12 · max ${tmax.toFixed(0)} °C` },
+    { name: "Joint motors", state: jointState(tmax), text: tmax == null ? "NO DATA" : `12 · max ${showTemp(tmax)} ${TEMP_UNIT}` },
     { name: "Battery", state: soc == null ? "unknown" : soc < LIMITS.batteryWarning ? "warning" : soc < LIMITS.batteryCaution ? "caution" : "ok",
       text: soc == null ? "NO DATA" : s.battery.charging ? `charging +${(s.battery.batteryA ?? 0).toFixed(1)} A` : `${soc.toFixed(0)} %`, always: s.battery.charging },
     { name: "Attitude", state: !attKnown ? "unknown" : tilt > LIMITS.tiltWarning ? "warning" : "ok",
@@ -86,7 +87,7 @@ function systems(s: Snapshot | null, stale: boolean): { name: string; state: St;
     { name: "Robot link", state: s.connected ? "ok" : "warning", text: s.connected ? "DDS up" : "down" },
     { name: "Video", state: s.hasVideo ? "ok" : "caution", text: s.hasVideo ? "streaming" : "no video" },
     lidarSystem(s.lidar),
-    { name: "Edge compute", state: s.edge.temp != null && s.edge.temp > LIMITS.edgeCaution ? "caution" : s.edge.temp == null ? "unknown" : "ok", text: s.edge.temp == null ? "NO DATA" : `Thor ${s.edge.temp.toFixed(0)} °C` },
+    { name: "Edge compute", state: s.edge.temp != null && s.edge.temp > LIMITS.edgeCaution ? "caution" : s.edge.temp == null ? "unknown" : "ok", text: s.edge.temp == null ? "NO DATA" : `Thor ${showTemp(s.edge.temp)} ${TEMP_UNIT}` },
   ];
 }
 function lidarSystem(l: Snapshot["lidar"]): { name: string; state: St; text: string } {
@@ -186,7 +187,7 @@ export function CasStack({ findings, stale, snapshot, socSeries, ampSeries = [],
       {stale && <p className="cas-stale">Telemetry is stale. Messages below are not current.</p>}
       {brief && (
         <figure className="cas-agent" aria-live="polite">
-          <blockquote>{brief.text}</blockquote>
+          <blockquote>{showTempText(brief.text)}</blockquote>
           <figcaption>Agent · {theme.agentHost} · <span className="num">{briefAge < 90 ? `${briefAge} s` : `${Math.round(briefAge / 60)} min`} ago</span></figcaption>
         </figure>
       )}
@@ -195,7 +196,7 @@ export function CasStack({ findings, stale, snapshot, socSeries, ampSeries = [],
         {sorted.map((f) => (
           <li key={f.id} className={`cas-msg ${f.severity}`}>
             <span className={`sev ${f.severity}`}>{SEV_LABEL[f.severity]}</span>
-            <p>{f.text}</p>
+            <p>{showTempText(f.text)}</p>
           </li>
         ))}
       </ol>
@@ -215,10 +216,11 @@ export function CasStack({ findings, stale, snapshot, socSeries, ampSeries = [],
   );
 }
 
-/** Strip-chart trend tape: one quantity, its limits, last value. */
-export function TrendTape({ label, unit, data, min, max, limits = [], digits = 0, height = 56 }: {
+/** Strip-chart trend tape: one quantity, its limits, last value. `show` formats the
+ *  last value for display (e.g. °C data shown as °F); geometry stays in data units. */
+export function TrendTape({ label, unit, data, min, max, limits = [], digits = 0, height = 56, show }: {
   label: string; unit: string; data: SeriesPoint[]; min: number; max: number;
-  limits?: { v: number; kind: "caution" | "warning" }[]; digits?: number; height?: number;
+  limits?: { v: number; kind: "caution" | "warning" }[]; digits?: number; height?: number; show?: (v: number) => string;
 }) {
   const w = 300, h = 60;
   const last = data[data.length - 1];
@@ -228,7 +230,7 @@ export function TrendTape({ label, unit, data, min, max, limits = [], digits = 0
   const d = data.map((p, i) => `${i ? "L" : "M"}${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`).join(" ");
   return (
     <div className="tape">
-      <div className="tape-head"><span className="title">{label}</span><span className="num tape-val">{last ? last.v.toFixed(digits) : "--"}<small>{unit}</small></span></div>
+      <div className="tape-head"><span className="title">{label}</span><span className="num tape-val">{last ? (show ? show(last.v) : last.v.toFixed(digits)) : "--"}<small>{unit}</small></span></div>
       <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" style={{ height }} role="img" aria-label={`${label} trend, last ten minutes`}>
         {[0.25, 0.5, 0.75].map((f) => <line key={f} x1={0} x2={w} y1={h * f} y2={h * f} stroke="var(--border-subtle)" strokeWidth={1} vectorEffect="non-scaling-stroke" />)}
         {limits.map((l) => <line key={l.v} x1={0} x2={w} y1={y(l.v)} y2={y(l.v)} stroke={l.kind === "warning" ? "var(--status-danger)" : "var(--status-warn)"} strokeDasharray="4 4" strokeWidth={1} vectorEffect="non-scaling-stroke" />)}

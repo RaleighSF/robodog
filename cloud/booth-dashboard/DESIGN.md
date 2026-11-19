@@ -289,6 +289,7 @@ All sizes are multiples of `--u`. The pixel values below are at 1920 px wide.
 - **Display** (Chakra 700, 2.1u ≈ 25px, uppercase): the product title "WATCH DOG OVERWATCH" only.
 - **Annunciator** (Chakra 700, 1.6u ≈ 19px, uppercase, 0.08em): the words MASTER WARNING and MASTER CAUTION. "MASTER" above them is a 0.9u title.
 - **Readout, dial** (Mono 700, 2.25u ≈ 27px): joint temperature in the box under each needle. The unit is set at 0.55em in tertiary.
+- **Temperatures are drawn in °F, on every skin.** Telemetry, limits, the dial span and tape geometry stay in °C; `src/lib/temp.ts` converts only where a number or server-written line is drawn (56 °C reads as 133 °F). The °C figures in this document are the underlying data values.
 - **Readout** (Mono 700, 2.05u ≈ 24px): synoptic readout cells. The unit is set at 0.5em, weight 500, in tertiary. Posture is shown at 2.3u.
 - **Headline** (Plex 400, 2.05u ≈ 24px, 1.2): one terse crew-alerting line, for example "FR hip 56 °C · +1° in 10 min · 14 min in caution". Lines are labels, not sentences.
 - **Agent line** (Plex 400, 1.75u ≈ 21px, 1.3, max 46ch, `text-wrap: pretty`): the agent's brief, at most two sentences, quoted at the top of the Overwatch column with a fine caption ("Agent · Azure AI Foundry · 12 s ago"). This is the line that makes passers-by stop.
