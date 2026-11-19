@@ -80,6 +80,8 @@ body {
 .strip { grid-area: strip; display: flex; align-items: center; gap: calc(var(--u) * 2); padding: calc(var(--u) * 0.6) calc(var(--u) * 1.2);
   border: 1px solid var(--border); border-radius: var(--r-panel); background: var(--surface-1); box-shadow: inset 0 1px 0 var(--bevel-top); }
 .ntt { height: calc(var(--u) * 2); width: auto; filter: brightness(0) invert(0.92); }
+/* The emblem mark is taller than its wordmark, so it needs more height to read at the same size. */
+.ntt[src$="nttdata-emblem.svg"] { height: calc(var(--u) * 2.9); }
 .ident h1 { font-family: var(--font-chakra); text-transform: uppercase; letter-spacing: 0.06em; font-size: calc(var(--u) * 2.1); font-weight: 700; line-height: 1; }
 .ident h1 span { color: var(--accent); }
 .ident-sub { display: block; color: var(--text-tertiary); font-size: calc(var(--u) * 1.05); margin-top: calc(var(--u) * 0.35); }

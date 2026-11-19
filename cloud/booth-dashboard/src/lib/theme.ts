@@ -10,12 +10,14 @@ export type CloudTheme = "azure" | "aws";
 export const IS_AWS = process.env.NEXT_PUBLIC_THEME === "aws";
 export const CLOUD: CloudTheme = IS_AWS ? "aws" : "azure";
 
-type Theme = { accent: string; accentPress: string; accentInk: string; builtOn: string; cloudName: string; agentHost: string };
+type Theme = { accent: string; accentPress: string; accentInk: string; builtOn: string; cloudName: string; agentHost: string; nttLogo: string };
 export const theme: Theme = IS_AWS
   // AWS "smile" orange family for re:Invent.
-  ? { accent: "#FF9F1C", accentPress: "#E8890A", accentInk: "#1A0F00", builtOn: "Built on AWS", cloudName: "AWS", agentHost: "Amazon Bedrock" }
+  ? { accent: "#FF9F1C", accentPress: "#E8890A", accentInk: "#1A0F00", builtOn: "Built on AWS", cloudName: "AWS", agentHost: "Amazon Bedrock",
+    // Updated NTT DATA mark (emblem + wordmark), AWS build only for now.
+    nttLogo: "/brand/nttdata-emblem.svg" }
   // Azure blue lifted for a dark chassis (passes AA on surface-1); Azure brand is #0078D4.
-  : { accent: "#3A9BF0", accentPress: "#1F86E0", accentInk: "#06121F", builtOn: "Built on Microsoft Azure", cloudName: "Azure", agentHost: "Azure AI Foundry" };
+  : { accent: "#3A9BF0", accentPress: "#1F86E0", accentInk: "#06121F", builtOn: "Built on Microsoft Azure", cloudName: "Azure", agentHost: "Azure AI Foundry", nttLogo: "/brand/nttdata.svg" };
 
 // Architecture dialog labels: the same data flow, named in each cloud's services
 // (cloud/PARITY.md). Text only; no cloud logos until the artwork is approved.
