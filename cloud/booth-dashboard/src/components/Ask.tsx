@@ -3,7 +3,7 @@
 // a 401 forgets it. Answers come from the read-only agent and are never actions.
 import { FormEvent, useEffect, useState } from "react";
 import { askOverwatch, isTrustedApi, loadStaffKey, saveStaffKey } from "@/lib/agent";
-import { showTempText } from "@/lib/temp";
+import { AgentText } from "./AgentText";
 import { theme } from "@/lib/theme";
 
 export function AskOverwatch({ api, live }: { api: string; live: boolean }) {
@@ -61,7 +61,7 @@ export function AskOverwatch({ api, live }: { api: string; live: boolean }) {
       {answer && (
         <div className="ask-answer" aria-live="polite">
           <span className="muted">{answer.q}</span>
-          <p>{showTempText(answer.text)}</p>
+          <p><AgentText text={answer.text} /></p>
         </div>
       )}
     </form>

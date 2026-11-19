@@ -5,6 +5,7 @@ import type { Brief } from "@/lib/agent";
 import { DIAL, Finding, Joint, jointState, LIMITS, SeriesPoint, Snapshot } from "@/lib/model";
 import { showTemp, showTempText, TEMP_UNIT } from "@/lib/temp";
 import { theme } from "@/lib/theme";
+import { AgentText } from "./AgentText";
 
 const SWEEP = 210;                         // degrees, EICAS round-dial sweep
 const START = 90 + (360 - SWEEP) / 2;      // start angle (SVG: 0 = +x, clockwise)
@@ -187,7 +188,7 @@ export function CasStack({ findings, stale, snapshot, socSeries, ampSeries = [],
       {stale && <p className="cas-stale">Telemetry is stale. Messages below are not current.</p>}
       {brief && (
         <figure className="cas-agent" aria-live="polite">
-          <blockquote>{showTempText(brief.text)}</blockquote>
+          <blockquote><AgentText text={brief.text} /></blockquote>
           <figcaption>Agent · {theme.agentHost} · <span className="num">{briefAge < 90 ? `${briefAge} s` : `${Math.round(briefAge / 60)} min`} ago</span></figcaption>
         </figure>
       )}
