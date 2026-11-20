@@ -1,15 +1,14 @@
 "use client";
 // "How it works": the data path from the dog to this screen, named in the show's
 // cloud services (theme.ts arch). A build with an edge plane (theme.ts edgePlane)
-// draws it in and marks it as roadmap, because the live path does not use it yet. A native <dialog>: focus is trapped,
+// draws it into the path. A native <dialog>: focus is trapped,
 // Esc closes, and the page behind is inert.
 import { useRef } from "react";
 import { arch, edgePlane, theme, type EdgePlane } from "@/lib/theme";
 
-type Node = { id: string; x: number; y: number; title: string; note: string; cloud?: boolean; roadmap?: boolean };
+type Node = { id: string; x: number; y: number; title: string; note: string; cloud?: boolean };
 type Flow = { d: string; label: string; lx: number; ly: number; anchor?: "start" | "middle" | "end"; rot?: boolean; twin?: boolean };
-type Legend = { x: number; y: number; head: string; lines: string[] };
-type Layout = { height: number; nodes: Node[]; flows: Flow[]; tag?: string; legend?: Legend };
+type Layout = { height: number; nodes: Node[]; flows: Flow[] };
 const W = 236, H = 74;
 const [X0, X1, X2] = [40, 382, 700];
 const mid = (x: number) => x + W / 2;
@@ -53,8 +52,8 @@ function edgeLayout(e: EdgePlane): Layout {
     { id: "dog", x: X0, y: R[0], title: "Unitree Go2", note: "12 joints · IMU · battery · L1 lidar" },
     { id: "orin", x: X0, y: R[1], title: "Robot link · Jetson Orin", note: "DDS → HTTPS · safety deadman" },
     { id: "thor", x: X0, y: R[2], title: "NVIDIA Jetson AGX Thor", note: "vision · telemetry · maneuvers" },
-    { id: "edge", x: X0, y: R[3], title: e.runtime, note: e.runtimeNote, roadmap: true },
-    { id: "broker", x: X1, y: R[0], title: e.broker, note: e.brokerNote, cloud: true, roadmap: true },
+    { id: "edge", x: X0, y: R[3], title: e.runtime, note: e.runtimeNote },
+    { id: "broker", x: X1, y: R[0], title: e.broker, note: e.brokerNote, cloud: true },
     { id: "hub", x: X1, y: R[1], title: arch.ingest, note: "telemetry stream", cloud: true },
     { id: "fn", x: X1, y: R[2], title: arch.compute, note: arch.computeNote, cloud: true },
     { id: "store", x: X1, y: R[3], title: arch.store, note: arch.storeNote, cloud: true },
@@ -75,7 +74,7 @@ function edgeLayout(e: EdgePlane): Layout {
     { d: `M618,${R[2] + 20} H659 V${R[1] + 37} H700`, label: "read API", lx: 675, ly: (R[1] + R[2]) / 2 + 28, rot: true },
     { d: `M700,${R[2] + 54} H618`, label: e.agentLink, lx: 659, ly: R[2] + 47 },
   ];
-  return { height: 566, nodes, flows, tag: e.tag, legend: { x: X2, y: R[3], head: e.legendHead, lines: e.legend } };
+  return { height: 566, nodes, flows };
 }
 
 const LAYOUT = edgePlane ? edgeLayout(edgePlane) : directLayout();
@@ -108,20 +107,12 @@ export function ArchitectureButton() {
             </g>
           ))}
           {LAYOUT.nodes.map((n) => (
-            <g key={n.id} className={`arch-node ${n.cloud ? "cloud" : ""} ${n.roadmap ? "roadmap" : ""}`}>
+            <g key={n.id} className={`arch-node ${n.cloud ? "cloud" : ""}`}>
               <rect x={n.x} y={n.y} width={W} height={H} rx="6" />
               <text x={n.x + 16} y={n.y + 31} className="arch-node-title">{n.title}</text>
               <text x={n.x + 16} y={n.y + 54} className="arch-node-note">{n.note}</text>
-              {n.roadmap && <text x={n.x + W - 12} y={n.y + 15} textAnchor="end" className="arch-node-tag">{LAYOUT.tag}</text>}
             </g>
           ))}
-          {LAYOUT.legend && (
-            <g className="arch-legend">
-              <rect x={LAYOUT.legend.x} y={LAYOUT.legend.y + 6} width="26" height="14" rx="3" />
-              <text x={LAYOUT.legend.x + 36} y={LAYOUT.legend.y + 18} className="arch-node-tag">{LAYOUT.legend.head}</text>
-              {LAYOUT.legend.lines.map((l, i) => <text key={i} x={LAYOUT.legend!.x} y={LAYOUT.legend!.y + 40 + i * 15} className="arch-legend-line">{l}</text>)}
-            </g>
-          )}
         </svg>
         <ul className="arch-notes">
           <li><b>{arch.identityHead}.</b> {arch.identity}.</li>

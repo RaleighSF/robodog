@@ -426,10 +426,6 @@ body {
 .arch-node.cloud rect { stroke: color-mix(in srgb, var(--accent) 55%, var(--border)); }
 .arch-node-title { font-family: var(--font-plex); font-weight: 600; font-size: 16px; fill: var(--text-primary); }
 .arch-node-note { font-family: var(--font-plex); font-size: 12.5px; fill: var(--text-secondary); }
-.arch-node.roadmap rect, .arch-legend rect { stroke-dasharray: 5 4; }
-.arch-legend rect { fill: none; stroke: color-mix(in srgb, var(--accent) 55%, var(--border)); }
-.arch-node-tag { font-family: var(--font-chakra); font-weight: 600; font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase; fill: var(--accent); }
-.arch-legend-line { font-family: var(--font-plex); font-size: 12.5px; fill: var(--text-secondary); }
 .arch-flow path { fill: none; stroke: var(--border-strong); stroke-width: 1.6; stroke-dasharray: 6 5; animation: arch-flow 1.4s linear infinite; }
 .arch-flow.twin path { stroke: var(--accent); }
 .arch-arrowhead { fill: var(--border-strong); }
