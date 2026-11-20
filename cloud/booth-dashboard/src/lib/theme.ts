@@ -39,3 +39,20 @@ export const arch: ArchLabels = IS_AWS ? { region: "AWS", ingest: "Amazon Kinesi
     ingestLink: "trigger", storeLink: "streaming ingest · KQL", agentNote: "GPT-4.1 mini · read-only tool",
     agentLink: "OpenAPI tool", twinLink: "joint frames · send-only token" };
 
+
+// Edge plane (AWS build only): AWS IoT Greengrass on the Thor publishing over MQTT
+// to AWS IoT Core, whose rules feed the same stream and live-twin channel. This is
+// the edge ROADMAP, not today's path (today the Thor publishes straight to the
+// stream and the realtime channel), so the dialog marks both nodes and says so.
+// null on other builds: the names fold out of the bundle with the ternary.
+export interface EdgePlane { runtime: string; runtimeNote: string; broker: string; brokerNote: string; tag: string;
+  localLink: string; uplink: string; streamRule: string; twinRule: string; agentLink: string;
+  legendHead: string; legend: string[]; aria: string }
+export const edgePlane: EdgePlane | null = IS_AWS ? { runtime: "AWS IoT Greengrass", runtimeNote: "edge runtime · store and forward",
+    broker: "AWS IoT Core", brokerNote: "MQTT broker · rules engine", tag: "Roadmap",
+    localLink: "local IPC", uplink: "MQTT · X.509 device certificate", streamRule: "IoT rule · telemetry", twinRule: "IoT rule",
+    agentLink: "read-only",
+    legendHead: "Edge roadmap",
+    legend: ["Greengrass and IoT Core are the", "managed edge plane we are building", "toward. Today the Thor publishes", "direct to Kinesis and AppSync."],
+    aria: "On the edge roadmap, AWS IoT Greengrass on the Thor publishes over MQTT to AWS IoT Core, whose rules feed the stream and the live twin; today the Thor publishes to them directly." }
+  : null;
